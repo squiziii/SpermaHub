@@ -1,5 +1,5 @@
--- SpermaHub v6 | Fly + Noclip + Watermark + Sound
--- F=Fly | N=Noclip | P=Watermark | RightShift=свернуть | ✕=выгрузить
+-- SpermaHub v7 | Fly + Noclip + Watermark + Sound + Anti-AFK
+-- F=Fly | N=Noclip | P=Watermark | K=Anti-AFK | RightShift=свернуть | ✕=выгрузить
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,6 +8,7 @@ local TweenService = game:GetService("TweenService")
 local Stats = game:GetService("Stats")
 local SS = game:GetService("SoundService")
 local Debris = game:GetService("Debris")
+local VirtualUser = game:GetService("VirtualUser")
 local LP = Players.LocalPlayer
 
 -- Очистка
@@ -18,13 +19,13 @@ end
 
 -- Состояние
 local S = {
-    flying=false, noclip=false, speed=50, min=false,
+    flying=false, noclip=false, antiAfk=false, speed=50, min=false,
     guiOpen=true, wmOn=true,
-    bv=nil, bg=nil, flyConn=nil, noclipConn=nil,
+    bv=nil, bg=nil, flyConn=nil, noclipConn=nil, antiAfkConn=nil,
     fps=60, ping=0
 }
 
-local EXP = UDim2.new(0,240,0,230)
+local EXP = UDim2.new(0,240,0,270)
 local MIN = UDim2.new(0,240,0,38)
 
 -- ============ ЗВУК ============
@@ -97,14 +98,14 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1,-80,1,0)
 Title.Position = UDim2.new(0,14,0,0)
 Title.BackgroundTransparency = 1
-Title.Text = "SpermaHub"
+Title.Text = "✦ SpermaHub"
 Title.TextColor3 = Color3.fromRGB(230,130,255)
 Title.Font = Enum.Font.GothamBlack
 Title.TextSize = 18
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = H
 
--- Кнопка сворачивания
+-- Сворачивание
 local MinBtn = Instance.new("TextButton")
 MinBtn.Size = UDim2.new(0,24,0,24)
 MinBtn.Position = UDim2.new(1,-62,0.5,-12)
@@ -119,12 +120,12 @@ local MinC = Instance.new("UICorner")
 MinC.CornerRadius = UDim.new(0,6)
 MinC.Parent = MinBtn
 
--- Кнопка закрытия
+-- Закрытие
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0,24,0,24)
 CloseBtn.Position = UDim2.new(1,-32,0.5,-12)
 CloseBtn.BackgroundColor3 = Color3.fromRGB(200,50,80)
-CloseBtn.Text = "✕"
+CloseBtn.Text = "X"
 CloseBtn.TextColor3 = Color3.fromRGB(255,255,255)
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.TextSize = 14
@@ -172,7 +173,6 @@ TS.Thickness = 2
 TS.Transparency = 0.2
 TS.Parent = ToggleBtn
 
--- Пульсация
 task.spawn(function()
     while ToggleBtn.Parent do
         TweenService:Create(TS, TweenInfo.new(1.2), {Transparency=0.7}):Play()
@@ -186,13 +186,13 @@ end)
 -- ============ КНОПКИ ============
 local function mkBtn(text, y, col, parent)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0.9,0,0,34)
+    b.Size = UDim2.new(0.9,0,0,32)
     b.Position = UDim2.new(0.05,0,0,y)
     b.BackgroundColor3 = col
     b.Text = text
     b.TextColor3 = Color3.fromRGB(255,255,255)
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 13
+    b.TextSize = 12
     b.Parent = parent
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0,8)
@@ -200,14 +200,15 @@ local function mkBtn(text, y, col, parent)
     return b
 end
 
-local FlyBtn = mkBtn("✈  FLY: ВЫКЛ", 10, Color3.fromRGB(45,45,70), Content)
-local NoclipBtn = mkBtn("👻  NOCLIP: ВЫКЛ", 50, Color3.fromRGB(45,45,70), Content)
-local WmBtn = mkBtn("📊  WATERMARK: ВКЛ", 90, Color3.fromRGB(45,90,70), Content)
+local FlyBtn    = mkBtn("✈  FLY: ВЫКЛ", 8, Color3.fromRGB(45,45,70), Content)
+local NoclipBtn = mkBtn("👻  NOCLIP: ВЫКЛ", 44, Color3.fromRGB(45,45,70), Content)
+local WmBtn     = mkBtn("📊  WATERMARK: ВКЛ", 80, Color3.fromRGB(45,90,70), Content)
+local AfkBtn    = mkBtn("🦘  ANTI-AFK: ВЫКЛ", 116, Color3.fromRGB(45,45,70), Content)
 
 -- Ползунок
 local SpdLabel = Instance.new("TextLabel")
 SpdLabel.Size = UDim2.new(0.9,0,0,16)
-SpdLabel.Position = UDim2.new(0.05,0,0,134)
+SpdLabel.Position = UDim2.new(0.05,0,0,156)
 SpdLabel.BackgroundTransparency = 1
 SpdLabel.Text = "Скорость полёта: 50"
 SpdLabel.TextColor3 = Color3.fromRGB(200,200,220)
@@ -218,7 +219,7 @@ SpdLabel.Parent = Content
 
 local Slider = Instance.new("Frame")
 Slider.Size = UDim2.new(0.9,0,0,16)
-Slider.Position = UDim2.new(0.05,0,0,154)
+Slider.Position = UDim2.new(0.05,0,0,176)
 Slider.BackgroundColor3 = Color3.fromRGB(40,40,55)
 Slider.BorderSizePixel = 0
 Slider.Parent = Content
@@ -239,9 +240,9 @@ SlFC.Parent = SlFill
 
 local Hint = Instance.new("TextLabel")
 Hint.Size = UDim2.new(0.9,0,0,14)
-Hint.Position = UDim2.new(0.05,0,0,174)
+Hint.Position = UDim2.new(0.05,0,0,196)
 Hint.BackgroundTransparency = 1
-Hint.Text = "WASD · Space↑ · Ctrl↓ · F=fly · N=noclip"
+Hint.Text = "F=fly · N=noclip · K=afk · P=wm · RShift=свернуть"
 Hint.TextColor3 = Color3.fromRGB(140,140,160)
 Hint.Font = Enum.Font.Gotham
 Hint.TextSize = 10
@@ -435,6 +436,47 @@ local function disableNoclip()
     end
 end
 
+-- ============ ANTI-AFK ============
+local function enableAntiAfk()
+    S.antiAfk = true
+    if S.antiAfkConn then S.antiAfkConn:Disconnect() end
+    
+    -- Сброс Idled (когда Roblox сообщает о бездействии)
+    S.antiAfkConn = LP.Idled:Connect(function()
+        if not S.antiAfk then return end
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end)
+end
+
+local function disableAntiAfk()
+    S.antiAfk = false
+    if S.antiAfkConn then S.antiAfkConn:Disconnect() S.antiAfkConn = nil end
+end
+
+-- Прыжок раз в 2 минуты
+task.spawn(function()
+    while task.wait(120) do
+        if S.antiAfk and not S.flying then
+            local ch = LP.Character
+            if ch then
+                local hum = ch:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.Jump = true
+                    task.wait(0.1)
+                    hum.Jump = false
+                end
+            end
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+        end
+    end
+end)
+
 -- ============ ОБНОВЛЕНИЕ КНОПОК ============
 local function updFly()
     if S.flying then
@@ -466,6 +508,16 @@ local function updWm()
     end
 end
 
+local function updAfk()
+    if S.antiAfk then
+        AfkBtn.Text = "🦘  ANTI-AFK: ВКЛ"
+        AfkBtn.BackgroundColor3 = Color3.fromRGB(200,140,40)
+    else
+        AfkBtn.Text = "🦘  ANTI-AFK: ВЫКЛ"
+        AfkBtn.BackgroundColor3 = Color3.fromRGB(45,45,70)
+    end
+end
+
 FlyBtn.MouseButton1Click:Connect(function()
     if S.flying then stopFly() else startFly() end
     updFly()
@@ -474,6 +526,11 @@ end)
 NoclipBtn.MouseButton1Click:Connect(function()
     if S.noclip then disableNoclip() else enableNoclip() end
     updNoclip()
+end)
+
+AfkBtn.MouseButton1Click:Connect(function()
+    if S.antiAfk then disableAntiAfk() else enableAntiAfk() end
+    updAfk()
 end)
 
 -- ============ WATERMARK TOGGLE ============
@@ -551,6 +608,7 @@ ToggleBtn.MouseButton1Click:Connect(toggleGui)
 CloseBtn.MouseButton1Click:Connect(function()
     if S.flyConn then S.flyConn:Disconnect() end
     if S.noclipConn then S.noclipConn:Disconnect() end
+    if S.antiAfkConn then S.antiAfkConn:Disconnect() end
     if S.bv then S.bv:Destroy() end
     if S.bg then S.bg:Destroy() end
     local ch = LP.Character
@@ -603,6 +661,9 @@ UIS.InputBegan:Connect(function(input, gpe)
         updNoclip()
     elseif input.KeyCode == Enum.KeyCode.P then
         setWm(not S.wmOn)
+    elseif input.KeyCode == Enum.KeyCode.K then
+        if S.antiAfk then disableAntiAfk() else enableAntiAfk() end
+        updAfk()
     elseif input.KeyCode == Enum.KeyCode.RightShift then
         MinBtn.MouseButton1Click:Fire()
     end
@@ -651,4 +712,8 @@ task.spawn(function()
     }):Play()
 end)
 
-print("SpermaHub v6 загружен! F=Fly | N=Noclip | P=Watermark | RightShift=свернуть")
+-- ============ АВТОСТАРТ ANTI-AFK ============
+enableAntiAfk()
+updAfk()
+
+print("SpermaHub v7 загружен! F=Fly | N=Noclip | P=Watermark | K=Anti-AFK | RightShift=свернуть")
