@@ -9,6 +9,9 @@
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
 
+-- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
+print("[SpermaHub] Загрузка началась...")
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
