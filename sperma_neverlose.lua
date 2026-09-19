@@ -2355,7 +2355,7 @@ do
 
     local pScript = addPanel(miscPage.col2, "Script")
     addButton(pScript, "Copy Discord", function()
-        local link = "https://discord.gg/spermahub"
+        local link = "https://discord.gg/bUcTUuB9U5"
         if type(setclipboard) == "function" then
             pcall(setclipboard, link)
             toastImpl("Discord", "Ссылка скопирована")
@@ -2471,7 +2471,7 @@ local function topIcon(txt, xoff, cb)
     return b
 end
 topIcon("💬", -36, function()
-    local link = "https://discord.gg/spermahub"
+    local link = "https://discord.gg/bUcTUuB9U5"
     if type(setclipboard) == "function" then pcall(setclipboard, link) toastImpl("Discord", "Ссылка скопирована") end
 end)
 topIcon("⚙", -68, function() selectPage(miscPage) end)
