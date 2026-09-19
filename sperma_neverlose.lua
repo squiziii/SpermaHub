@@ -65,7 +65,8 @@ local S = {
     teamCheck=false, visibleCheck=false,
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
-    aaOn=false, aaConn=nil, aaPitch="None", aaYaw="Backwards", aaSpinSpeed=180, aaAngle=0,
+    aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -896,11 +897,32 @@ S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
     pcall(onShotHitmarker)
 end)
 
--- ============ ANTI-AIM (фейковые углы) ============
+-- ============ ANTI-AIM (fake angles, реал-стайл) ============
 local function getCamYawDeg()
     local cam = workspace.CurrentCamera
     local lv = cam.CFrame.LookVector
     return math.deg(math.atan2(-lv.X, -lv.Z))
+end
+
+-- freestanding: встать спиной к ближайшему врагу в радиусе 60 стадов
+local function freestandingYaw(root)
+    local best, bestD = nil, 60
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and not isTeammate(plr) then
+            local ch2 = plr.Character
+            local troot = ch2 and ch2:FindFirstChild("HumanoidRootPart")
+            local thum = ch2 and ch2:FindFirstChildOfClass("Humanoid")
+            if troot and thum and thum.Health > 0 then
+                local d = (troot.Position - root.Position).Magnitude
+                if d < bestD then
+                    best, bestD = troot, d
+                end
+            end
+        end
+    end
+    if not best then return nil end
+    local dir = root.Position - best.Position -- направление от врага к нам
+    return math.deg(math.atan2(-dir.X, -dir.Z))
 end
 
 local function enableAntiAim()
@@ -911,18 +933,37 @@ local function enableAntiAim()
         local ch = LP.Character
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
         if not root then return end
+        local hum = ch:FindFirstChildOfClass("Humanoid")
 
-        local baseYaw = getCamYawDeg() + 180 -- база: спиной к направлению камеры
+        -- Slow Walk
+        if S.aaSlowWalk and hum and not S.walkSpeedOn then
+            hum.WalkSpeed = S.aaSlowSpeed
+        end
+
+        -- базовый угол: спиной к камере или freestanding (спиной к врагу)
+        local baseYaw = getCamYawDeg() + 180
+        if S.aaFreestanding then
+            baseYaw = freestandingYaw(root) or baseYaw
+        end
+
         local yaw = nil
-        if S.aaYaw == "Backwards" then
+        if S.aaYaw == "Backward" or S.aaYaw == "Backwards" then
             yaw = baseYaw
-        elseif S.aaYaw == "Jitter" then
-            yaw = baseYaw + math.random(-45, 45)
         elseif S.aaYaw == "Spin" then
             S.aaAngle = (S.aaAngle + S.aaSpinSpeed * dt) % 360
             yaw = S.aaAngle
         elseif S.aaYaw == "Random" then
             yaw = math.random(0, 359)
+        end
+
+        -- Yaw Jitter поверх выбранного yaw
+        if yaw and S.aaYawJitter ~= "Disabled" then
+            if S.aaYawJitter == "Offset" then
+                S.aaJitSide = not S.aaJitSide
+                yaw = yaw + (S.aaJitSide and 45 or -45)
+            else -- Random
+                yaw = yaw + math.random(-60, 60)
+            end
         end
 
         local pitch = 0
@@ -944,6 +985,12 @@ end
 local function disableAntiAim()
     S.aaOn = false
     if S.aaConn then S.aaConn:Disconnect() S.aaConn = nil end
+    -- вернуть скорость после Slow Walk
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if S.aaSlowWalk and hum then
+        hum.WalkSpeed = S.walkSpeedOn and S.walkSpeed or 16
+    end
 end
 
 -- ============ WALK SPEED ============
@@ -2589,20 +2636,34 @@ do
     end)
 
     local pAng = addPanel(pg.col1, "Angles")
-    addDropdown(pAng, "aa.pitch", "Pitch", {"None", "Down", "Up", "Jitter"}, "None", function(v)
+    addDropdown(pAng, "aa.pitch", "Pitch", {"Down", "Up", "Jitter", "None"}, "Down", function(v)
         S.aaPitch = v
     end)
-    addDropdown(pAng, "aa.yaw", "Yaw", {"None", "Backwards", "Jitter", "Spin", "Random"}, "Backwards", function(v)
+    addDropdown(pAng, "aa.yaw", "Yaw", {"Disabled", "Backward", "Spin", "Random"}, "Backward", function(v)
         S.aaYaw = v
+    end)
+    addDropdown(pAng, "aa.jitter", "Yaw Jitter", {"Disabled", "Offset", "Random"}, "Disabled", function(v)
+        S.aaYawJitter = v
     end)
     addSlider(pAng, "aa.spin", "Spin Speed", 10, 720, 180, 10, function(v)
         S.aaSpinSpeed = math.floor(v)
     end)
 
+    local pExtra = addPanel(pg.col2, "Extra")
+    addToggle(pExtra, "aa.slowwalk", "Slow Walk", false, function(state)
+        S.aaSlowWalk = state
+    end)
+    addSlider(pExtra, "aa.slowspeed", "Slow Walk Speed", 1, 16, 8, 1, function(v)
+        S.aaSlowSpeed = math.floor(v)
+    end)
+    addToggle(pExtra, "aa.freestanding", "Freestanding", false, function(state)
+        S.aaFreestanding = state
+    end)
+    addText(pExtra, "Freestanding — сам встаёт спиной к ближайшему врагу (до 60 стадов). Если врага рядом нет — спиной к камере.")
+
     local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "Реал-стайл анти-аим (как у Neverlose): фейкует углы персонажа, чтобы вражеские аимботы целились не туда.")
-    addText(pInfo, "Pitch — Down (нос в пол) / Up (в небо) / Jitter. Yaw — Backwards (спиной к камере), Jitter (дёргается вокруг спины), Spin (крутилка), Random.")
-    addText(pInfo, "Видно только другим игрокам — и только в играх, где угол персонажа реплицируется с клиента.")
+    addText(pInfo, "Реал-стайл анти-аим (как на скрине из Neverlose): фейковые углы тела, чтобы вражеский аимбот целился не туда.")
+    addText(pInfo, "Slow Walk — заниженная скорость, пока включён Anti-Aim (не совмещать со Walk Speed из вкладки Player).")
 end
 
 -- ==== Auto Clicker ====
