@@ -4,7 +4,7 @@
 -- Перенесены ВСЕ вкладки и функции:
 --   Combat:        Legitbot (Aimbot + Silent Aim + Team/Visible Check) | Hitbox | Kill Player | Fling | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
---   Movement:      Main (Flight/Noclip/Jesus/Spin) | Teleport (Click TP)
+--   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
@@ -67,6 +67,8 @@ local S = {
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
     aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false,
+    aaStepConn=nil, aaRealCF=nil,
+    bhopOn=false, bhopConn=nil, bhopMode="Hold Space",
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -898,6 +900,9 @@ S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
 end)
 
 -- ============ ANTI-AIM (fake angles, реал-стайл) ============
+-- Схема стабильности: фейковый CFrame ставим ТОЛЬКО на рендер-кадр (RenderStepped),
+-- а перед физикой (Stepped) откатываем на настоящий. Поэтому персонаж стоит ровно
+-- на месте, ходит, прыгает и нормально тормозит — физика никогда не видит фейковых углов.
 local function getCamYawDeg()
     local cam = workspace.CurrentCamera
     local lv = cam.CFrame.LookVector
@@ -928,6 +933,9 @@ end
 local function enableAntiAim()
     S.aaOn = true
     if S.aaConn then S.aaConn:Disconnect() end
+    if S.aaStepConn then S.aaStepConn:Disconnect() end
+
+    -- 1) рендер-кадр: настоящий CFrame запоминаем, ставим фейковый
     S.aaConn = RunService.RenderStepped:Connect(function(dt)
         if not S.aaOn then return end
         local ch = LP.Character
@@ -976,8 +984,23 @@ local function enableAntiAim()
         end
 
         if yaw or pitch ~= 0 then
-            local pos = root.Position
+            local trueCF = root.CFrame
+            local pos = trueCF.Position
+            S.aaRealCF = trueCF
             root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
+        end
+    end)
+
+    -- 2) перед физикой: возвращаем настоящий CFrame -> никаких подпрыгиваний
+    S.aaStepConn = RunService.Stepped:Connect(function()
+        if not S.aaOn then return end
+        if S.aaRealCF then
+            local ch = LP.Character
+            local root = ch and ch:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.CFrame = S.aaRealCF
+            end
+            S.aaRealCF = nil
         end
     end)
 end
@@ -985,12 +1008,35 @@ end
 local function disableAntiAim()
     S.aaOn = false
     if S.aaConn then S.aaConn:Disconnect() S.aaConn = nil end
+    if S.aaStepConn then S.aaStepConn:Disconnect() S.aaStepConn = nil end
+    S.aaRealCF = nil
     -- вернуть скорость после Slow Walk
     local ch = LP.Character
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
     if S.aaSlowWalk and hum then
         hum.WalkSpeed = S.walkSpeedOn and S.walkSpeed or 16
     end
+end
+
+-- ============ BHOP (авто-прыжки) ============
+local function enableBhop()
+    S.bhopOn = true
+    if S.bhopConn then S.bhopConn:Disconnect() end
+    S.bhopConn = RunService.Heartbeat:Connect(function()
+        if not S.bhopOn then return end
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        if S.bhopMode == "Hold Space" and not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
+        if hum.FloorMaterial ~= Enum.Material.Air then
+            hum.Jump = true
+        end
+    end)
+end
+
+local function disableBhop()
+    S.bhopOn = false
+    if S.bhopConn then S.bhopConn:Disconnect() S.bhopConn = nil end
 end
 
 -- ============ WALK SPEED ============
@@ -2779,6 +2825,15 @@ do
     end)
     addText(pFly, "WASD + Space (вверх) / Ctrl (вниз).")
 
+    local pBhop = addPanel(pg.col1, "Bhop")
+    addToggle(pBhop, "bhop.enabled", "Enabled", false, function(state)
+        if state then enableBhop() else disableBhop() end
+    end)
+    addDropdown(pBhop, "bhop.mode", "Mode", {"Hold Space", "Auto Jump"}, "Hold Space", function(v)
+        S.bhopMode = v
+    end)
+    addText(pBhop, "Кроличий прыжок: автоматический Jump в кадре касания земли — прыжки идут без пауз. Hold Space — прыгать пока зажат пробел, Auto Jump — без нажатий.")
+
     local pNc = addPanel(pg.col2, "Noclip")
     addToggle(pNc, "noclip.enabled", "Enabled", false, function(state)
         if state then enableNoclip() else disableNoclip() end
@@ -2969,6 +3024,8 @@ function fullCleanupNL()
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
     if S.spinConn then S.spinConn:Disconnect() end
     if S.aaConn then S.aaConn:Disconnect() end
+    if S.aaStepConn then S.aaStepConn:Disconnect() end
+    if S.bhopConn then S.bhopConn:Disconnect() end
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
     if S.fxConn then S.fxConn:Disconnect() end
@@ -3221,4 +3278,4 @@ end)
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
 print("Combat: Legitbot | Hitbox | Kill Player | Fling | Anti-Aim | Auto Clicker | +Tracers/Hitmarker/Spin/GodMode/TeamCheck/VisibleCheck")
-print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus + Click TP | Player | Misc")
+print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus/Bhop + Click TP | Player | Misc")
