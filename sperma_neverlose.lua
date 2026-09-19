@@ -2,7 +2,7 @@
 -- Интерфейс в стиле NEVERLOSE (как на скрине): сайдбар + топбар + двухколоночные панели,
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
---   Combat:        Legitbot (Aimbot + Silent Aim + Team/Visible Check) | Hitbox | Kill Player | Fling | Auto Clicker
+--   Combat:        Legitbot (Aimbot + Silent Aim + Team/Visible Check) | Hitbox | Kill Player | Fling | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
@@ -65,6 +65,7 @@ local S = {
     teamCheck=false, visibleCheck=false,
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
+    aaOn=false, aaConn=nil, aaPitch="None", aaYaw="Backwards", aaSpinSpeed=180, aaAngle=0,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -894,6 +895,56 @@ S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
     pcall(onShotTracer)
     pcall(onShotHitmarker)
 end)
+
+-- ============ ANTI-AIM (фейковые углы) ============
+local function getCamYawDeg()
+    local cam = workspace.CurrentCamera
+    local lv = cam.CFrame.LookVector
+    return math.deg(math.atan2(-lv.X, -lv.Z))
+end
+
+local function enableAntiAim()
+    S.aaOn = true
+    if S.aaConn then S.aaConn:Disconnect() end
+    S.aaConn = RunService.RenderStepped:Connect(function(dt)
+        if not S.aaOn then return end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        local baseYaw = getCamYawDeg() + 180 -- база: спиной к направлению камеры
+        local yaw = nil
+        if S.aaYaw == "Backwards" then
+            yaw = baseYaw
+        elseif S.aaYaw == "Jitter" then
+            yaw = baseYaw + math.random(-45, 45)
+        elseif S.aaYaw == "Spin" then
+            S.aaAngle = (S.aaAngle + S.aaSpinSpeed * dt) % 360
+            yaw = S.aaAngle
+        elseif S.aaYaw == "Random" then
+            yaw = math.random(0, 359)
+        end
+
+        local pitch = 0
+        if S.aaPitch == "Down" then
+            pitch = -90
+        elseif S.aaPitch == "Up" then
+            pitch = 90
+        elseif S.aaPitch == "Jitter" then
+            pitch = (math.random() < 0.5) and -90 or 90
+        end
+
+        if yaw or pitch ~= 0 then
+            local pos = root.Position
+            root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
+        end
+    end)
+end
+
+local function disableAntiAim()
+    S.aaOn = false
+    if S.aaConn then S.aaConn:Disconnect() S.aaConn = nil end
+end
 
 -- ============ WALK SPEED ============
 local function applyWalkSpeed()
@@ -2528,6 +2579,32 @@ do
     addText(pInfo, "Налетает на цель с огромной скоростью ~0.8 сек и отбрасывает её, затем возвращает тебя на место.")
 end
 
+-- ==== Anti-Aim ====
+do
+    local pg = addPage("Combat", "🔁", "Anti-Aim")
+
+    local pAa = addPanel(pg.col1, "Anti-Aim")
+    addToggle(pAa, "aa.enabled", "Enabled", false, function(state)
+        if state then enableAntiAim() else disableAntiAim() end
+    end)
+
+    local pAng = addPanel(pg.col1, "Angles")
+    addDropdown(pAng, "aa.pitch", "Pitch", {"None", "Down", "Up", "Jitter"}, "None", function(v)
+        S.aaPitch = v
+    end)
+    addDropdown(pAng, "aa.yaw", "Yaw", {"None", "Backwards", "Jitter", "Spin", "Random"}, "Backwards", function(v)
+        S.aaYaw = v
+    end)
+    addSlider(pAng, "aa.spin", "Spin Speed", 10, 720, 180, 10, function(v)
+        S.aaSpinSpeed = math.floor(v)
+    end)
+
+    local pInfo = addPanel(pg.col2, "Info")
+    addText(pInfo, "Реал-стайл анти-аим (как у Neverlose): фейкует углы персонажа, чтобы вражеские аимботы целились не туда.")
+    addText(pInfo, "Pitch — Down (нос в пол) / Up (в небо) / Jitter. Yaw — Backwards (спиной к камере), Jitter (дёргается вокруг спины), Spin (крутилка), Random.")
+    addText(pInfo, "Видно только другим игрокам — и только в играх, где угол персонажа реплицируется с клиента.")
+end
+
 -- ==== Auto Clicker ====
 do
     local pg = addPage("Combat", "🖱", "Auto Clicker")
@@ -2830,6 +2907,7 @@ function fullCleanupNL()
     if S.jesusConn then S.jesusConn:Disconnect() end
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
     if S.spinConn then S.spinConn:Disconnect() end
+    if S.aaConn then S.aaConn:Disconnect() end
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
     if S.fxConn then S.fxConn:Disconnect() end
@@ -3081,5 +3159,5 @@ end)
 
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
-print("Combat: Legitbot | Hitbox | Kill Player | Fling | Auto Clicker | +Tracers/Hitmarker/Spin/GodMode/TeamCheck/VisibleCheck")
+print("Combat: Legitbot | Hitbox | Kill Player | Fling | Anti-Aim | Auto Clicker | +Tracers/Hitmarker/Spin/GodMode/TeamCheck/VisibleCheck")
 print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus + Click TP | Player | Misc")
