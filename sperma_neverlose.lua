@@ -3,7 +3,7 @@
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
 --   Combat:        Legitbot (Aimbot + Silent Aim + Team/Visible Check) | Hitbox | Kill Player | Fling | Auto Clicker
---   Visuals:       Players (ESP) | World (Watermark + HUD + Tracers/Hitmarker)
+--   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
@@ -48,6 +48,8 @@ end
 -- ============ СОСТОЯНИЕ ============
 local S = {
     flying=false, noclip=false, esp=false, speed=50,
+    espBox=true, espSkeleton=true, espChams=true, espNames=true, chamStyle="Purple",
+    targetEspOn=false, targetStyle="Pink", targetEspConn=nil,
     wmOn=true,
     bv=nil, bg=nil, flyConn=nil, noclipConn=nil, espConn=nil,
     fps=60, ping=0,
@@ -929,6 +931,22 @@ ESPGui.Parent = LP:WaitForChild("PlayerGui")
 local espObjects = {}
 local skeletonFrames = {}
 
+-- неоновые стили подсветки (как на скриншотах)
+local CHAM_STYLES = {
+    Purple = {fill = Color3.fromRGB(170, 0, 255),  outline = Color3.fromRGB(225, 110, 255)},
+    Pink   = {fill = Color3.fromRGB(255, 0, 200),  outline = Color3.fromRGB(255, 120, 240)},
+    Red    = {fill = Color3.fromRGB(255, 40, 40),  outline = Color3.fromRGB(255, 150, 80)},
+    Green  = {fill = Color3.fromRGB(40, 255, 130), outline = Color3.fromRGB(190, 255, 190)},
+    Cyan   = {fill = Color3.fromRGB(0, 190, 255),  outline = Color3.fromRGB(150, 235, 255)},
+    Gold   = {fill = Color3.fromRGB(255, 190, 40), outline = Color3.fromRGB(255, 240, 160)},
+}
+local TARGET_STYLES = {
+    Pink   = CHAM_STYLES.Pink,
+    Purple = CHAM_STYLES.Purple,
+    Red    = CHAM_STYLES.Red,
+    Gold   = CHAM_STYLES.Gold,
+}
+
 local function isAlive(plr)
     local ch = plr.Character
     if not ch then return false end
@@ -946,9 +964,9 @@ local function createESP(plr)
     local ch = plr.Character
     if ch then
         local hl = Instance.new("Highlight")
-        hl.FillColor = Color3.fromRGB(255, 40, 40)
-        hl.OutlineColor = Color3.fromRGB(255, 255, 0)
-        hl.FillTransparency = 0.4
+        hl.FillColor = Color3.fromRGB(170, 0, 255)
+        hl.OutlineColor = Color3.fromRGB(225, 110, 255)
+        hl.FillTransparency = 0.5
         hl.OutlineTransparency = 0
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         hl.Adornee = ch
@@ -1037,10 +1055,16 @@ local function updateESP()
             local hrp = ch:FindFirstChild("HumanoidRootPart")
 
             if data.highlight then
+                local st = CHAM_STYLES[S.chamStyle] or CHAM_STYLES.Purple
                 data.highlight.Adornee = ch
-                data.highlight.Enabled = true
+                data.highlight.FillColor = st.fill
+                data.highlight.OutlineColor = st.outline
+                data.highlight.Enabled = S.espChams
             end
-            if data.billboard and head then data.billboard.Adornee = head end
+            if data.billboard then
+                data.billboard.Enabled = S.espNames
+                if head then data.billboard.Adornee = head end
+            end
             if data.nameLabel then data.nameLabel.Text = plr.Name end
             if data.hpLabel and hum then
                 local hp = math.floor(hum.Health)
@@ -1079,7 +1103,7 @@ local function updateESP()
                 local footPos = hrp.Position - Vector3.new(0, 3, 0)
                 local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
                 local botV, botOn = cam:WorldToViewportPoint(footPos)
-                if topOn and botOn then
+                if topOn and botOn and S.espBox then
                     local height = math.abs(botV.Y - topV.Y)
                     local width = height * 0.55
                     local x = topV.X - width / 2
@@ -1115,6 +1139,14 @@ local function updateESP()
 end
 
 local function drawSkeleton()
+    if not S.espSkeleton then
+        for _, frames in pairs(skeletonFrames) do
+            for _, f in ipairs(frames) do
+                if f then f.Visible = false end
+            end
+        end
+        return
+    end
     local cam = workspace.CurrentCamera
     for plr, data in pairs(espObjects) do
         local ch = plr.Character
@@ -1216,6 +1248,56 @@ local function disableESP()
         end
     end
     skeletonFrames = {}
+end
+
+-- ============ TARGET ESP (подсветка текущей цели) ============
+local TargetHL = Instance.new("Highlight")
+TargetHL.FillTransparency = 0.35
+TargetHL.OutlineTransparency = 0
+TargetHL.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+TargetHL.Enabled = false
+TargetHL.Parent = ESPGui
+
+local function currentEspTarget()
+    if S.silentAimOn then
+        local p = findSilentTarget()
+        if p then return p end
+    end
+    if S.aimbotOn then
+        local part = getClosestTarget()
+        if part then
+            local p = Players:GetPlayerFromCharacter(part.Parent)
+            if p then return p end
+        end
+    end
+    return nil
+end
+
+local function enableTargetESP()
+    S.targetEspOn = true
+    if S.targetEspConn then S.targetEspConn:Disconnect() end
+    S.targetEspConn = RunService.RenderStepped:Connect(function()
+        if not S.targetEspOn then return end
+        local p = currentEspTarget()
+        if p and p ~= LP and isAlive(p) and not isTeammate(p) and p.Character then
+            local st = TARGET_STYLES[S.targetStyle] or TARGET_STYLES.Pink
+            TargetHL.FillColor = st.fill
+            TargetHL.OutlineColor = st.outline
+            TargetHL.FillTransparency = 0.35 + 0.15 * math.sin(tick() * 6) -- пульсация
+            TargetHL.Adornee = p.Character
+            TargetHL.Enabled = true
+        else
+            TargetHL.Enabled = false
+            TargetHL.Adornee = nil
+        end
+    end)
+end
+
+local function disableTargetESP()
+    S.targetEspOn = false
+    if S.targetEspConn then S.targetEspConn:Disconnect() S.targetEspConn = nil end
+    TargetHL.Enabled = false
+    TargetHL.Adornee = nil
 end
 
 -- ============ WATERMARK ============
@@ -2480,10 +2562,36 @@ do
     addToggle(pEsp, "esp.enabled", "Enabled", false, function(state)
         if state then enableESP() else disableESP() end
     end)
-    addText(pEsp, "Подсветка + бокс + скелет + имя + HP + детектор чужого хитбокса (⚠ если увеличен).")
+    addText(pEsp, "Детектор чужого хитбокса (⚠ если увеличен) идёт вместе с именами.")
 
-    local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "Работает и для R6, и для R15 персонажей. Обновляется каждый кадр.")
+    local pComp = addPanel(pg.col1, "Components")
+    addToggle(pComp, "esp.chams", "Chams (неон)", true, function(state)
+        S.espChams = state
+    end)
+    addToggle(pComp, "esp.box", "Box", true, function(state)
+        S.espBox = state
+    end)
+    addToggle(pComp, "esp.skeleton", "Skeleton", true, function(state)
+        S.espSkeleton = state
+    end)
+    addToggle(pComp, "esp.names", "Name + HP", true, function(state)
+        S.espNames = state
+    end)
+
+    local pStyle = addPanel(pg.col2, "Chams Style")
+    addDropdown(pStyle, "esp.chamstyle", "Style", {"Purple", "Pink", "Red", "Green", "Cyan", "Gold"}, "Purple", function(v)
+        S.chamStyle = v
+    end)
+    addText(pStyle, "Неоновый глоу сквозь стены — как на скринах. Стиль применяется мгновенно. R6 и R15.")
+
+    local pTgt = addPanel(pg.col2, "Target ESP")
+    addToggle(pTgt, "esp.target", "Enabled", false, function(state)
+        if state then enableTargetESP() else disableTargetESP() end
+    end)
+    addDropdown(pTgt, "esp.targetstyle", "Color", {"Pink", "Purple", "Red", "Gold"}, "Pink", function(v)
+        S.targetStyle = v
+    end)
+    addText(pTgt, "Пульсирующая неоновая подсветка текущей цели Aimbot / Silent Aim. Работает отдельно от обычного ESP.")
 end
 
 -- ==== World (Watermark + HUD) ====
@@ -2711,6 +2819,7 @@ function fullCleanupNL()
     if S.flyConn then S.flyConn:Disconnect() end
     if S.noclipConn then S.noclipConn:Disconnect() end
     if S.espConn then S.espConn:Disconnect() end
+    if S.targetEspConn then S.targetEspConn:Disconnect() end
     if S.wsConn then S.wsConn:Disconnect() end
     if S.clickTpConn then S.clickTpConn:Disconnect() end
     if S.hitboxConn then S.hitboxConn:Disconnect() end
@@ -2741,6 +2850,7 @@ function fullCleanupNL()
         end
     end
     pcall(disableESP)
+    pcall(disableTargetESP)
     for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle"}) do
         local g = LP.PlayerGui:FindFirstChild(n)
         if g then g:Destroy() end
@@ -2972,4 +3082,4 @@ end)
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
 print("Combat: Legitbot | Hitbox | Kill Player | Fling | Auto Clicker | +Tracers/Hitmarker/Spin/GodMode/TeamCheck/VisibleCheck")
-print("Visuals: Players (ESP) | World (Watermark/HUD) | Movement: Fly/Noclip/Jesus + Click TP | Player | Miscellaneous")
+print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus + Click TP | Player | Misc")
