@@ -66,7 +66,7 @@ local S = {
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
-    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false,
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space",
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
@@ -983,21 +983,37 @@ local function enableAntiAim()
         end
 
         if yaw or pitch ~= 0 then
-            local pos = root.Position
-            local vel = root.AssemblyLinearVelocity
-            if pitch ~= 0 and hum then
-                -- капсула ложится -> опускаем центр к земле, контакт без отскока
-                local drop = (hum.HipHeight or 0) + root.Size.Y / 2 - 0.5
-                if drop > 0 then
-                    pos = pos - Vector3.new(0, drop, 0)
+            local pos
+            if pitch ~= 0 then
+                if hum and not hum.PlatformStand then
+                    hum.PlatformStand = true -- отключить автовыпрямление: физика не борется с позой
                 end
+                -- зафиксировать точку лежания ОДИН раз -> тело не ездит/не крутится по земле, камера не дёргается
+                if S.aaPinPos and (root.Position - S.aaPinPos).Magnitude > 6 then
+                    S.aaPinPos = nil -- сдох/зареспавнился/телепорт — закрепить новое место
+                end
+                if not S.aaPinPos then
+                    local p0 = root.Position
+                    local drop0 = hum and ((hum.HipHeight or 0) + root.Size.Y / 2 - 0.5) or 0
+                    if drop0 > 0 then
+                        p0 = p0 - Vector3.new(0, drop0, 0)
+                    end
+                    S.aaPinPos = p0
+                end
+                pos = S.aaPinPos
+            else
+                if S.aaPinPos then S.aaPinPos = nil end
+                if hum and hum.PlatformStand then hum.PlatformStand = false end
+                pos = root.Position
             end
             root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
             if pitch ~= 0 then
-                -- не даём гуманоиду "встать обратно": гасим вращение и отскок вверх
                 root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                root.AssemblyLinearVelocity = Vector3.new(vel.X, math.min(vel.Y, 0), vel.Z)
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             end
+        else
+            if S.aaPinPos then S.aaPinPos = nil end
+            if hum and hum.PlatformStand then hum.PlatformStand = false end
         end
     end)
 end
@@ -1005,9 +1021,11 @@ end
 local function disableAntiAim()
     S.aaOn = false
     if S.aaConn then S.aaConn:Disconnect() S.aaConn = nil end
-    -- вернуть скорость после Slow Walk
+    S.aaPinPos = nil
     local ch = LP.Character
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum and hum.PlatformStand then hum.PlatformStand = false end
+    -- вернуть скорость после Slow Walk
     if S.aaSlowWalk and hum then
         hum.WalkSpeed = S.walkSpeedOn and S.walkSpeed or 16
     end
@@ -2704,7 +2722,7 @@ do
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "НАСТОЯЩИЕ fake angles: фейк держится постоянно — его видят и сервер, и другие игроки. Вражеский аимбот целится в фейковое тело.")
-    addText(pInfo, "Slow Walk — заниженная скорость, пока включён Anti-Aim (не совмещать со Walk Speed из вкладки Player).")
+    addText(pInfo, "Slow Walk — заниженная скорость, пока включён Anti-Aim (не совмещать со Walk Speed). Pitch ложит тело на месте — движение при Pitch недоступно (как в реале).")
 end
 
 -- ==== Auto Clicker ====
