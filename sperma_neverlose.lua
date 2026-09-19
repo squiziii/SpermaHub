@@ -24,7 +24,7 @@ for _, n in ipairs({
     "SpermaHub","SpermaHubToast","SpermaHubWatermark","SpermaHubToggle",
     "SpermaHubESP","SpermaHubSettings","SpermaHubWsSettings","SpermaHubTpList",
     "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle",
-    "SpermaHubRadar","SpermaHubSpec"
+    "SpermaHubSpec"
 }) do
     local o = LP.PlayerGui:FindFirstChild(n)
     if o then o:Destroy() end
@@ -74,7 +74,6 @@ local S = {
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
-    radarOn=false, radarConn=nil, radarRange=80,
     specOn=false, specConn=nil, specTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
@@ -1140,128 +1139,6 @@ end
 local function disableStrafe()
     S.strafeOn = false
     if S.strafeConn then S.strafeConn:Disconnect() S.strafeConn = nil end
-end
-
--- ============ RADAR 2D ============
-local RadarGui = Instance.new("ScreenGui")
-RadarGui.Name = "SpermaHubRadar"
-RadarGui.ResetOnSpawn = false
-RadarGui.IgnoreGuiInset = true
-RadarGui.DisplayOrder = 80
-RadarGui.Parent = LP:WaitForChild("PlayerGui")
-
-local RadarFrame = Instance.new("Frame")
-RadarFrame.Size = UDim2.new(0, 160, 0, 160)
-RadarFrame.Position = UDim2.new(1, -172, 0, 12)
-RadarFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
-RadarFrame.BackgroundTransparency = 0.25
-RadarFrame.BorderSizePixel = 0
-RadarFrame.Active = true
-RadarFrame.Draggable = true
-RadarFrame.Visible = false
-RadarFrame.ClipsDescendants = true
-RadarFrame.Parent = RadarGui
-do
-    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = RadarFrame
-    local s = Instance.new("UIStroke") s.Color = Color3.fromRGB(80, 60, 140) s.Thickness = 1 s.Transparency = 0.4 s.Parent = RadarFrame
-    -- центральная точка (ты)
-    local me = Instance.new("Frame")
-    me.Size = UDim2.new(0, 5, 0, 5)
-    me.AnchorPoint = Vector2.new(0.5, 0.5)
-    me.Position = UDim2.new(0.5, 0, 0.5, 0)
-    me.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    me.BorderSizePixel = 0
-    me.ZIndex = 3
-    me.Parent = RadarFrame
-    local mc = Instance.new("UICorner") mc.CornerRadius = UDim.new(1, 0) mc.Parent = me
-    -- крест-линии
-    for _, v in ipairs({{1, 0, 0.5, 0}, {0, 0, 1, 0.5}}) do
-        local l = Instance.new("Frame")
-        l.BackgroundColor3 = Color3.fromRGB(60, 60, 90)
-        l.BackgroundTransparency = 0.5
-        l.BorderSizePixel = 0
-        if v[1] == 1 then
-            l.Size = UDim2.new(1, 0, 0, 1) l.Position = UDim2.new(0, 0, 0.5, 0)
-        else
-            l.Size = UDim2.new(0, 1, 1, 0) l.Position = UDim2.new(0.5, 0, 0, 0)
-        end
-        l.Parent = RadarFrame
-    end
-end
-
-local radarDots = {}
-
-local function enableRadar()
-    S.radarOn = true
-    RadarFrame.Visible = true
-    if S.radarConn then S.radarConn:Disconnect() end
-    S.radarConn = RunService.RenderStepped:Connect(function()
-        if not S.radarOn then return end
-        local cam = workspace.CurrentCamera
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        local lv = cam.CFrame.LookVector
-        local fw = Vector3.new(lv.X, 0, lv.Z)
-        if fw.Magnitude < 0.05 then fw = Vector3.new(0, 0, -1) end
-        fw = fw.Unit
-        local rv = cam.CFrame.RightVector
-        local rg = Vector3.new(rv.X, 0, rv.Z)
-        rg = rg.Magnitude > 0.05 and rg.Unit or Vector3.new(1, 0, 0)
-        local half = RadarFrame.AbsoluteSize.X / 2
-        if half < 10 then return end
-
-        -- актуализируем точки
-        local seen = {}
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LP then
-                seen[plr] = true
-                local dot = radarDots[plr]
-                if not dot then
-                    dot = Instance.new("Frame")
-                    dot.Size = UDim2.new(0, 5, 0, 5)
-                    dot.AnchorPoint = Vector2.new(0.5, 0.5)
-                    dot.BorderSizePixel = 0
-                    dot.ZIndex = 3
-                    local dc = Instance.new("UICorner") dc.CornerRadius = UDim.new(1, 0) dc.Parent = dot
-                    dot.Parent = RadarFrame
-                    radarDots[plr] = dot
-                end
-                local troot = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
-                local thum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
-                if troot and thum and thum.Health > 0 then
-                    local rel = troot.Position - root.Position
-                    rel = Vector3.new(rel.X, 0, rel.Z)
-                    if rel.Magnitude > S.radarRange then
-                        rel = rel.Unit * S.radarRange -- зажать на край
-                    end
-                    local px = rel:Dot(rg) / S.radarRange * half
-                    local py = -rel:Dot(fw) / S.radarRange * half
-                    dot.Position = UDim2.new(0.5, px, 0.5, py)
-                    dot.BackgroundColor3 = (plr.Team == LP.Team) and Color3.fromRGB(80, 255, 120) or Color3.fromRGB(255, 70, 70)
-                    dot.Visible = true
-                else
-                    dot.Visible = false
-                end
-            end
-        end
-        for plr, dot in pairs(radarDots) do
-            if not seen[plr] then
-                dot:Destroy()
-                radarDots[plr] = nil
-            end
-        end
-    end)
-end
-
-local function disableRadar()
-    S.radarOn = false
-    if S.radarConn then S.radarConn:Disconnect() S.radarConn = nil end
-    RadarFrame.Visible = false
-    for plr, dot in pairs(radarDots) do
-        dot:Destroy()
-        radarDots[plr] = nil
-    end
 end
 
 -- ============ SPECTATE (с мини-окном) ============
@@ -3157,15 +3034,6 @@ do
         HUDGui.Enabled = state
     end)
 
-    local pRadar = addPanel(pg.col1, "Radar 2D")
-    addToggle(pRadar, "radar.enabled", "Enabled", false, function(state)
-        if state then enableRadar() else disableRadar() end
-    end)
-    addSlider(pRadar, "radar.range", "Range (studs)", 20, 200, 80, 10, function(v)
-        S.radarRange = math.floor(v)
-    end)
-    addText(pRadar, "Миникарта (перетаскивается): красные — враги, зелёные — твоя команда. Верх = направление камеры.")
-
     local pFx = addPanel(pg.col2, "Effects")
     addToggle(pFx, "fx.tracers", "Bullet Tracers", false, function(state)
         S.tracersOn = state
@@ -3421,7 +3289,6 @@ function fullCleanupNL()
     if S.bhopConn then S.bhopConn:Disconnect() end
     if S.afConn then S.afConn:Disconnect() end
     if S.strafeConn then S.strafeConn:Disconnect() end
-    if S.radarConn then S.radarConn:Disconnect() end
     if S.specConn then S.specConn:Disconnect() end
     pcall(exitSpectate)
     if S.godConn then S.godConn:Disconnect() end
@@ -3445,7 +3312,7 @@ function fullCleanupNL()
     end
     pcall(disableESP)
     pcall(disableTargetESP)
-    for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubRadar","SpermaHubSpec"}) do
+    for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubSpec"}) do
         local g = LP.PlayerGui:FindFirstChild(n)
         if g then g:Destroy() end
     end
@@ -3679,5 +3546,5 @@ end)
 
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
-print("Combat: Legitbot | Hitbox | Kill | Fling | Spectate | Anti-Aim | AutoClicker + Radar/AntiFling/AutoStrafe")
+print("Combat: Legitbot | Hitbox | Kill | Fling | Spectate | Anti-Aim | AutoClicker + AntiFling/AutoStrafe")
 print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus/Bhop + Click TP | Player | Misc")
