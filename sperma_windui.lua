@@ -12,6 +12,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local Stats = game:GetService("Stats")
+local GuiService = game:GetService("GuiService")
 local LP = Players.LocalPlayer
 
 -- ============ ОЧИСТКА СТАРЫХ ВЕРСИЙ ============
@@ -364,6 +365,30 @@ local function clickMouse(button)
     end
 end
 
+-- Клик разрешён только "в игре": не в чате и не когда курсор над любым GUI
+local hudIgnore = {
+    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, -- декоративные элементы скрипта не считаем
+}
+local function canClickInGame()
+    if UIS:GetFocusedTextBox() then return false end -- чат / поле ввода
+    local loc = UIS:GetMouseLocation()
+    local ok, objs = pcall(function()
+        local inset = GuiService:GetGuiInset()
+        return LP.PlayerGui:GetGuiObjectsAtPosition(loc.X - inset.X, loc.Y - inset.Y)
+    end)
+    if ok and objs then
+        for _, o in ipairs(objs) do
+            if o.Visible then
+                local sg = o:FindFirstAncestorOfClass("ScreenGui")
+                if not (sg and hudIgnore[sg.Name]) then
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
 local function enableAutoClicker()
     S.autoClickOn = false
     S.autoClickGen = S.autoClickGen + 1 -- останавливаем прошлый цикл
@@ -372,11 +397,13 @@ local function enableAutoClicker()
     task.spawn(function()
         while S.autoClickOn and gen == S.autoClickGen do
             local interval = 1 / math.max(S.autoClickCps, 1)
-            if S.autoClickMode == "ЛКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
-                clickMouse(1)
-            end
-            if S.autoClickMode == "ПКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
-                clickMouse(2)
+            if canClickInGame() then
+                if S.autoClickMode == "ЛКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
+                    clickMouse(1)
+                end
+                if S.autoClickMode == "ПКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
+                    clickMouse(2)
+                end
             end
             task.wait(interval)
         end
@@ -1524,7 +1551,7 @@ local AcSection = CombatTab:Section({
 
 local AutoClickToggle = AcSection:Toggle({
     Title = "Auto Clicker",
-    Desc = "Сам кликает ЛКМ/ПКМ с заданной скоростью",
+    Desc = "Сам кликает ЛКМ/ПКМ с заданной скоростью, только когда курсор над игрой",
     Value = false,
     Callback = function(state)
         if state then enableAutoClicker() else disableAutoClicker() end
