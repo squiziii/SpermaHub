@@ -67,7 +67,6 @@ local S = {
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
     aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false,
-    aaStepConn=nil, aaRealCF=nil,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space",
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
@@ -899,10 +898,13 @@ S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
     pcall(onShotHitmarker)
 end)
 
--- ============ ANTI-AIM (fake angles, реал-стайл) ============
--- Схема стабильности: фейковый CFrame ставим ТОЛЬКО на рендер-кадр (RenderStepped),
--- а перед физикой (Stepped) откатываем на настоящий. Поэтому персонаж стоит ровно
--- на месте, ходит, прыгает и нормально тормозит — физика никогда не видит фейковых углов.
+-- ============ ANTI-AIM (НАСТОЯЩИЕ fake angles) ============
+-- Фейковый CFrame ставится в Heartbeat (после физики, перед отправкой на сервер)
+-- и больше НЕ откатывается — его видят и сервер, и другие игроки.
+-- Стабильность:
+--  * yaw не влияет на физику (капсула круглая) — ходьба/прыжки как обычно;
+--  * pitch: тело опускается к земле и обнуляется угловая скорость,
+--    чтобы капсула спокойно лежала, а не отпрыгивала.
 local function getCamYawDeg()
     local cam = workspace.CurrentCamera
     local lv = cam.CFrame.LookVector
@@ -933,10 +935,7 @@ end
 local function enableAntiAim()
     S.aaOn = true
     if S.aaConn then S.aaConn:Disconnect() end
-    if S.aaStepConn then S.aaStepConn:Disconnect() end
-
-    -- 1) рендер-кадр: настоящий CFrame запоминаем, ставим фейковый
-    S.aaConn = RunService.RenderStepped:Connect(function(dt)
+    S.aaConn = RunService.Heartbeat:Connect(function(dt)
         if not S.aaOn then return end
         local ch = LP.Character
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
@@ -984,30 +983,21 @@ local function enableAntiAim()
         end
 
         if yaw or pitch ~= 0 then
-            local trueCF = root.CFrame
-            local pos = trueCF.Position
+            local pos = root.Position
+            local vel = root.AssemblyLinearVelocity
             if pitch ~= 0 and hum then
-                -- тело лежит горизонтально -> опускаем визуал к земле (иначе парит)
+                -- капсула ложится -> опускаем центр к земле, контакт без отскока
                 local drop = (hum.HipHeight or 0) + root.Size.Y / 2 - 0.5
                 if drop > 0 then
                     pos = pos - Vector3.new(0, drop, 0)
                 end
             end
-            S.aaRealCF = trueCF
             root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
-        end
-    end)
-
-    -- 2) перед физикой: возвращаем настоящий CFrame -> никаких подпрыгиваний
-    S.aaStepConn = RunService.Stepped:Connect(function()
-        if not S.aaOn then return end
-        if S.aaRealCF then
-            local ch = LP.Character
-            local root = ch and ch:FindFirstChild("HumanoidRootPart")
-            if root then
-                root.CFrame = S.aaRealCF
+            if pitch ~= 0 then
+                -- не даём гуманоиду "встать обратно": гасим вращение и отскок вверх
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyLinearVelocity = Vector3.new(vel.X, math.min(vel.Y, 0), vel.Z)
             end
-            S.aaRealCF = nil
         end
     end)
 end
@@ -1015,8 +1005,6 @@ end
 local function disableAntiAim()
     S.aaOn = false
     if S.aaConn then S.aaConn:Disconnect() S.aaConn = nil end
-    if S.aaStepConn then S.aaStepConn:Disconnect() S.aaStepConn = nil end
-    S.aaRealCF = nil
     -- вернуть скорость после Slow Walk
     local ch = LP.Character
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
@@ -2715,7 +2703,7 @@ do
     addText(pExtra, "Freestanding — сам встаёт спиной к ближайшему врагу (до 60 стадов). Если врага рядом нет — спиной к камере.")
 
     local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "Реал-стайл анти-аим (как на скрине из Neverlose): фейковые углы тела, чтобы вражеский аимбот целился не туда.")
+    addText(pInfo, "НАСТОЯЩИЕ fake angles: фейк держится постоянно — его видят и сервер, и другие игроки. Вражеский аимбот целится в фейковое тело.")
     addText(pInfo, "Slow Walk — заниженная скорость, пока включён Anti-Aim (не совмещать со Walk Speed из вкладки Player).")
 end
 
@@ -3031,7 +3019,6 @@ function fullCleanupNL()
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
     if S.spinConn then S.spinConn:Disconnect() end
     if S.aaConn then S.aaConn:Disconnect() end
-    if S.aaStepConn then S.aaStepConn:Disconnect() end
     if S.bhopConn then S.bhopConn:Disconnect() end
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
