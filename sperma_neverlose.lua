@@ -986,6 +986,13 @@ local function enableAntiAim()
         if yaw or pitch ~= 0 then
             local trueCF = root.CFrame
             local pos = trueCF.Position
+            if pitch ~= 0 and hum then
+                -- тело лежит горизонтально -> опускаем визуал к земле (иначе парит)
+                local drop = (hum.HipHeight or 0) + root.Size.Y / 2 - 0.5
+                if drop > 0 then
+                    pos = pos - Vector3.new(0, drop, 0)
+                end
+            end
             S.aaRealCF = trueCF
             root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
         end
