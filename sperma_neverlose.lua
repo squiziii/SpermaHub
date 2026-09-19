@@ -2,10 +2,10 @@
 -- Интерфейс в стиле NEVERLOSE (как на скрине): сайдбар + топбар + двухколоночные панели,
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
---   Combat:        Legitbot (Aimbot + Silent Aim + Visualize FOV) | Hitbox | Kill Player | Auto Clicker
---   Visuals:       Players (ESP: подсветка+бокс+скелет+HP) | World (Watermark + NL-style HUD)
---   Movement:      Main (Flight/Noclip/Jesus) | Teleport (Click TP)
---   Player:        Main (WalkSpeed + TP Player)
+--   Combat:        Legitbot (Aimbot + Silent Aim + Team/Visible Check) | Hitbox | Kill Player | Fling | Auto Clicker
+--   Visuals:       Players (ESP) | World (Watermark + HUD + Tracers/Hitmarker)
+--   Movement:      Main (Flight/Noclip/Jesus/Spin) | Teleport (Click TP)
+--   Player:        Main (WalkSpeed + God Mode + TP Player)
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
 
@@ -20,7 +20,7 @@ local LP = Players.LocalPlayer
 for _, n in ipairs({
     "SpermaHub","SpermaHubToast","SpermaHubWatermark","SpermaHubToggle",
     "SpermaHubESP","SpermaHubSettings","SpermaHubWsSettings","SpermaHubTpList",
-    "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubNL","SpermaHubNLToggle"
+    "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle"
 }) do
     local o = LP.PlayerGui:FindFirstChild(n)
     if o then o:Destroy() end
@@ -60,12 +60,43 @@ local S = {
     autoClickOn=false, autoClickCps=10, autoClickMode="ЛКМ",
     autoClickGen=0, autoClickBind=Enum.KeyCode.X, autoClickBindConn=nil,
     jesusOn=false, jesusConn=nil, jesusPlatform=nil,
+    teamCheck=false, visibleCheck=false,
+    tracersOn=false, hitmarkerOn=false, fxConn=nil,
+    spinOn=false, spinSpeed=90, spinConn=nil,
+    godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
 
 -- ============================================================
 -- ============ ЛОГИКА (перенесена из sperma.lua) =============
 -- ============================================================
+
+-- ============ TEAM CHECK / VISIBLE CHECK ============
+local function isTeammate(plr)
+    if not S.teamCheck then return false end
+    if not plr or plr == LP then return false end
+    if not plr.Team or not LP.Team then return false end
+    return plr.Team == LP.Team
+end
+
+local visCheckParams = RaycastParams.new()
+visCheckParams.FilterType = Enum.RaycastFilterType.Exclude
+
+-- true, если от камеры до части нет препятствий (wallcheck)
+local function isVisible(part)
+    if not S.visibleCheck then return true end
+    if not part then return false end
+    local cam = workspace.CurrentCamera
+    if not cam then return true end
+    local ch = LP.Character
+    visCheckParams.FilterDescendantsInstances = ch and {ch} or {}
+    local origin = cam.CFrame.Position
+    local ok, result = pcall(function()
+        return workspace:Raycast(origin, part.Position - origin, visCheckParams)
+    end)
+    if not ok or not result then return true end
+    return result.Instance:IsDescendantOf(part.Parent)
+end
 
 -- ============ FOV CIRCLE ============
 local FovGui = Instance.new("ScreenGui")
@@ -162,7 +193,7 @@ local function getClosestTarget()
             if ch then
                 local head = ch:FindFirstChild("Head")
                 local hum = ch:FindFirstChildOfClass("Humanoid")
-                if head and hum and hum.Health > 0 then
+                if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
                     local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
                     if onScreen then
                         local centerX = cam.ViewportSize.X / 2
@@ -212,7 +243,7 @@ local function findSilentTarget()
             if ch then
                 local head = ch:FindFirstChild("Head")
                 local hum = ch:FindFirstChildOfClass("Humanoid")
-                if head and hum and hum.Health > 0 then
+                if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
                     local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
                     if onScreen then
                         local centerX = cam.ViewportSize.X / 2
@@ -675,6 +706,193 @@ local function disableJesus()
     if S.jesusPlatform then S.jesusPlatform.Position = Vector3.new(0, -1e5, 0) end
 end
 
+-- ============ SPIN (вращение персонажа) ============
+local function enableSpin()
+    S.spinOn = true
+    if S.spinConn then S.spinConn:Disconnect() end
+    S.spinConn = RunService.RenderStepped:Connect(function(dt)
+        if not S.spinOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(S.spinSpeed) * dt, 0)
+    end)
+end
+
+local function disableSpin()
+    S.spinOn = false
+    if S.spinConn then S.spinConn:Disconnect() S.spinConn = nil end
+end
+
+-- ============ GOD MODE (лок HP) ============
+local function enableGod()
+    S.godOn = true
+    if S.godConn then S.godConn:Disconnect() end
+    S.godConn = RunService.Heartbeat:Connect(function()
+        if not S.godOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health < hum.MaxHealth then
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+    end)
+end
+
+local function disableGod()
+    S.godOn = false
+    if S.godConn then S.godConn:Disconnect() S.godConn = nil end
+end
+
+-- ============ FLING ============
+local function flingPlayer(target)
+    local ch = LP.Character
+    if not ch then return end
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local tChar = target and target.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+    if S.flingConn then pcall(function() S.flingConn:Disconnect() end) S.flingConn = nil end
+    local oldCF = root.CFrame
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    local t0 = tick()
+    S.flingConn = RunService.Heartbeat:Connect(function()
+        if not root.Parent or not tRoot.Parent then return end
+        if tick() - t0 > 0.8 then return end
+        root.CFrame = tRoot.CFrame + Vector3.new(math.random(-5, 5) / 10, 0, math.random(-5, 5) / 10)
+        bv.Velocity = Vector3.new((math.random() - 0.5) * 900, 350, (math.random() - 0.5) * 900)
+        bv.Parent = root
+    end)
+    task.delay(0.85, function()
+        if S.flingConn then S.flingConn:Disconnect() S.flingConn = nil end
+        pcall(function() bv:Destroy() end)
+        if root.Parent then
+            root.Velocity = Vector3.zero
+            root.CFrame = oldCF
+        end
+    end)
+end
+
+-- ============ BULLET TRACERS + HITMARKER ============
+local HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
+
+local FxGui = Instance.new("ScreenGui")
+FxGui.Name = "SpermaHubFx"
+FxGui.ResetOnSpawn = false
+FxGui.IgnoreGuiInset = true
+FxGui.DisplayOrder = 102
+FxGui.Parent = LP:WaitForChild("PlayerGui")
+
+local function drawTracer(from3D, to3D)
+    local cam = workspace.CurrentCamera
+    local v1, on1 = cam:WorldToViewportPoint(from3D)
+    local v2, on2 = cam:WorldToViewportPoint(to3D)
+    if not on1 and not on2 then return end
+    local dx = v2.X - v1.X
+    local dy = v2.Y - v1.Y
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length < 2 then return end
+    local f = Instance.new("Frame")
+    f.AnchorPoint = Vector2.new(0.5, 0.5)
+    f.Position = UDim2.new(0, (v1.X + v2.X) / 2, 0, (v1.Y + v2.Y) / 2)
+    f.Size = UDim2.new(0, length, 0, 2)
+    f.Rotation = math.deg(math.atan2(dy, dx))
+    f.BackgroundColor3 = Color3.fromRGB(255, 220, 130)
+    f.BackgroundTransparency = 0.1
+    f.BorderSizePixel = 0
+    f.ZIndex = 8
+    f.Parent = FxGui
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(1, 0)
+    c.Parent = f
+    local TweenService = game:GetService("TweenService")
+    TweenService:Create(f, TweenInfo.new(0.28), {BackgroundTransparency = 1}):Play()
+    task.delay(0.35, function() pcall(function() f:Destroy() end) end)
+end
+
+local function showHitmarker()
+    for _, ang in ipairs({45, -45}) do
+        local bar = Instance.new("Frame")
+        bar.AnchorPoint = Vector2.new(0.5, 0.5)
+        bar.Position = UDim2.new(0.5, 0, 0.5, 0)
+        bar.Size = UDim2.new(0, 14, 0, 2)
+        bar.Rotation = ang
+        bar.BackgroundColor3 = Color3.fromRGB(255, 90, 90)
+        bar.BackgroundTransparency = 0
+        bar.BorderSizePixel = 0
+        bar.ZIndex = 9
+        bar.Parent = FxGui
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(1, 0)
+        c.Parent = bar
+        local TweenService = game:GetService("TweenService")
+        TweenService:Create(bar, TweenInfo.new(0.18), {BackgroundTransparency = 1}):Play()
+        task.delay(0.25, function() pcall(function() bar:Destroy() end) end)
+    end
+    if HM_SOUND_ID then
+        pcall(function()
+            local s = Instance.new("Sound")
+            s.SoundId = HM_SOUND_ID
+            s.Volume = 0.6
+            s.Parent = workspace
+            s:Play()
+            task.delay(1, function() pcall(function() s:Destroy() end) end)
+        end)
+    end
+end
+
+local function onShotTracer()
+    if not S.tracersOn then return end
+    local ch = LP.Character
+    if not ch then return end
+    local tool = ch:FindFirstChildOfClass("Tool")
+    if not tool then return end
+    local fromPart = tool:FindFirstChild("Handle") or tool.PrimaryPart or ch:FindFirstChild("HumanoidRootPart")
+    if not fromPart then return end
+    local to = nil
+    if S.silentAimOn then
+        local t = findSilentTarget()
+        local head = t and t.Character and t.Character:FindFirstChild("Head")
+        if head then to = head.Position end
+    end
+    if not to then
+        local mouse = LP:GetMouse()
+        if mouse and mouse.Hit then to = mouse.Hit.Position end
+    end
+    if to then drawTracer(fromPart.Position, to) end
+end
+
+local function onShotHitmarker()
+    if not S.hitmarkerOn then return end
+    local hit = false
+    if S.silentAimOn then
+        if findSilentTarget() then hit = true end
+    end
+    if not hit then
+        local mouse = LP:GetMouse()
+        if mouse and mouse.Target then
+            local model = mouse.Target:FindFirstAncestorOfClass("Model")
+            if model then
+                local plr = Players:GetPlayerFromCharacter(model)
+                if plr and plr ~= LP then hit = true end
+            end
+        end
+    end
+    if hit then showHitmarker() end
+end
+
+S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    local ch = LP.Character
+    if not ch or not ch:FindFirstChildOfClass("Tool") then return end
+    pcall(onShotTracer)
+    pcall(onShotHitmarker)
+end)
+
 -- ============ WALK SPEED ============
 local function applyWalkSpeed()
     local ch = LP.Character
@@ -720,7 +938,7 @@ local function isAlive(plr)
 end
 
 local function createESP(plr)
-    if plr == LP then return end
+    if plr == LP or isTeammate(plr) then return end
     if espObjects[plr] then return end
     local data = {lines = {}, highlight = nil, billboard = nil, boxLines = {}}
     espObjects[plr] = data
@@ -813,7 +1031,7 @@ local function updateESP()
     local cam = workspace.CurrentCamera
     for plr, data in pairs(espObjects) do
         local ch = plr.Character
-        if ch and isAlive(plr) then
+        if ch and isAlive(plr) and not isTeammate(plr) then
             local head = ch:FindFirstChild("Head")
             local hum = ch:FindFirstChildOfClass("Humanoid")
             local hrp = ch:FindFirstChild("HumanoidRootPart")
@@ -900,7 +1118,7 @@ local function drawSkeleton()
     local cam = workspace.CurrentCamera
     for plr, data in pairs(espObjects) do
         local ch = plr.Character
-        if ch and isAlive(plr) then
+        if ch and isAlive(plr) and not isTeammate(plr) then
             local parts = {}
             for _, p in ipairs(ch:GetChildren()) do
                 if p:IsA("BasePart") then parts[p.Name] = p end
@@ -2093,6 +2311,7 @@ local flightToggleCtl = nil
 local autoClickToggleCtl = nil
 local killListCtl = nil
 local tpListCtl = nil
+local flingListCtl = nil
 
 -- ---------------- AIMBOT (категория) ----------------
 addCategory("Combat")
@@ -2142,7 +2361,14 @@ do
         updateFovCircle()
         updateSilentFovCircle()
     end)
-    addText(pMisc, "Красный круг — Aimbot FOV, синий — Silent Aim FOV.")
+    addToggle(pMisc, "aimbot.teamcheck", "Team Check", false, function(state)
+        S.teamCheck = state
+        if S.esp then disableESP() enableESP() end
+    end)
+    addToggle(pMisc, "aimbot.visiblecheck", "Visible Check", false, function(state)
+        S.visibleCheck = state
+    end)
+    addText(pMisc, "Красный круг — Aimbot FOV, синий — Silent Aim FOV. Team Check игнорирует свою команду (и в ESP), Visible Check не целится сквозь стены.")
 end
 
 -- ==== Hitbox ====
@@ -2192,6 +2418,32 @@ do
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "Телепорт к цели + спам атакой. Нужно оружие в инвентаре.")
     addText(pInfo, "Число справа в списке — дистанция до игрока (studs).")
+end
+
+-- ==== Fling ====
+do
+    local pg = addPage("Combat", "🌀", "Fling")
+
+    local pTarget = addPanel(pg.col1, "Target")
+    local flingSel = nil
+    local flingList = makePlayerList(pTarget, 160)
+    flingList.connect(function(name) flingSel = name end)
+    flingListCtl = flingList
+    addButton(pTarget, "Refresh List", function()
+        flingList.rebuild(getPlayerListData())
+    end)
+    addButton(pTarget, "Fling Target", function()
+        local plr = flingSel and Players:FindFirstChild(flingSel)
+        if plr then
+            flingPlayer(plr)
+            toastImpl("Fling", "Флингую: " .. plr.Name)
+        else
+            toastImpl("Fling", "Сначала выбери цель!")
+        end
+    end, C_RED, C_RED_H)
+
+    local pInfo = addPanel(pg.col2, "Info")
+    addText(pInfo, "Налетает на цель с огромной скоростью ~0.8 сек и отбрасывает её, затем возвращает тебя на место.")
 end
 
 -- ==== Auto Clicker ====
@@ -2247,6 +2499,15 @@ do
         HUDGui.Enabled = state
     end)
 
+    local pFx = addPanel(pg.col2, "Effects")
+    addToggle(pFx, "fx.tracers", "Bullet Tracers", false, function(state)
+        S.tracersOn = state
+    end)
+    addToggle(pFx, "fx.hitmarker", "Hitmarker", false, function(state)
+        S.hitmarkerOn = state
+    end)
+    addText(pFx, "Работают при выстреле с оружием в руках. Трассер — до точки попадания / цели Silent Aim.")
+
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "Watermark — FPS/Ping/время/дата (перетаскивается).")
     addText(pInfo, "HUD — компактный бар сверху по центру: название + FPS.")
@@ -2283,6 +2544,15 @@ do
         if state then enableJesus() else disableJesus() end
     end)
     addText(pJesus, "Ходьба по воде — невидимая платформа под ногами ровно на поверхности воды. Не плывёшь, а идёшь.")
+
+    local pSpin = addPanel(pg.col2, "Spin")
+    addToggle(pSpin, "move.spin.enabled", "Enabled", false, function(state)
+        if state then enableSpin() else disableSpin() end
+    end)
+    addSlider(pSpin, "move.spin.speed", "Spin Speed", 10, 720, 90, 10, function(v)
+        S.spinSpeed = math.floor(v)
+    end)
+    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду.")
 end
 
 -- ==== Teleport (Click TP) ====
@@ -2325,6 +2595,12 @@ do
         local c = Cfg["ws.speed"]
         if c then c.set(tonumber(v)) end
     end)
+
+    local pGod = addPanel(pg.col1, "God Mode")
+    addToggle(pGod, "player.god.enabled", "Enabled", false, function(state)
+        if state then enableGod() else disableGod() end
+    end)
+    addText(pGod, "Держит HP на максимуме каждый кадр. Работает не во всех играх (где HP контролирует сервер).")
 
     local pTp = addPanel(pg.col2, "TP Player")
     local tpSel = nil
@@ -2444,6 +2720,10 @@ function fullCleanupNL()
     if S.autoClickBindConn then S.autoClickBindConn:Disconnect() end
     if S.jesusConn then S.jesusConn:Disconnect() end
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
+    if S.spinConn then S.spinConn:Disconnect() end
+    if S.godConn then S.godConn:Disconnect() end
+    if S.flingConn then S.flingConn:Disconnect() end
+    if S.fxConn then S.fxConn:Disconnect() end
     if S.bv then S.bv:Destroy() end
     if S.bg then S.bg:Destroy() end
     pcall(restoreHitbox)
@@ -2461,7 +2741,7 @@ function fullCleanupNL()
         end
     end
     pcall(disableESP)
-    for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubNL","SpermaHubNLToggle"}) do
+    for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle"}) do
         local g = LP.PlayerGui:FindFirstChild(n)
         if g then g:Destroy() end
     end
@@ -2626,6 +2906,7 @@ task.spawn(function()
         if S.guiAlive then
             pcall(function() killListCtl.rebuild(getPlayerListData()) end)
             pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
         end
     end
 end)
@@ -2635,12 +2916,14 @@ Players.PlayerAdded:Connect(function()
     if S.guiAlive then
         pcall(function() killListCtl.rebuild(getPlayerListData()) end)
         pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
     end
 end)
 Players.PlayerRemoving:Connect(function()
     if S.guiAlive then
         pcall(function() killListCtl.rebuild(getPlayerListData()) end)
         pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
     end
 end)
 
@@ -2677,6 +2960,7 @@ task.spawn(function()
     task.wait(0.5)
     pcall(function() killListCtl.rebuild(getPlayerListData()) end)
     pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
 end)
 
 -- тихая автозагрузка конфига Global (если есть)
@@ -2687,5 +2971,5 @@ end)
 
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
-print("Combat: Legitbot | Hitbox | Kill Player | Auto Clicker")
+print("Combat: Legitbot | Hitbox | Kill Player | Fling | Auto Clicker | +Tracers/Hitmarker/Spin/GodMode/TeamCheck/VisibleCheck")
 print("Visuals: Players (ESP) | World (Watermark/HUD) | Movement: Fly/Noclip/Jesus + Click TP | Player | Miscellaneous")
