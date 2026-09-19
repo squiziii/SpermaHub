@@ -1,7 +1,7 @@
 -- SpermaHub v41 | WindUI Edition
 -- GUI перенесена на библиотеку WindUI (https://github.com/Footagesus/WindUI)
 -- Перенесены ВСЕ разделы и функции из оригинального sperma.lua:
---   Combat:        Kill Player | Hitbox Expander | Aimbot | Silent Aim
+--   Combat:        Kill Player | Hitbox Expander | Aimbot | Silent Aim | Auto Clicker
 --   Movement:      Flight | Click TP | Noclip
 --   Visuals:       ESP (Box + Skeleton + HP + Hitbox) | Watermark (FPS/Ping/Time/Date) | HUD (NL-style)
 --   Player:        WalkSpeed | TP Player
@@ -62,6 +62,8 @@ local S = {
     aimbotOn=false, aimbotFov=120, aimbotSmooth=0.3, aimbotConn=nil,
     fovCircle=nil,
     silentAimOn=false, silentAimFov=150, silentAimConn=nil, silentAimFovCircle=nil,
+    autoClickOn=false, autoClickCps=10, autoClickMode="ЛКМ",
+    autoClickGen=0, autoClickBind=Enum.KeyCode.X, autoClickBindConn=nil,
     guiAlive=true,
 }
 
@@ -329,6 +331,61 @@ local function disableSilentAim()
         pcall(function() S.silentAimConn:Disconnect() end)
         S.silentAimConn = nil
     end
+end
+
+-- ============ AUTO CLICKER ЛОГИКА ============
+-- Клик через VirtualInputManager (резерв, если нет функций executor'а)
+local function vimClick(b) -- b: 0 = ЛКМ, 1 = ПКМ
+    pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        local loc = UIS:GetMouseLocation()
+        VIM:SendMouseButtonEvent(loc.X, loc.Y, b, true, false, 1)
+        task.wait(0.01)
+        VIM:SendMouseButtonEvent(loc.X, loc.Y, b, false, false, 1)
+    end)
+end
+
+-- button: 1 = ЛКМ, 2 = ПКМ
+local function clickMouse(button)
+    if button == 1 then
+        if type(mouse1click) == "function" then pcall(mouse1click)
+        elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
+            pcall(function() mouse1press() mouse1release() end)
+        else
+            vimClick(0)
+        end
+    else
+        if type(mouse2click) == "function" then pcall(mouse2click)
+        elseif type(mouse2press) == "function" and type(mouse2release) == "function" then
+            pcall(function() mouse2press() mouse2release() end)
+        else
+            vimClick(1)
+        end
+    end
+end
+
+local function enableAutoClicker()
+    S.autoClickOn = false
+    S.autoClickGen = S.autoClickGen + 1 -- останавливаем прошлый цикл
+    S.autoClickOn = true
+    local gen = S.autoClickGen
+    task.spawn(function()
+        while S.autoClickOn and gen == S.autoClickGen do
+            local interval = 1 / math.max(S.autoClickCps, 1)
+            if S.autoClickMode == "ЛКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
+                clickMouse(1)
+            end
+            if S.autoClickMode == "ПКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
+                clickMouse(2)
+            end
+            task.wait(interval)
+        end
+    end)
+end
+
+local function disableAutoClicker()
+    S.autoClickOn = false
+    S.autoClickGen = S.autoClickGen + 1
 end
 
 -- ============ HITBOX EXPANDER ЛОГИКА ============
@@ -1206,6 +1263,8 @@ local function fullCleanup()
     if S.hitboxConn then S.hitboxConn:Disconnect() end
     if S.aimbotConn then S.aimbotConn:Disconnect() end
     if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) end
+    disableAutoClicker()
+    if S.autoClickBindConn then S.autoClickBindConn:Disconnect() end
     if S.bv then S.bv:Destroy() end
     if S.bg then S.bg:Destroy() end
     pcall(restoreHitbox)
@@ -1454,6 +1513,63 @@ SilentSection:Dropdown({
         end
     end,
 })
+
+-- ---- Auto Clicker ----
+local AcSection = CombatTab:Section({
+    Title = "Auto Clicker",
+    Icon = "mouse-pointer-click",
+    Box = true,
+    Opened = true,
+})
+
+local AutoClickToggle = AcSection:Toggle({
+    Title = "Auto Clicker",
+    Desc = "Сам кликает ЛКМ/ПКМ с заданной скоростью",
+    Value = false,
+    Callback = function(state)
+        if state then enableAutoClicker() else disableAutoClicker() end
+    end,
+})
+
+AcSection:Dropdown({
+    Title = "Кнопки",
+    Desc = "Какие кнопки мыши кликать",
+    Values = {"ЛКМ", "ПКМ", "ЛКМ + ПКМ"},
+    Value = "ЛКМ",
+    Callback = function(v)
+        if v then S.autoClickMode = v end
+    end,
+})
+
+AcSection:Slider({
+    Title = "CPS (кликов в секунду)",
+    Step = 1,
+    Width = 200,
+    Value = { Min = 1, Max = 30, Default = 10 },
+    Callback = function(v)
+        S.autoClickCps = math.floor(tonumber(v) or 10)
+    end,
+})
+
+AcSection:Keybind({
+    Title = "Клавиша вкл/выкл",
+    Desc = "Быстрое переключение автокликера",
+    Value = "X",
+    Callback = function(key)
+        pcall(function()
+            S.autoClickBind = Enum.KeyCode[key]
+        end)
+    end,
+})
+
+-- Переключение автокликера по назначенной клавише
+S.autoClickBindConn = UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if not S.autoClickBind then return end
+    if input.KeyCode == S.autoClickBind then
+        AutoClickToggle:Set(not S.autoClickOn)
+    end
+end)
 
 -- ============================================================
 -- ====================== MOVEMENT TAB ========================
@@ -1793,5 +1909,5 @@ WM.Visible = S.wmOn
 
 notify("SpermaHub v41", "Загружен! Разделы: Combat, Movement, Visuals, Player, Miscellaneous", 4, "sparkles")
 print("✦ SpermaHub v41 (WindUI) загружен!")
-print("Combat: Kill Player | Hitbox Expander | Aimbot | Silent Aim")
+print("Combat: Kill Player | Hitbox Expander | Aimbot | Silent Aim | Auto Clicker")
 print("Movement: Flight | Click TP | Noclip | Visuals: ESP | Watermark | HUD | Player: WalkSpeed | TP Player")
