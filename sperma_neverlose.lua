@@ -12,6 +12,52 @@
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
 
+-- полифилл для старых инжекторов без task.*
+if type(task) ~= "table" or type(task.spawn) ~= "function" then
+    local rs = game:GetService("RunService")
+    task = {
+        spawn = function(f, ...)
+            local ok, e = pcall(f, ...)
+            if not ok then warn("[SpermaHub] task err:", e) end
+        end,
+        wait = function(t)
+            t = t or 0
+            local s0 = tick()
+            while tick() - s0 < t do rs.Heartbeat:Wait() end
+        end,
+        delay = function(t, f, ...)
+            task.spawn(function() task.wait(t) f(...) end)
+        end,
+    }
+end
+
+-- бут-окно: если меню НЕ появилось, на экране останется шаг, на котором упало
+local BootGui = Instance.new("ScreenGui")
+BootGui.Name = "SpermaHubBoot"
+BootGui.ResetOnSpawn = false
+BootGui.DisplayOrder = 999
+local BootLabel = Instance.new("TextLabel")
+do
+    local plr = game:GetService("Players").LocalPlayer
+    BootGui.Parent = plr:WaitForChild("PlayerGui")
+    BootLabel.Size = UDim2.new(0, 360, 0, 22)
+    BootLabel.Position = UDim2.new(0.5, -180, 0, 4)
+    BootLabel.BackgroundColor3 = Color3.fromRGB(16, 12, 24)
+    BootLabel.BackgroundTransparency = 0.2
+    BootLabel.BorderSizePixel = 0
+    BootLabel.TextColor3 = Color3.fromRGB(200, 180, 255)
+    BootLabel.Font = Enum.Font.GothamBold
+    BootLabel.TextSize = 12
+    BootLabel.Text = "SpermaHub: старт..."
+    BootLabel.Parent = BootGui
+    Instance.new("UICorner", BootLabel).CornerRadius = UDim.new(0, 5)
+end
+local function bootStep(s)
+    BootLabel.Text = "SpermaHub: " .. s
+    print("[SpermaHub] " .. s)
+end
+bootStep("старт")
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -24,7 +70,7 @@ for _, n in ipairs({
     "SpermaHub","SpermaHubToast","SpermaHubWatermark","SpermaHubToggle",
     "SpermaHubESP","SpermaHubSettings","SpermaHubWsSettings","SpermaHubTpList",
     "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle",
-    "SpermaHubSpec"
+    "SpermaHubSpec","SpermaHubBoot"
 }) do
     local o = LP.PlayerGui:FindFirstChild(n)
     if o then o:Destroy() end
@@ -1277,6 +1323,8 @@ S.wsConn = RunService.Heartbeat:Connect(function()
     end
 end)
 
+bootStep("логика OK")
+
 -- ============ ESP ============
 local ESPGui = Instance.new("ScreenGui")
 ESPGui.Name = "SpermaHubESP"
@@ -1657,6 +1705,8 @@ local function disableTargetESP()
     TargetHL.Adornee = nil
 end
 
+bootStep("ESP OK")
+
 -- ============ WATERMARK ============
 local WG = Instance.new("ScreenGui")
 WG.Name = "SpermaHubWatermark"
@@ -1952,6 +2002,8 @@ task.spawn(function()
         task.wait(0.25)
     end
 end)
+
+bootStep("HUD OK")
 
 -- ============================================================
 -- ============ NEVERLOSE-STYLE GUI (кастом, с нуля) ==========
@@ -2766,6 +2818,8 @@ local function getPlayerListData()
     return out
 end
 
+bootStep("GUI OK")
+
 -- ============================================================
 -- ================ СТРАНИЦЫ (все вкладки) ====================
 -- ============================================================
@@ -3288,6 +3342,8 @@ do
     end, C_RED, C_RED_H)
 end
 
+bootStep("страницы OK")
+
 -- ============================================================
 -- ===================== ПОЛНАЯ ВЫГРУЗКА ======================
 -- ============================================================
@@ -3569,6 +3625,8 @@ task.spawn(function()
     doLoad("Global", true)
 end)
 
+bootStep("финал OK")
+pcall(function() BootGui:Destroy() end)
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
 print("Combat: Legitbot | Hitbox | Kill | Fling | Spectate | Anti-Aim | AutoClicker + AntiFling/AutoStrafe")
