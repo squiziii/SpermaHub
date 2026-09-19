@@ -1837,9 +1837,7 @@ task.spawn(function()
     end
 end)
 
--- ============ HUD (NL-style: сверху по центру) ============
-local HUD_BRAND = "spermahub" -- текст слева в баре, можно сменить напр. на "NL"
-
+-- ============ HUD (Nez0x-style: две строки слева сверху, как на скрине) ============
 local HUDGui = Instance.new("ScreenGui")
 HUDGui.Name = "SpermaHubHUD"
 HUDGui.ResetOnSpawn = false
@@ -1848,83 +1846,110 @@ HUDGui.DisplayOrder = 101
 HUDGui.Enabled = false
 HUDGui.Parent = LP:WaitForChild("PlayerGui")
 
-local HUDBar = Instance.new("Frame")
-HUDBar.Name = "HUDBar"
-HUDBar.AnchorPoint = Vector2.new(0.5, 0)
-HUDBar.Position = UDim2.new(0.5, 0, 0, 10)
-HUDBar.Size = UDim2.new(0, 0, 0, 24)
-HUDBar.AutomaticSize = Enum.AutomaticSize.X
-HUDBar.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
-HUDBar.BackgroundTransparency = 0.2
-HUDBar.BorderSizePixel = 0
-HUDBar.Parent = HUDGui
+local HUDWrap = Instance.new("Frame")
+HUDWrap.Name = "HUDWrap"
+HUDWrap.Position = UDim2.new(0, 10, 0, 10)
+HUDWrap.Size = UDim2.new(0, 0, 0, 0)
+HUDWrap.AutomaticSize = Enum.AutomaticSize.XY
+HUDWrap.BackgroundTransparency = 1
+HUDWrap.Active = true
+HUDWrap.Draggable = true
+HUDWrap.Parent = HUDGui
 
-local HUDC = Instance.new("UICorner")
-HUDC.CornerRadius = UDim.new(0, 6)
-HUDC.Parent = HUDBar
+local HUDCol = Instance.new("UIListLayout")
+HUDCol.FillDirection = Enum.FillDirection.Vertical
+HUDCol.SortOrder = Enum.SortOrder.LayoutOrder
+HUDCol.Padding = UDim.new(0, 4)
+HUDCol.Parent = HUDWrap
 
-local HUDStroke = Instance.new("UIStroke")
-HUDStroke.Color = Color3.fromRGB(60, 60, 80)
-HUDStroke.Thickness = 1
-HUDStroke.Transparency = 0.6
-HUDStroke.Parent = HUDBar
+local function hudBar(order)
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0, 0, 0, 22)
+    bar.AutomaticSize = Enum.AutomaticSize.X
+    bar.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
+    bar.BackgroundTransparency = 0.18
+    bar.BorderSizePixel = 0
+    bar.LayoutOrder = order
+    bar.Parent = HUDWrap
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = bar
+    local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(90, 70, 160) st.Thickness = 1 st.Transparency = 0.65 st.Parent = bar
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 8) pad.PaddingRight = UDim.new(0, 10)
+    pad.Parent = bar
+    local lay = Instance.new("UIListLayout")
+    lay.FillDirection = Enum.FillDirection.Horizontal
+    lay.SortOrder = Enum.SortOrder.LayoutOrder
+    lay.VerticalAlignment = Enum.VerticalAlignment.Center
+    lay.Padding = UDim.new(0, 10)
+    lay.Parent = bar
+    return bar
+end
 
-local HUDPad = Instance.new("UIPadding")
-HUDPad.PaddingLeft = UDim.new(0, 10)
-HUDPad.PaddingRight = UDim.new(0, 10)
-HUDPad.Parent = HUDBar
+local function hudSeg(bar, order, text, color, bold)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0, 0, 1, 0)
+    l.AutomaticSize = Enum.AutomaticSize.X
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = color
+    l.Font = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
+    l.TextSize = 12
+    l.LayoutOrder = order
+    l.Parent = bar
+    return l
+end
 
-local HUDLayout = Instance.new("UIListLayout")
-HUDLayout.FillDirection = Enum.FillDirection.Horizontal
-HUDLayout.SortOrder = Enum.SortOrder.LayoutOrder
-HUDLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-HUDLayout.Padding = UDim.new(0, 8)
-HUDLayout.Parent = HUDBar
+-- первая строка: Release | SpermaHub | Fps | время сессии (как на скрине)
+local HUDBar1 = hudBar(1)
+hudSeg(HUDBar1, 1, "⟨", Color3.fromRGB(150, 120, 255), true)
+hudSeg(HUDBar1, 2, "Release", Color3.fromRGB(130, 130, 150))
+hudSeg(HUDBar1, 3, "SpermaHub", Color3.fromRGB(235, 235, 245), true)
+local HUDFps = hudSeg(HUDBar1, 4, "-- Fps", Color3.fromRGB(190, 190, 210))
+local HUDTime = hudSeg(HUDBar1, 5, "00:00:00", Color3.fromRGB(190, 190, 210))
 
-local HUDBrand = Instance.new("TextLabel")
-HUDBrand.Size = UDim2.new(0, 0, 1, 0)
-HUDBrand.AutomaticSize = Enum.AutomaticSize.X
-HUDBrand.BackgroundTransparency = 1
-HUDBrand.Text = HUD_BRAND
-HUDBrand.TextColor3 = Color3.fromRGB(235, 235, 245)
-HUDBrand.Font = Enum.Font.GothamBold
-HUDBrand.TextSize = 13
-HUDBrand.LayoutOrder = 1
-HUDBrand.Parent = HUDBar
+-- вторая строка: координаты | Ping | Ticks | скорость сети
+local HUDBar2 = hudBar(2)
+hudSeg(HUDBar2, 1, "⟨", Color3.fromRGB(150, 120, 255), true)
+local HUDPos = hudSeg(HUDBar2, 2, "0 0 0", Color3.fromRGB(190, 190, 210))
+local HUDPing = hudSeg(HUDBar2, 3, "-- Ping", Color3.fromRGB(120, 255, 140))
+local HUDTicks = hudSeg(HUDBar2, 4, "-- Ticks", Color3.fromRGB(190, 190, 210))
+local HUDNet = hudSeg(HUDBar2, 5, "-- Kbps", Color3.fromRGB(190, 190, 210))
 
-local HUDSep = Instance.new("TextLabel")
-HUDSep.Size = UDim2.new(0, 0, 1, 0)
-HUDSep.AutomaticSize = Enum.AutomaticSize.X
-HUDSep.BackgroundTransparency = 1
-HUDSep.Text = "|"
-HUDSep.TextColor3 = Color3.fromRGB(90, 90, 110)
-HUDSep.Font = Enum.Font.GothamBold
-HUDSep.TextSize = 13
-HUDSep.LayoutOrder = 2
-HUDSep.Parent = HUDBar
-
-local HUDFps = Instance.new("TextLabel")
-HUDFps.Size = UDim2.new(0, 0, 1, 0)
-HUDFps.AutomaticSize = Enum.AutomaticSize.X
-HUDFps.BackgroundTransparency = 1
-HUDFps.Text = "-- FPS"
-HUDFps.TextColor3 = Color3.fromRGB(235, 235, 245)
-HUDFps.Font = Enum.Font.GothamBold
-HUDFps.TextSize = 13
-HUDFps.LayoutOrder = 3
-HUDFps.Parent = HUDBar
-
--- Живой счётчик FPS (обновление раз в секунду)
+local hudStart = tick()
 task.spawn(function()
     while HUDGui.Parent do
-        local f = 0
-        local conn
-        conn = RunService.RenderStepped:Connect(function()
-            f = f + 1
+        -- время сессии
+        local el = math.floor(tick() - hudStart)
+        HUDTime.Text = string.format("%02d:%02d:%02d", math.floor(el / 3600), math.floor(el / 60) % 60, el % 60)
+        -- fps (считается в watermark-цикле)
+        HUDFps.Text = string.format("%d Fps", S.fps)
+        -- координаты
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if root then
+            local p = root.Position
+            HUDPos.Text = string.format("%d %d %d", math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
+        end
+        -- пинг (сами обновляем, чтобы не зависеть от watermark)
+        pcall(function()
+            local serverStats = Stats.Network.ServerStatsItem
+            if serverStats and serverStats["Data Ping"] then
+                S.ping = math.floor(serverStats["Data Ping"]:GetValue())
+            end
         end)
-        task.wait(1)
-        if conn then conn:Disconnect() end
-        HUDFps.Text = tostring(f) .. " FPS"
+        HUDPing.Text = string.format("%d Ping", S.ping)
+        -- ticks сервера
+        local tps = 0
+        pcall(function() tps = workspace:GetRealPhysicsFPS() end)
+        HUDTicks.Text = string.format("%d Ticks", math.floor(tps + 0.5))
+        -- входящий трафик
+        local kb = 0
+        pcall(function()
+            local st = Stats:FindFirstChild("DataReceiveKbps")
+            if st then kb = st:GetValue() end
+        end)
+        HUDNet.Text = string.format("%.1f Kbps", kb)
+        task.wait(0.25)
     end
 end)
 
@@ -3030,7 +3055,7 @@ do
         S.wmOn = state
         WM.Visible = state
     end)
-    addToggle(pHud, "hud.enabled", "HUD (NL-style)", false, function(state)
+    addToggle(pHud, "hud.enabled", "HUD (Nez0x-style)", false, function(state)
         HUDGui.Enabled = state
     end)
 
@@ -3045,7 +3070,7 @@ do
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "Watermark — FPS/Ping/время/дата (перетаскивается).")
-    addText(pInfo, "HUD — компактный бар сверху по центру: название + FPS.")
+    addText(pInfo, "HUD — две строки как на скрине: FPS/таймер сессии + координаты/Ping/Ticks/Kbps. Перетаскивается.")
 end
 
 -- ---------------- MOVEMENT ----------------
