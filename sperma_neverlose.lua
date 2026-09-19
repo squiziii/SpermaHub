@@ -4,7 +4,7 @@
 -- Перенесены ВСЕ вкладки и функции:
 --   Combat:        Legitbot (Aimbot + Silent Aim + Visualize FOV) | Hitbox | Kill Player | Auto Clicker
 --   Visuals:       Players (ESP: подсветка+бокс+скелет+HP) | World (Watermark + NL-style HUD)
---   Movement:      Main (Flight/Noclip) | Teleport (Click TP)
+--   Movement:      Main (Flight/Noclip/Jesus) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + TP Player)
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
@@ -31,6 +31,10 @@ pcall(function()
         getgenv().SpermaHubNLGui = nil
     end
 end)
+pcall(function()
+    local old = workspace:FindFirstChild("SpermaJesus")
+    if old then old:Destroy() end
+end)
 
 -- ============ УВЕДОМЛЕНИЯ (тосты; до построения UI — в консоль) ============
 local toastImpl = nil
@@ -55,6 +59,7 @@ local S = {
     silentAimOn=false, silentAimFov=150, silentAimConn=nil, silentAimFovCircle=nil,
     autoClickOn=false, autoClickCps=10, autoClickMode="ЛКМ",
     autoClickGen=0, autoClickBind=Enum.KeyCode.X, autoClickBindConn=nil,
+    jesusOn=false, jesusConn=nil, jesusPlatform=nil,
     guiAlive=true, fovVisualize=true,
 }
 
@@ -623,6 +628,51 @@ end
 local function disableClickTp()
     S.clickTpOn = false
     if S.clickTpConn then S.clickTpConn:Disconnect() S.clickTpConn = nil end
+end
+
+-- ============ JESUS (ходьба по воде) ============
+local jesusRayParams = RaycastParams.new()
+jesusRayParams.FilterType = Enum.RaycastFilterType.Exclude
+jesusRayParams.IgnoreWater = false -- чтобы рейкаст "видел" поверхность воды
+
+local function enableJesus()
+    S.jesusOn = true
+    if not S.jesusPlatform or not S.jesusPlatform.Parent then
+        local p = Instance.new("Part")
+        p.Name = "SpermaJesus"
+        p.Anchored = true
+        p.CanCollide = true
+        p.Transparency = 1
+        p.CastShadow = false
+        p.Size = Vector3.new(10, 1, 10)
+        p.Parent = workspace
+        S.jesusPlatform = p
+    end
+    if S.jesusConn then S.jesusConn:Disconnect() end
+    S.jesusConn = RunService.Heartbeat:Connect(function()
+        if not S.jesusOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local plat = S.jesusPlatform
+        if not plat then return end
+        jesusRayParams.FilterDescendantsInstances = {ch, plat}
+        local result = workspace:Raycast(root.Position, Vector3.new(0, -25, 0), jesusRayParams)
+        if result and result.Material == Enum.Material.Water then
+            -- ставим платформу верхней гранью ровно на поверхность воды
+            plat.Position = Vector3.new(root.Position.X, result.Position.Y - plat.Size.Y / 2 + 0.05, root.Position.Z)
+        else
+            -- воды под ногами нет — убираем платформу
+            plat.Position = Vector3.new(0, -1e5, 0)
+        end
+    end)
+end
+
+local function disableJesus()
+    S.jesusOn = false
+    if S.jesusConn then S.jesusConn:Disconnect() S.jesusConn = nil end
+    if S.jesusPlatform then S.jesusPlatform.Position = Vector3.new(0, -1e5, 0) end
 end
 
 -- ============ WALK SPEED ============
@@ -2227,6 +2277,12 @@ do
         if state then enableNoclip() else disableNoclip() end
     end)
     addText(pNc, "Проход сквозь стены.")
+
+    local pJesus = addPanel(pg.col2, "Jesus")
+    addToggle(pJesus, "jesus.enabled", "Enabled", false, function(state)
+        if state then enableJesus() else disableJesus() end
+    end)
+    addText(pJesus, "Ходьба по воде — невидимая платформа под ногами ровно на поверхности воды. Не плывёшь, а идёшь.")
 end
 
 -- ==== Teleport (Click TP) ====
@@ -2386,6 +2442,8 @@ function fullCleanupNL()
     if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) end
     disableAutoClicker()
     if S.autoClickBindConn then S.autoClickBindConn:Disconnect() end
+    if S.jesusConn then S.jesusConn:Disconnect() end
+    if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
     if S.bv then S.bv:Destroy() end
     if S.bg then S.bg:Destroy() end
     pcall(restoreHitbox)
@@ -2630,4 +2688,4 @@ end)
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
 print("Combat: Legitbot | Hitbox | Kill Player | Auto Clicker")
-print("Visuals: Players (ESP) | World (Watermark/HUD) | Movement: Main/Teleport | Player | Miscellaneous")
+print("Visuals: Players (ESP) | World (Watermark/HUD) | Movement: Fly/Noclip/Jesus + Click TP | Player | Miscellaneous")
