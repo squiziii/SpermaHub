@@ -2,7 +2,7 @@
 -- Интерфейс в стиле NEVERLOSE (как на скрине): сайдбар + топбар + двухколоночные панели,
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
---   Combat:        Legitbot (Aimbot + Silent Aim + Team/Visible Check) | Hitbox | Kill Player | Fling | Anti-Aim | Auto Clicker
+--   Combat:        Legitbot | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
@@ -20,7 +20,8 @@ local LP = Players.LocalPlayer
 for _, n in ipairs({
     "SpermaHub","SpermaHubToast","SpermaHubWatermark","SpermaHubToggle",
     "SpermaHubESP","SpermaHubSettings","SpermaHubWsSettings","SpermaHubTpList",
-    "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle"
+    "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle",
+    "SpermaHubRadar","SpermaHubSpec"
 }) do
     local o = LP.PlayerGui:FindFirstChild(n)
     if o then o:Destroy() end
@@ -68,6 +69,10 @@ local S = {
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
     aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
+    afOn=false, afConn=nil, afMax=150,
+    strafeOn=false, strafeConn=nil, strafeSpeed=40,
+    radarOn=false, radarConn=nil, radarRange=80,
+    specOn=false, specConn=nil, specTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1072,6 +1077,299 @@ end
 local function disableBhop()
     S.bhopOn = false
     if S.bhopConn then S.bhopConn:Disconnect() S.bhopConn = nil end
+end
+
+-- ============ ANTI FLING (защита от флинга) ============
+local function enableAntiFling()
+    S.afOn = true
+    if S.afConn then S.afConn:Disconnect() end
+    S.afConn = RunService.Stepped:Connect(function()
+        if not S.afOn then return end
+        if S.flying then return end -- Fly сам управляет скоростью
+        if S.flingConn then return end -- свой флинг не трогаем
+        local ch = LP.Character
+        if not ch then return end
+        for _, p in ipairs(ch:GetDescendants()) do
+            if p:IsA("BasePart") then
+                local v = p.AssemblyLinearVelocity
+                if v.Magnitude > S.afMax then
+                    p.AssemblyLinearVelocity = v.Unit * S.afMax
+                end
+                local av = p.AssemblyAngularVelocity
+                if av.Magnitude > S.afMax then
+                    p.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+        end
+    end)
+end
+
+local function disableAntiFling()
+    S.afOn = false
+    if S.afConn then S.afConn:Disconnect() S.afConn = nil end
+end
+
+-- ============ AUTO STRAFE (усиление bhop) ============
+local function enableStrafe()
+    S.strafeOn = true
+    if S.strafeConn then S.strafeConn:Disconnect() end
+    S.strafeConn = RunService.Heartbeat:Connect(function()
+        if not S.strafeOn then return end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+        if hum.FloorMaterial ~= Enum.Material.Air then return end -- только в воздухе
+        local vel = root.AssemblyLinearVelocity
+        local horiz = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+        if horiz < 2 then return end
+        local cam = workspace.CurrentCamera
+        local lv = cam.CFrame.LookVector
+        local dir = Vector3.new(lv.X, 0, lv.Z)
+        if dir.Magnitude < 0.05 then return end
+        dir = dir.Unit
+        -- подворачиваем горизонтальную скорость за камерой + лёгкий разгон до капы
+        local newSpeed = math.min(horiz + 0.35, S.strafeSpeed)
+        root.AssemblyLinearVelocity = Vector3.new(dir.X * newSpeed, vel.Y, dir.Z * newSpeed)
+    end)
+end
+
+local function disableStrafe()
+    S.strafeOn = false
+    if S.strafeConn then S.strafeConn:Disconnect() S.strafeConn = nil end
+end
+
+-- ============ RADAR 2D ============
+local RadarGui = Instance.new("ScreenGui")
+RadarGui.Name = "SpermaHubRadar"
+RadarGui.ResetOnSpawn = false
+RadarGui.IgnoreGuiInset = true
+RadarGui.DisplayOrder = 80
+RadarGui.Parent = LP:WaitForChild("PlayerGui")
+
+local RadarFrame = Instance.new("Frame")
+RadarFrame.Size = UDim2.new(0, 160, 0, 160)
+RadarFrame.Position = UDim2.new(1, -172, 0, 12)
+RadarFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+RadarFrame.BackgroundTransparency = 0.25
+RadarFrame.BorderSizePixel = 0
+RadarFrame.Active = true
+RadarFrame.Draggable = true
+RadarFrame.Visible = false
+RadarFrame.ClipsDescendants = true
+RadarFrame.Parent = RadarGui
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = RadarFrame
+    local s = Instance.new("UIStroke") s.Color = Color3.fromRGB(80, 60, 140) s.Thickness = 1 s.Transparency = 0.4 s.Parent = RadarFrame
+    -- центральная точка (ты)
+    local me = Instance.new("Frame")
+    me.Size = UDim2.new(0, 5, 0, 5)
+    me.AnchorPoint = Vector2.new(0.5, 0.5)
+    me.Position = UDim2.new(0.5, 0, 0.5, 0)
+    me.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    me.BorderSizePixel = 0
+    me.ZIndex = 3
+    me.Parent = RadarFrame
+    local mc = Instance.new("UICorner") mc.CornerRadius = UDim.new(1, 0) mc.Parent = me
+    -- крест-линии
+    for _, v in ipairs({{1, 0, 0.5, 0}, {0, 0, 1, 0.5}}) do
+        local l = Instance.new("Frame")
+        l.BackgroundColor3 = Color3.fromRGB(60, 60, 90)
+        l.BackgroundTransparency = 0.5
+        l.BorderSizePixel = 0
+        if v[1] == 1 then
+            l.Size = UDim2.new(1, 0, 0, 1) l.Position = UDim2.new(0, 0, 0.5, 0)
+        else
+            l.Size = UDim2.new(0, 1, 1, 0) l.Position = UDim2.new(0.5, 0, 0, 0)
+        end
+        l.Parent = RadarFrame
+    end
+end
+
+local radarDots = {}
+
+local function enableRadar()
+    S.radarOn = true
+    RadarFrame.Visible = true
+    if S.radarConn then S.radarConn:Disconnect() end
+    S.radarConn = RunService.RenderStepped:Connect(function()
+        if not S.radarOn then return end
+        local cam = workspace.CurrentCamera
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local lv = cam.CFrame.LookVector
+        local fw = Vector3.new(lv.X, 0, lv.Z)
+        if fw.Magnitude < 0.05 then fw = Vector3.new(0, 0, -1) end
+        fw = fw.Unit
+        local rv = cam.CFrame.RightVector
+        local rg = Vector3.new(rv.X, 0, rv.Z)
+        rg = rg.Magnitude > 0.05 and rg.Unit or Vector3.new(1, 0, 0)
+        local half = RadarFrame.AbsoluteSize.X / 2
+        if half < 10 then return end
+
+        -- актуализируем точки
+        local seen = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP then
+                seen[plr] = true
+                local dot = radarDots[plr]
+                if not dot then
+                    dot = Instance.new("Frame")
+                    dot.Size = UDim2.new(0, 5, 0, 5)
+                    dot.AnchorPoint = Vector2.new(0.5, 0.5)
+                    dot.BorderSizePixel = 0
+                    dot.ZIndex = 3
+                    local dc = Instance.new("UICorner") dc.CornerRadius = UDim.new(1, 0) dc.Parent = dot
+                    dot.Parent = RadarFrame
+                    radarDots[plr] = dot
+                end
+                local troot = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                local thum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+                if troot and thum and thum.Health > 0 then
+                    local rel = troot.Position - root.Position
+                    rel = Vector3.new(rel.X, 0, rel.Z)
+                    if rel.Magnitude > S.radarRange then
+                        rel = rel.Unit * S.radarRange -- зажать на край
+                    end
+                    local px = rel:Dot(rg) / S.radarRange * half
+                    local py = -rel:Dot(fw) / S.radarRange * half
+                    dot.Position = UDim2.new(0.5, px, 0.5, py)
+                    dot.BackgroundColor3 = (plr.Team == LP.Team) and Color3.fromRGB(80, 255, 120) or Color3.fromRGB(255, 70, 70)
+                    dot.Visible = true
+                else
+                    dot.Visible = false
+                end
+            end
+        end
+        for plr, dot in pairs(radarDots) do
+            if not seen[plr] then
+                dot:Destroy()
+                radarDots[plr] = nil
+            end
+        end
+    end)
+end
+
+local function disableRadar()
+    S.radarOn = false
+    if S.radarConn then S.radarConn:Disconnect() S.radarConn = nil end
+    RadarFrame.Visible = false
+    for plr, dot in pairs(radarDots) do
+        dot:Destroy()
+        radarDots[plr] = nil
+    end
+end
+
+-- ============ SPECTATE (с мини-окном) ============
+local SpecGui = Instance.new("ScreenGui")
+SpecGui.Name = "SpermaHubSpec"
+SpecGui.ResetOnSpawn = false
+SpecGui.IgnoreGuiInset = true
+SpecGui.DisplayOrder = 90
+SpecGui.Parent = LP:WaitForChild("PlayerGui")
+
+local SpecWin = Instance.new("Frame")
+SpecWin.Size = UDim2.new(0, 220, 0, 78)
+SpecWin.Position = UDim2.new(0.5, -110, 1, -120)
+SpecWin.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+SpecWin.BackgroundTransparency = 0.1
+SpecWin.BorderSizePixel = 0
+SpecWin.Active = true
+SpecWin.Draggable = true
+SpecWin.Visible = false
+SpecWin.Parent = SpecGui
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = SpecWin
+    local s = Instance.new("UIStroke") s.Color = Color3.fromRGB(120, 60, 200) s.Thickness = 1 s.Transparency = 0.3 s.Parent = SpecWin
+end
+
+local SpecTitle = Instance.new("TextLabel")
+SpecTitle.Size = UDim2.new(1, -70, 0, 26)
+SpecTitle.Position = UDim2.new(0, 10, 0, 4)
+SpecTitle.BackgroundTransparency = 1
+SpecTitle.Text = "👁 Spectate"
+SpecTitle.TextColor3 = Color3.fromRGB(200, 160, 255)
+SpecTitle.Font = Enum.Font.GothamBold
+SpecTitle.TextSize = 13
+SpecTitle.TextXAlignment = Enum.TextXAlignment.Left
+SpecTitle.Parent = SpecWin
+
+local SpecExit = Instance.new("TextButton")
+SpecExit.Size = UDim2.new(0, 62, 0, 20)
+SpecExit.Position = UDim2.new(1, -70, 0, 6)
+SpecExit.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+SpecExit.Text = "✖ Выйти"
+SpecExit.TextColor3 = Color3.fromRGB(255, 220, 220)
+SpecExit.Font = Enum.Font.GothamBold
+SpecExit.TextSize = 11
+SpecExit.BorderSizePixel = 0
+SpecExit.AutoButtonColor = true
+SpecExit.Parent = SpecWin
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = SpecExit
+end
+
+local SpecInfo = Instance.new("TextLabel")
+SpecInfo.Size = UDim2.new(1, -20, 0, 34)
+SpecInfo.Position = UDim2.new(0, 10, 0, 36)
+SpecInfo.BackgroundTransparency = 1
+SpecInfo.Text = "--"
+SpecInfo.TextColor3 = Color3.fromRGB(230, 230, 240)
+SpecInfo.Font = Enum.Font.GothamBold
+SpecInfo.TextSize = 13
+SpecInfo.TextXAlignment = Enum.TextXAlignment.Left
+SpecInfo.TextYAlignment = Enum.TextYAlignment.Top
+SpecInfo.Parent = SpecWin
+
+local function exitSpectate()
+    if not S.specOn then
+        SpecWin.Visible = false
+        return
+    end
+    S.specOn = false
+    S.specTarget = nil
+    if S.specConn then S.specConn:Disconnect() S.specConn = nil end
+    SpecWin.Visible = false
+    local cam = workspace.CurrentCamera
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then cam.CameraSubject = hum end
+    cam.CameraType = Enum.CameraType.Custom
+end
+
+SpecExit.MouseButton1Click:Connect(exitSpectate)
+
+local function startSpectate(plr)
+    local tch = plr and plr.Character
+    local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+    if not thum then
+        toastImpl("Spectate", "У цели нет персонажа!")
+        return
+    end
+    if S.specConn then S.specConn:Disconnect() end
+    S.specOn = true
+    S.specTarget = plr
+    local cam = workspace.CurrentCamera
+    cam.CameraSubject = thum
+    SpecTitle.Text = "👁 Spectating"
+    SpecWin.Visible = true
+    toastImpl("Spectate", "Слежу за " .. plr.Name)
+    S.specConn = RunService.RenderStepped:Connect(function()
+        if not S.specOn then return end
+        local t = S.specTarget
+        local tch2 = t and t.Character
+        local thum2 = tch2 and tch2:FindFirstChildOfClass("Humanoid")
+        if not t or not t.Parent or not thum2 or thum2.Health <= 0 then
+            toastImpl("Spectate", "Цель умерла или вышла")
+            exitSpectate()
+            return
+        end
+        cam.CameraSubject = thum2
+        SpecInfo.Text = string.format("%s\n%.0f / %.0f HP", t.Name, thum2.Health, thum2.MaxHealth)
+        local r = thum2.Health / thum2.MaxHealth
+        SpecInfo.TextColor3 = Color3.fromRGB(math.floor(255 * (1 - r) + 80 * r), math.floor(255 * r), 120)
+    end)
 end
 
 -- ============ WALK SPEED ============
@@ -2573,6 +2871,7 @@ local autoClickToggleCtl = nil
 local killListCtl = nil
 local tpListCtl = nil
 local flingListCtl = nil
+local specListCtl = nil
 
 -- ---------------- AIMBOT (категория) ----------------
 addCategory("Combat")
@@ -2707,6 +3006,35 @@ do
     addText(pInfo, "Налетает на цель с огромной скоростью ~0.8 сек и отбрасывает её, затем возвращает тебя на место.")
 end
 
+-- ==== Spectate ====
+do
+    local pg = addPage("Combat", "👁", "Spectate")
+
+    local pTarget = addPanel(pg.col1, "Target")
+    local specSel = nil
+    local specList = makePlayerList(pTarget, 160)
+    specList.connect(function(name) specSel = name end)
+    specListCtl = specList
+    addButton(pTarget, "Refresh List", function()
+        specList.rebuild(getPlayerListData())
+    end)
+    addButton(pTarget, "Spectate", function()
+        local plr = specSel and Players:FindFirstChild(specSel)
+        if plr then
+            startSpectate(plr)
+        else
+            toastImpl("Spectate", "Сначала выбери игрока!")
+        end
+    end)
+    addButton(pTarget, "Exit Spectate", function()
+        exitSpectate()
+    end, C_RED, C_RED_H)
+
+    local pInfo = addPanel(pg.col2, "Info")
+    addText(pInfo, "Камера следит за выбранным игроком. Появляется мини-окно (перетаскивается): сверху заголовок + кнопка выхода, снизу ник и HP цели.")
+    addText(pInfo, "Если цель умрёт или выйдет — спек выключится сам.")
+end
+
 -- ==== Anti-Aim ====
 do
     local pg = addPage("Combat", "🔁", "Anti-Aim")
@@ -2826,6 +3154,15 @@ do
         HUDGui.Enabled = state
     end)
 
+    local pRadar = addPanel(pg.col1, "Radar 2D")
+    addToggle(pRadar, "radar.enabled", "Enabled", false, function(state)
+        if state then enableRadar() else disableRadar() end
+    end)
+    addSlider(pRadar, "radar.range", "Range (studs)", 20, 200, 80, 10, function(v)
+        S.radarRange = math.floor(v)
+    end)
+    addText(pRadar, "Миникарта (перетаскивается): красные — враги, зелёные — твоя команда. Верх = направление камеры.")
+
     local pFx = addPanel(pg.col2, "Effects")
     addToggle(pFx, "fx.tracers", "Bullet Tracers", false, function(state)
         S.tracersOn = state
@@ -2870,6 +3207,13 @@ do
     addDropdown(pBhop, "bhop.method", "Method", {"Velocity", "Humanoid"}, "Velocity", function(v)
         S.bhopMethod = v
     end)
+    addToggle(pBhop, "bhop.strafe", "Auto Strafe", false, function(state)
+        if state then enableStrafe() else disableStrafe() end
+    end)
+    addSlider(pBhop, "bhop.strafecap", "Strafe Speed Cap", 16, 100, 40, 2, function(v)
+        S.strafeSpeed = math.floor(v)
+    end)
+    addText(pBhop, "Auto Strafe: в воздухе подворачивает скорость за камерой и понемногу разгоняет (до капы) — классический бхоп-разгон.")
     addText(pBhop, "Кроличий прыжок: мгновенный прыжок при касании земли — без пауз. Hold Space — пока зажат пробел, Auto Jump — сам. Method: Velocity — через скорость (работает почти везде), Humanoid — через стандартный Jump.")
 
     local pNc = addPanel(pg.col2, "Noclip")
@@ -2940,6 +3284,15 @@ do
         if state then enableGod() else disableGod() end
     end)
     addText(pGod, "Держит HP на максимуме каждый кадр. Работает не во всех играх (где HP контролирует сервер).")
+
+    local pAf = addPanel(pg.col2, "Anti Fling")
+    addToggle(pAf, "antifling.enabled", "Enabled", false, function(state)
+        if state then enableAntiFling() else disableAntiFling() end
+    end)
+    addSlider(pAf, "antifling.max", "Max Velocity", 50, 500, 150, 10, function(v)
+        S.afMax = math.floor(v)
+    end)
+    addText(pAf, "Обрезает резкие рывки скорости (чужие флинги) до Max Velocity. Не трогает Fly и свой Fling.")
 
     local pTp = addPanel(pg.col2, "TP Player")
     local tpSel = nil
@@ -3063,6 +3416,11 @@ function fullCleanupNL()
     if S.spinConn then S.spinConn:Disconnect() end
     if S.aaConn then S.aaConn:Disconnect() end
     if S.bhopConn then S.bhopConn:Disconnect() end
+    if S.afConn then S.afConn:Disconnect() end
+    if S.strafeConn then S.strafeConn:Disconnect() end
+    if S.radarConn then S.radarConn:Disconnect() end
+    if S.specConn then S.specConn:Disconnect() end
+    pcall(exitSpectate)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
     if S.fxConn then S.fxConn:Disconnect() end
@@ -3084,7 +3442,7 @@ function fullCleanupNL()
     end
     pcall(disableESP)
     pcall(disableTargetESP)
-    for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle"}) do
+    for _, n in ipairs({"SpermaHubESP","SpermaHubWatermark","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubRadar","SpermaHubSpec"}) do
         local g = LP.PlayerGui:FindFirstChild(n)
         if g then g:Destroy() end
     end
@@ -3250,6 +3608,7 @@ task.spawn(function()
             pcall(function() killListCtl.rebuild(getPlayerListData()) end)
             pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
         pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() specListCtl.rebuild(getPlayerListData()) end)
         end
     end
 end)
@@ -3260,6 +3619,7 @@ Players.PlayerAdded:Connect(function()
         pcall(function() killListCtl.rebuild(getPlayerListData()) end)
         pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
         pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() specListCtl.rebuild(getPlayerListData()) end)
     end
 end)
 Players.PlayerRemoving:Connect(function()
@@ -3267,6 +3627,7 @@ Players.PlayerRemoving:Connect(function()
         pcall(function() killListCtl.rebuild(getPlayerListData()) end)
         pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
         pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() specListCtl.rebuild(getPlayerListData()) end)
     end
 end)
 
@@ -3304,6 +3665,7 @@ task.spawn(function()
     pcall(function() killListCtl.rebuild(getPlayerListData()) end)
     pcall(function() tpListCtl.rebuild(getPlayerListData()) end)
         pcall(function() flingListCtl.rebuild(getPlayerListData()) end)
+        pcall(function() specListCtl.rebuild(getPlayerListData()) end)
 end)
 
 -- тихая автозагрузка конфига Global (если есть)
@@ -3314,5 +3676,5 @@ end)
 
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
-print("Combat: Legitbot | Hitbox | Kill Player | Fling | Anti-Aim | Auto Clicker | +Tracers/Hitmarker/Spin/GodMode/TeamCheck/VisibleCheck")
+print("Combat: Legitbot | Hitbox | Kill | Fling | Spectate | Anti-Aim | AutoClicker + Radar/AntiFling/AutoStrafe")
 print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus/Bhop + Click TP | Player | Misc")
