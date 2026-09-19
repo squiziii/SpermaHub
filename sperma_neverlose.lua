@@ -66,8 +66,8 @@ local S = {
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
-    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil,
-    bhopOn=false, bhopConn=nil, bhopMode="Hold Space",
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0,
+    bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -999,12 +999,18 @@ local function enableAntiAim()
                         p0 = p0 - Vector3.new(0, drop0, 0)
                     end
                     S.aaPinPos = p0
+                    S.aaPinDrop = math.max(drop0, 0)
                 end
                 pos = S.aaPinPos
             else
-                if S.aaPinPos then S.aaPinPos = nil end
+                -- Pitch = None: вернуть стоячую высоту, потом выпрямить (иначе выбросит вверх)
+                if S.aaPinPos then
+                    pos = S.aaPinPos + Vector3.new(0, S.aaPinDrop or 0, 0)
+                    S.aaPinPos = nil
+                else
+                    pos = root.Position
+                end
                 if hum and hum.PlatformStand then hum.PlatformStand = false end
-                pos = root.Position
             end
             root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
             if pitch ~= 0 then
@@ -1012,7 +1018,10 @@ local function enableAntiAim()
                 root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             end
         else
-            if S.aaPinPos then S.aaPinPos = nil end
+            if S.aaPinPos then
+                root.CFrame = CFrame.new(S.aaPinPos + Vector3.new(0, S.aaPinDrop or 0, 0))
+                S.aaPinPos = nil
+            end
             if hum and hum.PlatformStand then hum.PlatformStand = false end
         end
     end)
@@ -1021,9 +1030,13 @@ end
 local function disableAntiAim()
     S.aaOn = false
     if S.aaConn then S.aaConn:Disconnect() S.aaConn = nil end
-    S.aaPinPos = nil
     local ch = LP.Character
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if S.aaPinPos then
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if root then root.CFrame = CFrame.new(S.aaPinPos + Vector3.new(0, S.aaPinDrop or 0, 0)) end
+        S.aaPinPos = nil
+    end
     if hum and hum.PlatformStand then hum.PlatformStand = false end
     -- вернуть скорость после Slow Walk
     if S.aaSlowWalk and hum then
@@ -1039,10 +1052,19 @@ local function enableBhop()
         if not S.bhopOn then return end
         local ch = LP.Character
         local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-        if not hum then return end
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not hum or not root then return end
         if S.bhopMode == "Hold Space" and not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
+        if hum:GetState() == Enum.HumanoidStateType.Seated then return end
         if hum.FloorMaterial ~= Enum.Material.Air then
-            hum.Jump = true
+            if S.bhopMethod == "Velocity" then
+                -- напрямую задаём вертикальную скорость: работает даже при JumpPower = 0
+                local vel = root.AssemblyLinearVelocity
+                local jp = math.max(hum.JumpPower or 0, 50)
+                root.AssemblyLinearVelocity = Vector3.new(vel.X, jp, vel.Z)
+            else
+                hum.Jump = true
+            end
         end
     end)
 end
@@ -2845,7 +2867,10 @@ do
     addDropdown(pBhop, "bhop.mode", "Mode", {"Hold Space", "Auto Jump"}, "Hold Space", function(v)
         S.bhopMode = v
     end)
-    addText(pBhop, "Кроличий прыжок: автоматический Jump в кадре касания земли — прыжки идут без пауз. Hold Space — прыгать пока зажат пробел, Auto Jump — без нажатий.")
+    addDropdown(pBhop, "bhop.method", "Method", {"Velocity", "Humanoid"}, "Velocity", function(v)
+        S.bhopMethod = v
+    end)
+    addText(pBhop, "Кроличий прыжок: мгновенный прыжок при касании земли — без пауз. Hold Space — пока зажат пробел, Auto Jump — сам. Method: Velocity — через скорость (работает почти везде), Humanoid — через стандартный Jump.")
 
     local pNc = addPanel(pg.col2, "Noclip")
     addToggle(pNc, "noclip.enabled", "Enabled", false, function(state)
