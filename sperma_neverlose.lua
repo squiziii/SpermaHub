@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +silentaura18")
+print("[SpermaHub] сборка: +silentaura18-blade-tp")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -139,7 +139,7 @@ local S = {
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
-    saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil,
+    saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1580,18 +1580,18 @@ function disableKillAura()
     if S.kaConn then S.kaConn:Disconnect() S.kaConn = nil end
 end
 
--- ============ SILENT AURA (1.8 Arena: огонь через touch-интересы) ============
--- механика взята из публичных сорсов под 1.8 Arena (reach cap 21, min delay 0.25):
--- tool:Activate() + firetouchinterest(handle, части врага, 0/1) — сервер сам видит
--- "касание" клинком и наносит урон, без единого видимого клика.
+-- ============ SILENT AURA (1.8 Arena: клинок телепортируется во врага) ============
+-- сорцы: универсальные sword silent aura (scriptblox/reddit). Сервер валидирует урон
+-- по Handle.Touched => кладём сам Handle во врага каждый Stepped-тик (до физики),
+-- сервер видит РЕАЛЬНОЕ касание. firetouchinterest используем как дублирующий лейер.
 saHasTouch = (type(firetouchinterest) == "function")
 
 function saTouch(handle, part)
     pcall(function()
-        firetouchinterest(handle, part, 0) -- touch start
+        firetouchinterest(handle, part, 0)
     end)
     pcall(function()
-        firetouchinterest(handle, part, 1) -- touch end
+        firetouchinterest(handle, part, 1)
     end)
 end
 
@@ -1599,25 +1599,30 @@ function enableSilentAura()
     S.saOn = true
     if S.saConn then S.saConn:Disconnect() end
     if not saHasTouch then
-        notify("Silent Aura", "firetouchinterest нет на этом executor — режим будет половинчатый (только Activate)")
+        notify("Silent Aura", "firetouchinterest нет — работаем на телепорте клинка (основной режим)")
     end
     local acc = 0
-    S.saConn = RunService.Heartbeat:Connect(function(dt)
+    -- Stepped: тикаем ДО физики, чтобы сервер застал клинок во враге
+    S.saConn = RunService.Stepped:Connect(function(dt)
         if not S.saOn then return end
-        acc = acc + dt
-        if acc < S.saDelay then return end -- 1.8 Arena: быстрее 0.25 = бан
-        acc = 0
         local ch = LP.Character
         if not ch then return end
         local root = ch:FindFirstChild("HumanoidRootPart")
         local tool = ch:FindFirstChildOfClass("Tool")
-        local handle = tool and tool:FindFirstChild("Handle")
-        if not root or not tool then
+        -- ручка клинка: Handle, либо первый BasePart внутри тулса (фолбэк)
+        local handle = nil
+        if tool then
+            handle = tool:FindFirstChild("Handle")
+            if not (handle and handle:IsA("BasePart")) then
+                handle = tool:FindFirstChildWhichIsA("BasePart", true)
+            end
+        end
+        if not root or not handle then
             S.saTarget = nil
             return
         end
         -- ближайший живой враг в досягаемости
-        local target, bd = nil, S.saRange
+        local targetModel, targetRoot, bd = nil, nil, S.saRange
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LP and not isTeammate(plr) then
                 local tch = plr.Character
@@ -1627,25 +1632,37 @@ function enableSilentAura()
                     local d = (thr.Position - root.Position).Magnitude
                     if d < bd then
                         bd = d
-                        target = tch
+                        targetModel = tch
+                        targetRoot = thr
                     end
                 end
             end
         end
-        if not target then
-            S.saTarget = nil
-            return
-        end
-        S.saTarget = target
+        S.saTarget = targetModel
+        if not targetRoot then return end
+
+        -- 1) ГЛАВНОЕ: кладём клинок прямо во врага (велд вернёт его в руку следующим кадром)
         pcall(function()
-            tool:Activate() -- переводим оружие в состояние свинга
+            handle.CFrame = targetRoot.CFrame
+            handle.Velocity = Vector3.new(0, 0, 0)
         end)
-        if handle and saHasTouch then
-            for _, part in ipairs(target:GetDescendants()) do
+
+        -- 2) firetouchinterest (если executor даёт): дублируем касание по всем партам
+        if saHasTouch then
+            for _, part in ipairs(targetModel:GetChildren()) do
                 if part:IsA("BasePart") then
-                    saTouch(handle, part) -- сервер видит касание клинком
+                    saTouch(handle, part)
                 end
             end
+        end
+
+        -- 3) свинг с задержкой: сервер должен видеть "атаку", Delay быстрее 0.25 = бан
+        acc = acc + dt
+        if acc >= S.saDelay then
+            acc = 0
+            pcall(function()
+                tool:Activate()
+            end)
         end
     end)
 end
@@ -1654,6 +1671,7 @@ function disableSilentAura()
     S.saOn = false
     S.saTarget = nil
     if S.saConn then S.saConn:Disconnect() S.saConn = nil end
+end
 end
 
 -- ============ NO KNOCKBACK (удар не отталкивает) ============
@@ -3544,13 +3562,13 @@ do
     addToggle(pSa, "sa.enabled", "Enabled", false, function(state)
         if state then enableSilentAura() else disableSilentAura() end
     end)
-    addSlider(pSa, "sa.range", "Range", 4, 21, 15, 1, function(v)
+    addSlider(pSa, "sa.range", "Range", 4, 21, 8, 1, function(v)
         S.saRange = math.floor(v)
     end)
     addSlider(pSa, "sa.delay", "Attack Delay", 0.25, 1, 0.3, 0.05, function(v)
         S.saDelay = v
     end)
-    addText(pSa, "Механика из паблик-сорсов под 1.8 Arena: Activate + firetouchinterest на все части тела — сервер видит касания клинком и ходит урон без видимых кликов. Reach в игре подпилили до 21, Delay быстрее 0.25 = бан.")
+    addText(pSa, "Клинок каждый тик кладётся во врага (Stepped) — сервер сам видит касание Handle.Touched, кликать ничего не надо. ВАЖНО: Range держи в пределах реальной дальности меча (у сервера своя проверка ~7-9), иначе бан/промахи. Delay >= 0.25 — иначе бан.")
 end
 
 -- ==== Hitbox ====
