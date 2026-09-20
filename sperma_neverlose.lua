@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +silentaura18-blade-tp")
+print("[SpermaHub] сборка: +silent-modes (Fortline/Network)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -138,6 +138,7 @@ local S = {
     airstackOn=false, airstackConn=nil, airstackPlatform=nil, airstackY=0,
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
+    silentMode="Universal",
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -347,8 +348,114 @@ local function checkSilentAimSupport()
     return hasHook and hasMeta and hasSetReadonly and hasNewcclosure
 end
 
+-- ============ SILENT AIM — режимы Universal / Fortline / Network ============
+-- код сервисов как в Fortline-сниппете (cloneref-защита), с фолбэком без cloneref
+local function makeSilentServices()
+    local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
+    return {
+        ReplicatedStorage = cR(game:GetService("ReplicatedStorage")),
+        Workspace = cR(game:GetService("Workspace")),
+        Players = cR(game:GetService("Players")),
+        RunService = cR(game:GetService("RunService")),
+        UserInputService = cR(game:GetService("UserInputService")),
+    }
+end
+
+-- FORTLINE STYLE: камера сама лочится на голову цели, пока зажата кнопка огня (ЛКМ/ПКМ).
+-- Работает на executor без хуков (Xeno): пули летят по центру камеры.
+local function enableSilentFortline()
+    print("[SpermaHub] Silent Aim: режим Fortline (camera lock while firing)")
+    notify("Silent Aim", "Режим Fortline: камера лочится пока зажат огонь", 3, "info")
+    local svc = makeSilentServices()
+    if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) S.silentAimConn = nil end
+    S.silentAimConn = svc.RunService.RenderStepped:Connect(function()
+        if not S.silentAimOn then return end
+        local uis = svc.UserInputService
+        local firing = uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+            or uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+        if not firing then return end
+        local cam = svc.Workspace.CurrentCamera
+        if not cam then return end
+        local target = findSilentTarget()
+        if not (target and target.Character) then return end
+        local head = target.Character:FindFirstChild("Head")
+            or target.Character:FindFirstChild("UpperTorso")
+            or target.Character:FindFirstChild("Torso")
+        if not head then return end
+        cam.CFrame = CFrame.new(cam.CFrame.Position, head.Position)
+    end)
+end
+
+-- NETWORK STYLE: перенаправление FireServer оружейных ремоутов на голову цели
+-- (требует метатабличные хуки executor'а; на Xeno недоступно)
+local function enableSilentNetwork()
+    if not checkSilentAimSupport() then
+        warn("[SpermaHub] Silent Aim Network: нет хуков на этом executor")
+        notify("Silent Aim", "Network нуждается в hookfunction/getrawmetatable", 5, "alert-triangle")
+        return
+    end
+    print("[SpermaHub] Silent Aim: режим Network (FireServer redirect)")
+    emitnetok = nil
+    local success, err = pcall(function()
+        local mt = getrawmetatable(game)
+        local oldNamecall = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = (pcall(getnamecallmethod) and getnamecallmethod()) or ""
+            if S.silentAimOn and (method == "FireServer" or method == "InvokeServer")
+                and typeof(self) == "Instance" then
+                local rn = string.lower(tostring(self.Name))
+                -- эвристика оружейного ремоута
+                if rn:find("shoot") or rn:find("hit") or rn:find("damage") or rn:find("fire")
+                    or rn:find("weapon") or rn:find("bullet") or rn:find("attack") or rn:find("gun") then
+                    local target = findSilentTarget()
+                    local head = target and target.Character and (
+                        target.Character:FindFirstChild("Head")
+                        or target.Character:FindFirstChild("UpperTorso")
+                        or target.Character:FindFirstChild("Torso"))
+                    if head then
+                        local args = {...}
+                        local changed = false
+                        for i, a in ipairs(args) do
+                            if typeof(a) == "Vector3" then
+                                args[i] = head.Position changed = true
+                            elseif typeof(a) == "CFrame" then
+                                args[i] = CFrame.new(head.Position) changed = true
+                            end
+                        end
+                        if changed then
+                            return oldNamecall(self, unpack(args))
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+        setreadonly(mt, true)
+        S.silentAimConn = {
+            Disconnect = function()
+                pcall(function()
+                    setreadonly(mt, false)
+                    mt.__namecall = oldNamecall
+                    setreadonly(mt, true)
+                end)
+            end,
+        }
+    end)
+    if not success then
+        warn("[SpermaHub] Silent Aim Network ошибка: " .. tostring(err))
+    end
+end
+
 local function enableSilentAim()
     S.silentAimOn = true
+    if S.silentMode == "Fortline" then
+        enableSilentFortline()
+        return
+    elseif S.silentMode == "Network" then
+        enableSilentNetwork()
+        return
+    end
     if not checkSilentAimSupport() then
         warn("[SpermaHub] Silent Aim: executor не поддерживает hookfunction")
         warn("[SpermaHub] Работает только FOV circle")
@@ -3521,6 +3628,14 @@ do
         local c = Cfg["silent.fov"]
         if c then c.set(tonumber(v)) end
     end)
+    addDropdown(pSilent, "silent.mode", "Silent Mode", {"Universal", "Fortline", "Network"}, "Universal", function(v)
+        S.silentMode = v
+        if S.silentAimOn then
+            disableSilentAim()
+            enableSilentAim()
+        end
+    end)
+    addText(pSilent, "Fortline — камера сама целится ПОКА зажата кнопка огня (работает на Xeno без хуков). Network — перенаправление FireServer оружия в голов (нужны хуки). Universal — Ray/Mouse.Hit хук (нужны хуки).")
 
     local pMisc = addPanel(pg.col2, "Misc")
     addToggle(pMisc, "aimbot.visualize", "Visualize FOV", true, function(state)
