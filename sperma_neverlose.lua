@@ -6,6 +6,7 @@
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
+--   Server:        Bypass (Anti-Cheat Bypass) | Server (Rejoin/Hop/Copy ID)
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
 
@@ -126,6 +127,7 @@ local S = {
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
     specOn=false, specConn=nil, specTarget=nil,
+    bypassMode="Off", akOn=false, akOriginal=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1302,6 +1304,124 @@ local function startSpectate(plr)
         SpecInfo.TextColor3 = Color3.fromRGB(math.floor(255 * (1 - r) + 80 * r), math.floor(255 * r), 120)
     end)
 end
+
+-- ============ ANTI-CHEAT BYPASS (честный) ============
+-- Клиентские античиты живут в LocalScript/ModuleScript игрока — их можно убить.
+-- Серверный античит клиентом не обходится в принципе (ни один чит не умеет).
+local AC_PATTERNS = {
+    "adonis", "anticheat", "anti-cheat", "anti cheat", "antihack", "anti-hack",
+    "anticheatclient", "exploitdetector", "cheatdetector", "watchdog", "banhammer",
+}
+
+local function neuterAntiCheatScripts(dryRun)
+    local killed = 0
+    local roots = {
+        LP:FindFirstChild("PlayerGui"),
+        LP:FindFirstChild("PlayerScripts"),
+        game:GetService("ReplicatedFirst"),
+    }
+    for _, root in ipairs(roots) do
+        if root then
+            for _, obj in ipairs(root:GetDescendants()) do
+                if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+                    local n = string.lower(obj.Name)
+                    for _, pat in ipairs(AC_PATTERNS) do
+                        if string.find(n, pat, 1, true) then
+                            killed = killed + 1
+                            if not dryRun then
+                                pcall(function() if obj:IsA("LocalScript") then obj.Disabled = true end end)
+                                pcall(function() obj:Destroy() end)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return killed
+end
+
+local function acHooksSupported()
+    return type(getrawmetatable) == "function"
+        and type(newcclosure) == "function"
+        and type(setreadonly) == "function"
+        and type(getnamecallmethod) == "function"
+end
+
+-- Anti Kick: перехват Namecall Kick (если экзекьютор умеет хуки)
+local function enableAntiKick()
+    if S.akOn then return true end
+    if not acHooksSupported() then
+        notify("Bypass", "Anti Kick недоступен: у экзекьютора нет хуков (на Xeno не работает)")
+        return false
+    end
+    local ok, err = pcall(function()
+        local mt = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        S.akOriginal = old
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if S.akOn and method and (method == "Kick" or method == "kick") then
+                return nil -- кик молча проглочен
+            end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+    if ok then
+        S.akOn = true
+        notify("Bypass", "Anti Kick включён")
+    else
+        notify("Bypass", "Не удалось поставить Anti Kick: " .. tostring(err))
+    end
+    return ok
+end
+
+local function disableAntiKick()
+    if not S.akOn then return end
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        mt.__namecall = S.akOriginal
+        setreadonly(mt, true)
+    end)
+    S.akOn = false
+    S.akOriginal = nil
+end
+
+local function applyBypassMode(mode)
+    local prev = S.bypassMode
+    S.bypassMode = mode
+    if mode == "Off" then
+        disableAntiKick()
+        return
+    end
+    -- scripts killer (разово + авто)
+    if mode == "Scripts Killer" or mode == "Full" then
+        local k = neuterAntiCheatScripts(false)
+        if mode ~= prev then
+            toastImpl("Bypass", "Scripts Killer: отключено " .. tostring(k) .. " шт., авто-скан каждые 20 сек")
+        end
+    end
+    -- anti kick
+    if mode == "Anti Kick" or mode == "Full" then
+        enableAntiKick()
+    end
+end
+
+-- фоновый рескан клиентских античитов
+task.spawn(function()
+    while true do
+        if S and S.guiAlive and (S.bypassMode == "Scripts Killer" or S.bypassMode == "Full") then
+            pcall(neuterAntiCheatScripts, false)
+        end
+        task.wait(20)
+    end
+end)
+
+local TeleportService = game:GetService("TeleportService")
 
 -- ============ WALK SPEED ============
 local function applyWalkSpeed()
@@ -3148,6 +3268,74 @@ do
     end, Color3.fromRGB(24, 70, 110), Color3.fromRGB(30, 86, 132))
 end
 
+-- ---------------- SERVER ----------------
+addCategory("Server")
+
+-- ==== Bypass ====
+do
+    local pg = addPage("Server", "🛡", "Bypass")
+
+    local pBy = addPanel(pg.col1, "Anti-Cheat Bypass")
+    addDropdown(pBy, "bypass.mode", "Mode", {"Off", "Scripts Killer", "Anti Kick", "Full"}, "Off", function(v)
+        applyBypassMode(v)
+    end)
+    addButton(pBy, "Neuter Now (разово)", function()
+        local k = neuterAntiCheatScripts(false)
+        toastImpl("Bypass", "Отключено античит-скриптов: " .. tostring(k))
+    end)
+    addButton(pBy, "Scan (только посчитать)", function()
+        local k = neuterAntiCheatScripts(true)
+        toastImpl("Bypass", "Подозрительных скриптов найдено: " .. tostring(k))
+    end)
+    addText(pBy, "Scripts Killer — ищет клиентские античиты (adonis/anticheat/watchdog/…) в PlayerGui, PlayerScripts и ReplicatedFirst и убивает их + авто-скан каждые 20 сек.")
+    addText(pBy, "Anti Kick — перехват Namecall Kick. Нужны хуки экзекьютора (на Xeno недоступен — скрипт сам скажет). Full = оба режима.")
+
+    local pNote = addPanel(pg.col2, "Важно")
+    addText(pNote, "СЕРВЕРНЫЙ античит клиентом не обходит НИКТО — этот бипас убирает клиентские проверки (сканеры сторонних объектов, вотчдоги, клиент-кикер).")
+    addText(pNote, "Если игра после Neuter сломалась (кнопки/анимации пропали) — выбери Off и перезайди: скрипты вернутся с респавном плейса.")
+end
+
+-- ==== Server ====
+do
+    local pg = addPage("Server", "📡", "Server")
+
+    local pSrv = addPanel(pg.col1, "Actions")
+    addButton(pSrv, "Rejoin", function()
+        toastImpl("Server", "Реконнект...")
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+        end)
+    end)
+    addButton(pSrv, "Server Hop", function()
+        toastImpl("Server", "Прыгаю на другой сервер...")
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId, LP)
+        end)
+    end)
+    addButton(pSrv, "Copy PlaceId", function()
+        if type(setclipboard) == "function" then
+            pcall(setclipboard, tostring(game.PlaceId))
+            toastImpl("Server", "PlaceId скопирован")
+        else
+            toastImpl("Server", "setclipboard недоступен. ID: " .. tostring(game.PlaceId))
+        end
+    end)
+    addButton(pSrv, "Copy JobId", function()
+        if type(setclipboard) == "function" then
+            pcall(setclipboard, tostring(game.JobId))
+            toastImpl("Server", "JobId скопирован")
+        else
+            toastImpl("Server", "setclipboard недоступен")
+        end
+    end)
+
+    local pInfo = addPanel(pg.col2, "Info")
+    addText(pInfo, "PlaceId: " .. tostring(game.PlaceId))
+    addText(pInfo, "JobId: " .. tostring(game.JobId))
+    addText(pInfo, "Игроков сейчас: " .. tostring(#Players:GetPlayers()) .. " / " .. tostring(Players.MaxPlayers))
+    addText(pInfo, "Server Hop отправляет на другой сервер этого же плейса (Roblox сам выберет).")
+end
+
 -- ---------------- MISCELLANEOUS ----------------
 addCategory("Miscellaneous")
 
@@ -3257,6 +3445,7 @@ function fullCleanupNL()
     if S.strafeConn then S.strafeConn:Disconnect() end
     if S.specConn then S.specConn:Disconnect() end
     pcall(exitSpectate)
+    pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
     if S.fxConn then S.fxConn:Disconnect() end
@@ -3515,4 +3704,4 @@ pcall(function() BootGui:Destroy() end)
 toastImpl("SpermaHub v41", "NeverLose-style GUI загружена!")
 print("✦ SpermaHub v41 (NeverLose-style) загружен!")
 print("Combat: Legitbot | Hitbox | Kill | Fling | Spectate | Anti-Aim | AutoClicker + AntiFling/AutoStrafe")
-print("Visuals: Players (Chams ESP + Target ESP) | World | Movement: Fly/Noclip/Jesus/Bhop + Click TP | Player | Misc")
+print("Visuals + Movement + Player + Server (Bypass/Server) | Misc")
