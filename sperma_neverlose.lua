@@ -26,7 +26,12 @@ if type(task) ~= "table" or type(task.spawn) ~= "function" then
             while tick() - s0 < t do rs.Heartbeat:Wait() end
         end,
         delay = function(t, f, ...)
-            task.spawn(function() task.wait(t) f(...) end)
+            local delayArgs = {...}
+            local delayN = select("#", ...)
+            task.spawn(function()
+                task.wait(t)
+                f(unpack(delayArgs, 1, delayN))
+            end)
         end,
     }
 end
