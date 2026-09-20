@@ -7,7 +7,7 @@
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
 --   Server:        Bypass (Anti-Cheat Bypass) | Server (Rejoin/Hop/Copy ID)
---   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
+--   Miscellaneous: Configs | Script | Key Binds (клавиши/мышь/колёсико) + Target HUD
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
@@ -76,7 +76,7 @@ for _, n in ipairs({
     "SpermaHub","SpermaHubToast","SpermaHubWatermark","SpermaHubToggle",
     "SpermaHubESP","SpermaHubSettings","SpermaHubWsSettings","SpermaHubTpList",
     "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle",
-    "SpermaHubSpec","SpermaHubBoot"
+    "SpermaHubSpec","SpermaHubBoot","SpermaHubBinds","SpermaHubTHud"
 }) do
     local o = LP.PlayerGui:FindFirstChild(n)
     if o then o:Destroy() end
@@ -128,6 +128,7 @@ local S = {
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
     specOn=false, specConn=nil, specTarget=nil,
     bypassMode="Off", akOn=false, akOriginal=nil,
+    bindsWidgetOn=true, thudOn=false,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -458,7 +459,7 @@ end
 
 -- Клик разрешён только "в игре": не в чате и не когда курсор над любым GUI
 local hudIgnore = {
-    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, -- декоративные элементы скрипта не считаем
+    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, SpermaHubBinds=true, SpermaHubTHud=true, -- декоративные элементы скрипта не считаем
 }
 local function canClickInGame()
     if UIS:GetFocusedTextBox() then return false end -- чат / поле ввода
@@ -2830,6 +2831,312 @@ end
 bootStep("GUI OK")
 
 -- ============================================================
+-- ============ KEYBIND MANAGER + TARGET HUD ==================
+-- ============================================================
+
+-- список биндабельных функций (через Cfg-тогглы: меню и конфиг синхронно)
+BindEntries = {
+    {label = "Fly",          cfg = "fly.enabled"},
+    {label = "Noclip",       cfg = "noclip.enabled"},
+    {label = "Bhop",         cfg = "bhop.enabled"},
+    {label = "Auto Strafe",  cfg = "bhop.strafe"},
+    {label = "Jesus",        cfg = "jesus.enabled"},
+    {label = "ESP",          cfg = "esp.enabled"},
+    {label = "Target ESP",   cfg = "esp.target"},
+    {label = "Aimbot",       cfg = "aimbot.enabled"},
+    {label = "Silent Aim",   cfg = "silent.enabled"},
+    {label = "Auto Clicker", cfg = "ac.enabled"},
+    {label = "Hitbox",       cfg = "hitbox.enabled"},
+    {label = "Anti-Aim",     cfg = "aa.enabled"},
+    {label = "God Mode",     cfg = "player.god.enabled"},
+    {label = "Anti Fling",   cfg = "antifling.enabled"},
+    {label = "Spin",         cfg = "move.spin.enabled"},
+    {label = "Click TP",     cfg = "clicktp.enabled"},
+}
+BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
+
+function bindDisplay(key)
+    if not key then return "[-]" end
+    if key == "WheelUp" then return "[Wh↑]"
+    elseif key == "WheelDown" then return "[Wh↓]"
+    elseif key == "MouseButton1" then return "[M1]"
+    elseif key == "MouseButton2" then return "[M2]"
+    elseif key == "MouseButton3" then return "[M3]"
+    end
+    return "[" .. tostring(key) .. "]"
+end
+
+-- ============ ВИДЖЕТ KEY BINDS (как на скрине) ============
+local BindsGui = Instance.new("ScreenGui")
+BindsGui.Name = "SpermaHubBinds"
+BindsGui.ResetOnSpawn = false
+BindsGui.IgnoreGuiInset = true
+BindsGui.DisplayOrder = 102
+BindsGui.Parent = LP:WaitForChild("PlayerGui")
+
+BindsFrame = Instance.new("Frame")
+BindsFrame.Position = UDim2.new(1, -185, 0, 46)
+BindsFrame.Size = UDim2.new(0, 170, 0, 0)
+BindsFrame.AutomaticSize = Enum.AutomaticSize.Y
+BindsFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 24)
+BindsFrame.BackgroundTransparency = 0.12
+BindsFrame.BorderSizePixel = 0
+BindsFrame.Active = true
+BindsFrame.Draggable = true
+BindsFrame.Parent = BindsGui
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = BindsFrame
+    local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(90, 70, 160) st.Thickness = 1 st.Transparency = 0.55 st.Parent = BindsFrame
+end
+local BindsTitle = Instance.new("TextLabel")
+BindsTitle.Size = UDim2.new(1, 0, 0, 22)
+BindsTitle.BackgroundColor3 = Color3.fromRGB(20, 20, 34)
+BindsTitle.BackgroundTransparency = 0.3
+BindsTitle.BorderSizePixel = 0
+BindsTitle.Text = "    Key Binds"
+BindsTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+BindsTitle.Font = Enum.Font.GothamBold
+BindsTitle.TextSize = 12
+BindsTitle.TextXAlignment = Enum.TextXAlignment.Left
+BindsTitle.Parent = BindsFrame
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = BindsTitle
+end
+
+local BindsList = Instance.new("Frame")
+BindsList.Position = UDim2.new(0, 0, 0, 24)
+BindsList.Size = UDim2.new(1, 0, 0, 0)
+BindsList.AutomaticSize = Enum.AutomaticSize.Y
+BindsList.BackgroundTransparency = 1
+BindsList.Parent = BindsFrame
+do
+    local l = Instance.new("UIListLayout")
+    l.FillDirection = Enum.FillDirection.Vertical
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Parent = BindsList
+    local p = Instance.new("UIPadding")
+    p.PaddingBottom = UDim.new(0, 6)
+    p.Parent = BindsList
+end
+
+function rebuildBindsWidget()
+    for _, ch in ipairs(BindsList:GetChildren()) do
+        if ch:IsA("TextLabel") then ch:Destroy() end
+    end
+    local order = 0
+    for _, e in ipairs(BindEntries) do
+        if e.key then
+            order = order + 1
+            local row = Instance.new("TextLabel")
+            row.Size = UDim2.new(1, 0, 0, 18)
+            row.BackgroundTransparency = 1
+            row.Text = "   " .. e.label .. "    " .. bindDisplay(e.key)
+            row.TextColor3 = Color3.fromRGB(225, 225, 240)
+            row.Font = Enum.Font.GothamBold
+            row.TextSize = 11
+            row.TextXAlignment = Enum.TextXAlignment.Left
+            row.LayoutOrder = order
+            row.Parent = BindsList
+        end
+    end
+end
+
+-- переключение функции по бинду (через Cfg — меню и конфиг синхронно)
+local function fireBind(entry)
+    local c = Cfg[entry.cfg]
+    if c then
+        pcall(function()
+            c.set(not c.get())
+        end)
+    end
+end
+
+-- мышь над нашим меню? (чтобы колёсико в меню не триггерило бинды)
+local function mouseOverRoot()
+    if not S.guiAlive then return false end
+    if not (Main and Main.Visible) then return false end
+    local loc = UIS:GetMouseLocation()
+    local p = Main.AbsolutePosition
+    local s = Main.AbsoluteSize
+    return loc.X >= p.X - 20 and loc.X <= p.X + s.X + 20
+        and loc.Y >= p.Y - 70 and loc.Y <= p.Y + s.Y + 20
+end
+
+bindCapture = nil -- {entry=..., refresh=fn}
+
+bindInputConn1 = UIS.InputBegan:Connect(function(input, gpe)
+    -- режим назначения: ловим любую клавишу/кнопку мыши
+    if bindCapture then
+        local cap = bindCapture
+        if input.KeyCode == Enum.KeyCode.Escape then
+            bindCapture = nil
+            cap.refresh()
+            return
+        end
+        local keyName = nil
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            if input.KeyCode == Enum.KeyCode.Delete or input.KeyCode == Enum.KeyCode.Backspace then
+                bindCapture = nil
+                cap.entry.key = nil
+                cap.refresh()
+                rebuildBindsWidget()
+                return
+            end
+            keyName = input.KeyCode.Name
+        elseif input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.MouseButton2
+            or input.UserInputType == Enum.UserInputType.MouseButton3 then
+            keyName = input.UserInputType.Name
+        end
+        if keyName then
+            bindCapture = nil
+            cap.entry.key = keyName
+            cap.refresh()
+            rebuildBindsWidget()
+        end
+        return
+    end
+    if gpe then return end
+    if not S.guiAlive or mouseOverRoot() then return end
+    for _, e in ipairs(BindEntries) do
+        if e.key then
+            local hit = false
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                hit = (input.KeyCode.Name == e.key)
+            else
+                hit = (input.UserInputType.Name == e.key)
+            end
+            if hit then fireBind(e) end
+        end
+    end
+end)
+
+bindInputConn2 = UIS.InputChanged:Connect(function(input, gpe)
+    if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+    local dir = input.Position.Z > 0 and "WheelUp" or "WheelDown"
+    if bindCapture then
+        local cap = bindCapture
+        bindCapture = nil
+        cap.entry.key = dir
+        cap.refresh()
+        rebuildBindsWidget()
+        return
+    end
+    if gpe then return end
+    if not S.guiAlive or mouseOverRoot() then return end
+    for _, e in ipairs(BindEntries) do
+        if e.key == dir then fireBind(e) end
+    end
+end)
+
+-- сохранение биндов в конфиг (автоматически с нашей системой профилей)
+for _, e in ipairs(BindEntries) do
+    Cfg["bind." .. e.cfg] = {
+        get = function() return e.key end,
+        set = function(v)
+            e.key = v
+            if BindRowRefs[e] then BindRowRefs[e]() end
+            pcall(rebuildBindsWidget)
+        end,
+    }
+end
+rebuildBindsWidget()
+
+-- ============ TARGET HUD (аватар + ник + HP, как на скрине) ============
+local THudGui = Instance.new("ScreenGui")
+THudGui.Name = "SpermaHubTHud"
+THudGui.ResetOnSpawn = false
+THudGui.IgnoreGuiInset = true
+THudGui.DisplayOrder = 103
+THudGui.Parent = LP:WaitForChild("PlayerGui")
+
+THudWin = Instance.new("Frame")
+THudWin.Size = UDim2.new(0, 168, 0, 56)
+THudWin.Position = UDim2.new(0, 12, 0, 96)
+THudWin.BackgroundColor3 = Color3.fromRGB(16, 14, 22)
+THudWin.BackgroundTransparency = 0.15
+THudWin.BorderSizePixel = 0
+THudWin.Active = true
+THudWin.Draggable = true
+THudWin.Visible = false
+THudWin.Parent = THudGui
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 10) c.Parent = THudWin
+    local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(90, 60, 160) st.Thickness = 1 st.Transparency = 0.5 st.Parent = THudWin
+end
+
+local THudAva = Instance.new("ImageLabel")
+THudAva.Size = UDim2.new(0, 42, 0, 42)
+THudAva.Position = UDim2.new(0, 7, 0, 7)
+THudAva.BackgroundColor3 = Color3.fromRGB(28, 26, 38)
+THudAva.BorderSizePixel = 0
+THudAva.Parent = THudWin
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = THudAva
+end
+
+local THudName = Instance.new("TextLabel")
+THudName.Size = UDim2.new(1, -62, 0, 18)
+THudName.Position = UDim2.new(0, 57, 0, 7)
+THudName.BackgroundTransparency = 1
+THudName.Text = "--"
+THudName.TextColor3 = Color3.fromRGB(235, 235, 245)
+THudName.Font = Enum.Font.GothamBold
+THudName.TextSize = 13
+THudName.TextXAlignment = Enum.TextXAlignment.Left
+THudName.TextTruncate = Enum.TextTruncate.AtEnd
+THudName.Parent = THudWin
+
+local THudHp = Instance.new("TextLabel")
+THudHp.Size = UDim2.new(1, -62, 0, 18)
+THudHp.Position = UDim2.new(0, 57, 0, 27)
+THudHp.BackgroundTransparency = 1
+THudHp.Text = "HP: --"
+THudHp.TextColor3 = Color3.fromRGB(170, 120, 255)
+THudHp.Font = Enum.Font.GothamBold
+THudHp.TextSize = 13
+THudHp.TextXAlignment = Enum.TextXAlignment.Left
+THudHp.Parent = THudWin
+
+task.spawn(function()
+    local lastTarget = nil
+    while THudGui.Parent do
+        local t = S.thudOn and currentEspTarget() or nil
+        if t and t.Character then
+            local tch = t.Character
+            local thum = tch:FindFirstChildOfClass("Humanoid")
+            if thum and thum.Health > 0 then
+                if lastTarget ~= t then
+                    lastTarget = t
+                    THudName.Text = t.Name
+                    task.spawn(function()
+                        local ok, img = pcall(function()
+                            return Players:GetUserThumbnailAsync(t.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+                        end)
+                        if ok and lastTarget == t then
+                            THudAva.Image = img
+                        end
+                    end)
+                end
+                THudHp.Text = string.format("HP: %.1f", thum.Health)
+                local r = thum.Health / thum.MaxHealth
+                THudHp.TextColor3 = Color3.fromRGB(
+                    math.floor(170 + 85 * (1 - r)),
+                    math.floor(120 + 100 * r),
+                    200)
+                THudWin.Visible = true
+            else
+                THudWin.Visible = false
+            end
+        else
+            lastTarget = nil
+            THudWin.Visible = false
+        end
+        task.wait(0.15)
+    end
+end)
+
+-- ============================================================
 -- ================ СТРАНИЦЫ (все вкладки) ====================
 -- ============================================================
 
@@ -3106,7 +3413,11 @@ do
     addDropdown(pTgt, "esp.targetstyle", "Color", {"Pink", "Purple", "Red", "Gold"}, "Pink", function(v)
         S.targetStyle = v
     end)
-    addText(pTgt, "Пульсирующая неоновая подсветка текущей цели Aimbot / Silent Aim. Работает отдельно от обычного ESP.")
+    addToggle(pTgt, "thud.enabled", "Target HUD", false, function(state)
+        S.thudOn = state
+        if not state then THudWin.Visible = false end
+    end)
+    addText(pTgt, "Пульсирующая подсветка цели Aimbot / Silent Aim. Target HUD — карточка с аватаром, ником и HP цели (перетаскивается).")
 end
 
 -- ==== World (Watermark) ====
@@ -3385,6 +3696,44 @@ local function doLoad(profile, silent)
     if not silent then toastImpl("Config", "Загружено: " .. profile) end
 end
 
+-- ==== Key Binds ====
+do
+    local pg = addPage("Miscellaneous", "⌨", "Key Binds")
+
+    local pB = addPanel(pg.col1, "Binds")
+    addText(pB, "Жми на окошко бинда, затем жми клавишу, кнопку мыши или крутани КОЛЁСИКО (вверх/вниз — разные бинды). Del/Backspace — стереть, Esc — отмена.")
+    for _, e in ipairs(BindEntries) do
+        local row = baseRow(pB, e.label, 160)
+        local box = new("TextButton", {
+            Size = UDim2.new(0, 96, 0, 20),
+            Position = UDim2.new(1, -96, 0.5, -10),
+            BackgroundColor3 = C_CTRL, Text = "", AutoButtonColor = false, ZIndex = 3,
+        }, row)
+        new("UICorner", {CornerRadius = UDim.new(0, 4)}, box)
+        new("UIStroke", {Color = C_STROKE, Thickness = 1, Transparency = 0.5}, box)
+        local tl = new("TextLabel", {
+            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+            Text = bindDisplay(e.key), TextColor3 = C_TXT,
+            Font = Enum.Font.GothamBold, TextSize = 11, ZIndex = 3,
+        }, box)
+        BindRowRefs[e] = function()
+            tl.Text = bindDisplay(e.key)
+        end
+        box.MouseButton1Click:Connect(function()
+            bindCapture = {entry = e, refresh = BindRowRefs[e]}
+            tl.Text = "[...]"
+        end)
+    end
+
+    local pW = addPanel(pg.col2, "Widget")
+    addToggle(pW, "binds.widget", "Show Key Binds Widget", true, function(state)
+        S.bindsWidgetOn = state
+        BindsFrame.Visible = state
+    end)
+    addText(pW, "Виджет Key Binds (как на скрине): показывает все назначенные бинды. Перетаскивается.")
+    addText(pW, "Бинды НЕ срабатывают, когда мышь над меню — колёсико можно спокойно биндить.")
+end
+
 -- ==== Main (Configs + Info + Script) ====
 local miscPage
 do
@@ -3444,6 +3793,8 @@ function fullCleanupNL()
     if S.afConn then S.afConn:Disconnect() end
     if S.strafeConn then S.strafeConn:Disconnect() end
     if S.specConn then S.specConn:Disconnect() end
+    if bindInputConn1 then bindInputConn1:Disconnect() end
+    if bindInputConn2 then bindInputConn2:Disconnect() end
     pcall(exitSpectate)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
@@ -3467,7 +3818,7 @@ function fullCleanupNL()
     end
     pcall(disableESP)
     pcall(disableTargetESP)
-    for _, n in ipairs({"SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubSpec","SpermaHubWatermark"}) do
+    for _, n in ipairs({"SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubSpec","SpermaHubWatermark","SpermaHubBinds","SpermaHubTHud"}) do
         local g = LP.PlayerGui:FindFirstChild(n)
         if g then g:Destroy() end
     end
