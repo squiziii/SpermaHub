@@ -5,14 +5,14 @@
 --   Combat:        Legitbot | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop/Spider/AirStack) | Teleport (Click TP)
---   Player:        Main (WalkSpeed + God Mode + TP Player) | Invisible (оффсет под карту)
+--   Player:        Main (WalkSpeed + God Mode + TP Player) | Invisible | No Knockback
 --   Server:        Bypass (Anti-Cheat Bypass) | Server (Rejoin/Hop/Copy ID)
 --   Miscellaneous: Configs | Script | Key Binds (клавиши/мышь/колёсико) + Target HUD
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: spider+airstack+invis+binds (тупой-кэш-фикс)")
+print("[SpermaHub] сборка: +nokb (spider/airstack/invis/binds/nokb)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -137,6 +137,7 @@ local S = {
     spiderOn=false, spiderConn=nil, spiderSpeed=30,
     airstackOn=false, airstackConn=nil, airstackPlatform=nil, airstackY=0,
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
+    noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1500,6 +1501,38 @@ function disableAirStack()
     if S.airstackPlatform and S.airstackPlatform.Parent then
         S.airstackPlatform.Position = Vector3.new(0, -1e5, 0) -- прячем платформу далеко вниз
     end
+end
+
+-- ============ NO KNOCKBACK (удар не отталкивает) ============
+noKbZero = Vector3.new(0, 0, 0)
+
+function enableNoKb()
+    S.noKbOn = true
+    if S.noKbConn then S.noKbConn:Disconnect() end
+    S.noKbConn = RunService.Heartbeat:Connect(function()
+        if not S.noKbOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        if S.flying then S.noKbLast = nil return end -- во время флая свою скорость не трогаем
+        local vel = root.Velocity
+        -- горизонтальная скорость выше порога = нас ударило/толкнуло
+        if (vel - Vector3.new(0, vel.Y, 0)).Magnitude > S.noKbMax then
+            -- возвращаем доударные X/Z (движение как ни в чём не бывало), Y оставляем
+            local lv = S.noKbLast or noKbZero
+            root.Velocity = Vector3.new(lv.X, vel.Y, lv.Z)
+        else
+            -- обычная скорость (ходьба/бег) — запоминаем как эталон
+            S.noKbLast = Vector3.new(vel.X, 0, vel.Z)
+        end
+    end)
+end
+
+function disableNoKb()
+    S.noKbOn = false
+    if S.noKbConn then S.noKbConn:Disconnect() S.noKbConn = nil end
+    S.noKbLast = nil
 end
 
 -- ============ INVISIBLE (оффсет персонажа под карту) ============
@@ -2972,6 +3005,7 @@ BindEntries = {
     {label = "Spider",       cfg = "spider.enabled"},
     {label = "AirStack",     cfg = "airstack.enabled"},
     {label = "Invisible",    cfg = "invis.enabled"},
+    {label = "No Knockback", cfg = "nokb.enabled"},
 }
 BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
 
@@ -3699,6 +3733,15 @@ do
     end)
     addText(pInvis, "Персонаж проваливается под карту (Y зафиксирован — падения нет), другие тебя не видят. Камера и управление — как обычно. Выключаешь — телепорт обратно на поверхность.")
 
+    local pNoKb = addPanel(pg.col2, "No Knockback")
+    addToggle(pNoKb, "nokb.enabled", "Enabled", false, function(state)
+        if state then enableNoKb() else disableNoKb() end
+    end)
+    addSlider(pNoKb, "nokb.threshold", "Threshold", 25, 100, 45, 5, function(v)
+        S.noKbMax = math.floor(v)
+    end)
+    addText(pNoKb, "Удары/толчки больше не отбрасывают: при резком импульсе скорость возвращается к доударной. Ходить, бегать и прыгать можно как обычно. Threshold — с чего считать ударом.")
+
     local pAf = addPanel(pg.col2, "Anti Fling")
     addToggle(pAf, "antifling.enabled", "Enabled", false, function(state)
         if state then enableAntiFling() else disableAntiFling() end
@@ -3947,6 +3990,7 @@ function fullCleanupNL()
     pcall(disableSpider)
     pcall(disableAirStack)
     pcall(function() setInvisible(false) end)
+    pcall(disableNoKb)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
