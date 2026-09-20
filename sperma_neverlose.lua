@@ -1672,7 +1672,6 @@ function disableSilentAura()
     S.saTarget = nil
     if S.saConn then S.saConn:Disconnect() S.saConn = nil end
 end
-end
 
 -- ============ NO KNOCKBACK (удар не отталкивает) ============
 noKbZero = Vector3.new(0, 0, 0)
