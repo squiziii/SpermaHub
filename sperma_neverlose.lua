@@ -12,6 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
+print("[SpermaHub] сборка: spider+airstack+invis+binds (тупой-кэш-фикс)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -1432,10 +1433,10 @@ end)
 local TeleportService = game:GetService("TeleportService")
 
 -- ============ SPIDER (лазание по стенам) ============
-local spiderRayParams = RaycastParams.new()
+spiderRayParams = RaycastParams.new()
 spiderRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local function enableSpider()
+function enableSpider()
     S.spiderOn = true
     if S.spiderConn then S.spiderConn:Disconnect() end
     S.spiderConn = RunService.Heartbeat:Connect(function()
@@ -1455,13 +1456,13 @@ local function enableSpider()
     end)
 end
 
-local function disableSpider()
+function disableSpider()
     S.spiderOn = false
     if S.spiderConn then S.spiderConn:Disconnect() S.spiderConn = nil end
 end
 
 -- ============ AIRSTACK (ходьба по воздуху на невидимой платформе) ============
-local function enableAirStack()
+function enableAirStack()
     S.airstackOn = true
     local ch = LP.Character
     local root = ch and ch:FindFirstChild("HumanoidRootPart")
@@ -1493,7 +1494,7 @@ local function enableAirStack()
     end)
 end
 
-local function disableAirStack()
+function disableAirStack()
     S.airstackOn = false
     if S.airstackConn then S.airstackConn:Disconnect() S.airstackConn = nil end
     if S.airstackPlatform and S.airstackPlatform.Parent then
@@ -1502,7 +1503,7 @@ local function disableAirStack()
 end
 
 -- ============ INVISIBLE (оффсет персонажа под карту) ============
-local function setInvisible(state)
+function setInvisible(state)
     S.invisOn = state
     if state then
         if S.invisConn then S.invisConn:Disconnect() end
