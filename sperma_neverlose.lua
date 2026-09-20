@@ -4,8 +4,8 @@
 -- Перенесены ВСЕ вкладки и функции:
 --   Combat:        Legitbot | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
---   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop) | Teleport (Click TP)
---   Player:        Main (WalkSpeed + God Mode + TP Player)
+--   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop/Spider/AirStack) | Teleport (Click TP)
+--   Player:        Main (WalkSpeed + God Mode + TP Player) | Invisible (оффсет под карту)
 --   Server:        Bypass (Anti-Cheat Bypass) | Server (Rejoin/Hop/Copy ID)
 --   Miscellaneous: Configs | Script | Key Binds (клавиши/мышь/колёсико) + Target HUD
 -- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
@@ -91,6 +91,10 @@ pcall(function()
     local old = workspace:FindFirstChild("SpermaJesus")
     if old then old:Destroy() end
 end)
+pcall(function()
+    local old = workspace:FindFirstChild("SpermaAirStack")
+    if old then old:Destroy() end
+end)
 
 -- ============ УВЕДОМЛЕНИЯ (тосты; до построения UI — в консоль) ============
 local toastImpl = nil
@@ -129,6 +133,9 @@ local S = {
     specOn=false, specConn=nil, specTarget=nil,
     bypassMode="Off", akOn=false, akOriginal=nil,
     bindsWidgetOn=true, thudOn=false,
+    spiderOn=false, spiderConn=nil, spiderSpeed=30,
+    airstackOn=false, airstackConn=nil, airstackPlatform=nil, airstackY=0,
+    invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1423,6 +1430,113 @@ task.spawn(function()
 end)
 
 local TeleportService = game:GetService("TeleportService")
+
+-- ============ SPIDER (лазание по стенам) ============
+local spiderRayParams = RaycastParams.new()
+spiderRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function enableSpider()
+    S.spiderOn = true
+    if S.spiderConn then S.spiderConn:Disconnect() end
+    S.spiderConn = RunService.Heartbeat:Connect(function()
+        if not S.spiderOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+        if hum.MoveDirection.Magnitude < 0.1 then return end -- стоишь — не лезешь
+        spiderRayParams.FilterDescendantsInstances = {ch}
+        local hit = workspace:Raycast(root.Position, hum.MoveDirection.Unit * 3, spiderRayParams)
+        if hit then
+            -- перед нами стена: ставим вертикальную скорость подъёма
+            root.Velocity = Vector3.new(root.Velocity.X, S.spiderSpeed, root.Velocity.Z)
+        end
+    end)
+end
+
+local function disableSpider()
+    S.spiderOn = false
+    if S.spiderConn then S.spiderConn:Disconnect() S.spiderConn = nil end
+end
+
+-- ============ AIRSTACK (ходьба по воздуху на невидимой платформе) ============
+local function enableAirStack()
+    S.airstackOn = true
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    -- высота платформы фиксируется в момент включения
+    S.airstackY = root and (root.Position.Y - 3.2) or 60
+    if not S.airstackPlatform or not S.airstackPlatform.Parent then
+        local p = Instance.new("Part")
+        p.Name = "SpermaAirStack"
+        p.Anchored = true
+        p.CanCollide = true
+        p.Transparency = 1
+        p.CastShadow = false
+        p.Size = Vector3.new(12, 1, 12)
+        p.Parent = workspace
+        S.airstackPlatform = p
+    end
+    if S.airstackConn then S.airstackConn:Disconnect() end
+    S.airstackConn = RunService.Heartbeat:Connect(function()
+        if not S.airstackOn then return end
+        local ch2 = LP.Character
+        if not ch2 then return end
+        local root2 = ch2:FindFirstChild("HumanoidRootPart")
+        local plat = S.airstackPlatform
+        if not root2 or not plat then return end
+        -- платформа следует за игроком по X/Z на зафиксированной высоте
+        plat.Position = Vector3.new(root2.Position.X,
+            (S.airstackY or 60) - plat.Size.Y / 2 + 0.05,
+            root2.Position.Z)
+    end)
+end
+
+local function disableAirStack()
+    S.airstackOn = false
+    if S.airstackConn then S.airstackConn:Disconnect() S.airstackConn = nil end
+    if S.airstackPlatform and S.airstackPlatform.Parent then
+        S.airstackPlatform.Position = Vector3.new(0, -1e5, 0) -- прячем платформу далеко вниз
+    end
+end
+
+-- ============ INVISIBLE (оффсет персонажа под карту) ============
+local function setInvisible(state)
+    S.invisOn = state
+    if state then
+        if S.invisConn then S.invisConn:Disconnect() end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        S.invisY = root and root.Position.Y or 60
+        S.invisConn = RunService.Heartbeat:Connect(function()
+            if not S.invisOn then return end
+            local ch2 = LP.Character
+            if not ch2 then return end
+            local root2 = ch2:FindFirstChild("HumanoidRootPart")
+            local hum2 = ch2:FindFirstChildOfClass("Humanoid")
+            if root2 and hum2 then
+                -- персонаж физически провален под карту: другие его не видят, а падения нет (Y зафиксирован)
+                local p = root2.Position
+                root2.Velocity = Vector3.new(0, 0, 0)
+                root2.CFrame = CFrame.new(p.X, (S.invisY or p.Y) - S.invisOffset, p.Z)
+                -- камеру держим на нормальной высоте — ты видишь всё как обычно
+                hum2.CameraOffset = Vector3.new(0, S.invisOffset, 0)
+            end
+        end)
+    else
+        if S.invisConn then S.invisConn:Disconnect() S.invisConn = nil end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hum then hum.CameraOffset = Vector3.new(0, 0, 0) end
+        if root then
+            local p = root.Position
+            root.CFrame = CFrame.new(p.X, (S.invisY or p.Y), p.Z) -- возврат наверх
+            root.Velocity = Vector3.new(0, 0, 0)
+        end
+    end
+end
 
 -- ============ WALK SPEED ============
 local function applyWalkSpeed()
@@ -2854,6 +2968,9 @@ BindEntries = {
     {label = "Anti Fling",   cfg = "antifling.enabled"},
     {label = "Spin",         cfg = "move.spin.enabled"},
     {label = "Click TP",     cfg = "clicktp.enabled"},
+    {label = "Spider",       cfg = "spider.enabled"},
+    {label = "AirStack",     cfg = "airstack.enabled"},
+    {label = "Invisible",    cfg = "invis.enabled"},
 }
 BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
 
@@ -3508,6 +3625,21 @@ do
         S.spinSpeed = math.floor(v)
     end)
     addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду.")
+
+    local pSpider = addPanel(pg.col2, "Spider")
+    addToggle(pSpider, "spider.enabled", "Enabled", false, function(state)
+        if state then enableSpider() else disableSpider() end
+    end)
+    addSlider(pSpider, "spider.speed", "Climb Speed", 10, 120, 30, 5, function(v)
+        S.spiderSpeed = math.floor(v)
+    end)
+    addText(pSpider, "Лазание по стенам: подойди к стене и зажми W — пойдёшь вертикально вверх.")
+
+    local pAir = addPanel(pg.col2, "AirStack")
+    addToggle(pAir, "airstack.enabled", "Enabled", false, function(state)
+        if state then enableAirStack() else disableAirStack() end
+    end)
+    addText(pAir, "Невидимая платформа под ногами на той высоте, где включишь. Подпрыгни, включи — и беги по воздуху.")
 end
 
 -- ==== Teleport (Click TP) ====
@@ -3556,6 +3688,15 @@ do
         if state then enableGod() else disableGod() end
     end)
     addText(pGod, "Держит HP на максимуме каждый кадр. Работает не во всех играх (где HP контролирует сервер).")
+
+    local pInvis = addPanel(pg.col1, "Invisible")
+    addToggle(pInvis, "invis.enabled", "Enabled", false, function(state)
+        setInvisible(state)
+    end)
+    addSlider(pInvis, "invis.offset", "Depth", 20, 200, 58, 2, function(v)
+        S.invisOffset = math.floor(v)
+    end)
+    addText(pInvis, "Персонаж проваливается под карту (Y зафиксирован — падения нет), другие тебя не видят. Камера и управление — как обычно. Выключаешь — телепорт обратно на поверхность.")
 
     local pAf = addPanel(pg.col2, "Anti Fling")
     addToggle(pAf, "antifling.enabled", "Enabled", false, function(state)
@@ -3802,6 +3943,9 @@ function fullCleanupNL()
     if bindInputConn1 then bindInputConn1:Disconnect() end
     if bindInputConn2 then bindInputConn2:Disconnect() end
     pcall(exitSpectate)
+    pcall(disableSpider)
+    pcall(disableAirStack)
+    pcall(function() setInvisible(false) end)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
