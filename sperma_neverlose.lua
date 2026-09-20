@@ -2,7 +2,7 @@
 -- Интерфейс в стиле NEVERLOSE (как на скрине): сайдбар + топбар + двухколоночные панели,
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
---   Combat:        Legitbot | Kill Aura | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
+--   Combat:        Legitbot | Kill Aura + Silent Aura (1.8 Arena) | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop/Spider/AirStack) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player) | Invisible | No Knockback
@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +killaura+1.8nokb")
+print("[SpermaHub] сборка: +silentaura18")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -139,6 +139,7 @@ local S = {
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
+    saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1577,6 +1578,82 @@ function disableKillAura()
     S.kaOn = false
     S.kaTarget = nil
     if S.kaConn then S.kaConn:Disconnect() S.kaConn = nil end
+end
+
+-- ============ SILENT AURA (1.8 Arena: огонь через touch-интересы) ============
+-- механика взята из публичных сорсов под 1.8 Arena (reach cap 21, min delay 0.25):
+-- tool:Activate() + firetouchinterest(handle, части врага, 0/1) — сервер сам видит
+-- "касание" клинком и наносит урон, без единого видимого клика.
+saHasTouch = (type(firetouchinterest) == "function")
+
+function saTouch(handle, part)
+    pcall(function()
+        firetouchinterest(handle, part, 0) -- touch start
+    end)
+    pcall(function()
+        firetouchinterest(handle, part, 1) -- touch end
+    end)
+end
+
+function enableSilentAura()
+    S.saOn = true
+    if S.saConn then S.saConn:Disconnect() end
+    if not saHasTouch then
+        notify("Silent Aura", "firetouchinterest нет на этом executor — режим будет половинчатый (только Activate)")
+    end
+    local acc = 0
+    S.saConn = RunService.Heartbeat:Connect(function(dt)
+        if not S.saOn then return end
+        acc = acc + dt
+        if acc < S.saDelay then return end -- 1.8 Arena: быстрее 0.25 = бан
+        acc = 0
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        local tool = ch:FindFirstChildOfClass("Tool")
+        local handle = tool and tool:FindFirstChild("Handle")
+        if not root or not tool then
+            S.saTarget = nil
+            return
+        end
+        -- ближайший живой враг в досягаемости
+        local target, bd = nil, S.saRange
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP and not isTeammate(plr) then
+                local tch = plr.Character
+                local thr = tch and tch:FindFirstChild("HumanoidRootPart")
+                local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+                if thr and thum and thum.Health > 0 then
+                    local d = (thr.Position - root.Position).Magnitude
+                    if d < bd then
+                        bd = d
+                        target = tch
+                    end
+                end
+            end
+        end
+        if not target then
+            S.saTarget = nil
+            return
+        end
+        S.saTarget = target
+        pcall(function()
+            tool:Activate() -- переводим оружие в состояние свинга
+        end)
+        if handle and saHasTouch then
+            for _, part in ipairs(target:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    saTouch(handle, part) -- сервер видит касание клинком
+                end
+            end
+        end
+    end)
+end
+
+function disableSilentAura()
+    S.saOn = false
+    S.saTarget = nil
+    if S.saConn then S.saConn:Disconnect() S.saConn = nil end
 end
 
 -- ============ NO KNOCKBACK (удар не отталкивает) ============
@@ -3085,6 +3162,7 @@ BindEntries = {
     {label = "Invisible",    cfg = "invis.enabled"},
     {label = "No Knockback", cfg = "nokb.enabled"},
     {label = "Kill Aura",    cfg = "ka.enabled"},
+    {label = "Silent Aura",  cfg = "sa.enabled"},
 }
 BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
 
@@ -3461,6 +3539,18 @@ do
         S.kaFace = state
     end)
     addText(pKa, "Враг зашёл в Range — его автоматически закликивает: инжект ЛКМ + активация оружия, персонаж поворачивается к цели. CPS — кликов в секунду. Team Check учитывается.")
+
+    local pSa = addPanel(pg.col2, "Silent Aura (1.8 Arena)")
+    addToggle(pSa, "sa.enabled", "Enabled", false, function(state)
+        if state then enableSilentAura() else disableSilentAura() end
+    end)
+    addSlider(pSa, "sa.range", "Range", 4, 21, 15, 1, function(v)
+        S.saRange = math.floor(v)
+    end)
+    addSlider(pSa, "sa.delay", "Attack Delay", 0.25, 1, 0.3, 0.05, function(v)
+        S.saDelay = v
+    end)
+    addText(pSa, "Механика из паблик-сорсов под 1.8 Arena: Activate + firetouchinterest на все части тела — сервер видит касания клинком и ходит урон без видимых кликов. Reach в игре подпилили до 21, Delay быстрее 0.25 = бан.")
 end
 
 -- ==== Hitbox ====
@@ -4102,6 +4192,7 @@ function fullCleanupNL()
     pcall(function() setInvisible(false) end)
     pcall(disableNoKb)
     pcall(disableKillAura)
+    pcall(disableSilentAura)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
