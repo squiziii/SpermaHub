@@ -991,7 +991,7 @@ local function flingStickyPlayer(target, dur)
                     root.Velocity = Vector3.new(0, 0, 0)
                 end
                 task.wait()
-                p += 1
+                p = p + 1
             until p >= 50
         end)
     end)
