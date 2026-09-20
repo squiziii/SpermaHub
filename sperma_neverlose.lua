@@ -2,7 +2,7 @@
 -- Интерфейс в стиле NEVERLOSE (как на скрине): сайдбар + топбар + двухколоночные панели,
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
---   Combat:        Legitbot | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
+--   Combat:        Legitbot | Kill Aura | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop/Spider/AirStack) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player) | Invisible | No Knockback
@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +nokb (spider/airstack/invis/binds/nokb)")
+print("[SpermaHub] сборка: +killaura+1.8nokb")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -137,7 +137,8 @@ local S = {
     spiderOn=false, spiderConn=nil, spiderSpeed=30,
     airstackOn=false, airstackConn=nil, airstackPlatform=nil, airstackY=0,
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
-    noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil,
+    noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
+    kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -1503,6 +1504,81 @@ function disableAirStack()
     end
 end
 
+-- ============ KILL AURA (закликивает врага) ============
+VIMService = game:GetService("VirtualInputManager")
+
+function kaNearestTarget()
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local best, bd = nil, S.kaRange
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and not isTeammate(plr) then
+            local tch = plr.Character
+            local thr = tch and tch:FindFirstChild("HumanoidRootPart")
+            local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+            if thr and thum and thum.Health > 0 then
+                local d = (thr.Position - root.Position).Magnitude
+                if d < bd then
+                    bd = d
+                    best = plr
+                end
+            end
+        end
+    end
+    return best
+end
+
+function kaClick()
+    -- инжект реального клика ЛКМ (как делает живой игрок)
+    pcall(function()
+        VIMService:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+    end)
+    task.spawn(function()
+        task.wait(0.02)
+        pcall(function()
+            VIMService:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+        end)
+    end)
+end
+
+function enableKillAura()
+    S.kaOn = true
+    if S.kaConn then S.kaConn:Disconnect() end
+    local acc = 0
+    S.kaConn = RunService.Heartbeat:Connect(function(dt)
+        if not S.kaOn then return end
+        acc = acc + dt
+        if acc < 1 / math.max(S.kaCps, 1) then return end
+        acc = 0
+        local target = kaNearestTarget()
+        if not target then
+            S.kaTarget = nil
+            return
+        end
+        S.kaTarget = target
+        local root2 = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        local thr2 = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if root2 and thr2 and S.kaFace then
+            -- поворачиваем персонажа к цели, чтобы свинг ловил хитбокс
+            root2.CFrame = CFrame.new(root2.Position,
+                Vector3.new(thr2.Position.X, root2.Position.Y, thr2.Position.Z))
+        end
+        kaClick() -- обычный инжект-клик
+        pcall(function()
+            local ch2 = LP.Character
+            local tool = ch2 and ch2:FindFirstChildOfClass("Tool")
+            if tool then tool:Activate() end -- классическая активация оружия
+        end)
+    end)
+end
+
+function disableKillAura()
+    S.kaOn = false
+    S.kaTarget = nil
+    if S.kaConn then S.kaConn:Disconnect() S.kaConn = nil end
+end
+
 -- ============ NO KNOCKBACK (удар не отталкивает) ============
 noKbZero = Vector3.new(0, 0, 0)
 
@@ -1519,9 +1595,11 @@ function enableNoKb()
         local vel = root.Velocity
         -- горизонтальная скорость выше порога = нас ударило/толкнуло
         if (vel - Vector3.new(0, vel.Y, 0)).Magnitude > S.noKbMax then
-            -- возвращаем доударные X/Z (движение как ни в чём не бывало), Y оставляем
+            -- возвращаем доударные X/Z (движение как ни в чём не бывало)
             local lv = S.noKbLast or noKbZero
-            root.Velocity = Vector3.new(lv.X, vel.Y, lv.Z)
+            local keepY = vel.Y
+            if S.noKbFull then keepY = 0 end -- 1.8-режим: обнуляем и подскок вверх от удара
+            root.Velocity = Vector3.new(lv.X, keepY, lv.Z)
         else
             -- обычная скорость (ходьба/бег) — запоминаем как эталон
             S.noKbLast = Vector3.new(vel.X, 0, vel.Z)
@@ -3006,6 +3084,7 @@ BindEntries = {
     {label = "AirStack",     cfg = "airstack.enabled"},
     {label = "Invisible",    cfg = "invis.enabled"},
     {label = "No Knockback", cfg = "nokb.enabled"},
+    {label = "Kill Aura",    cfg = "ka.enabled"},
 }
 BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
 
@@ -3362,6 +3441,26 @@ do
         S.visibleCheck = state
     end)
     addText(pMisc, "Красный круг — Aimbot FOV, синий — Silent Aim FOV. Team Check игнорирует свою команду (и в ESP), Visible Check не целится сквозь стены.")
+end
+
+-- ==== Kill Aura ====
+do
+    local pg = addPage("Combat", "🗡", "Kill Aura")
+
+    local pKa = addPanel(pg.col1, "Kill Aura")
+    addToggle(pKa, "ka.enabled", "Enabled", false, function(state)
+        if state then enableKillAura() else disableKillAura() end
+    end)
+    addSlider(pKa, "ka.range", "Range", 4, 25, 10, 1, function(v)
+        S.kaRange = math.floor(v)
+    end)
+    addSlider(pKa, "ka.cps", "CPS", 5, 30, 12, 1, function(v)
+        S.kaCps = math.floor(v)
+    end)
+    addToggle(pKa, "ka.face", "Face Target", true, function(state)
+        S.kaFace = state
+    end)
+    addText(pKa, "Враг зашёл в Range — его автоматически закликивает: инжект ЛКМ + активация оружия, персонаж поворачивается к цели. CPS — кликов в секунду. Team Check учитывается.")
 end
 
 -- ==== Hitbox ====
@@ -3740,7 +3839,18 @@ do
     addSlider(pNoKb, "nokb.threshold", "Threshold", 25, 100, 45, 5, function(v)
         S.noKbMax = math.floor(v)
     end)
-    addText(pNoKb, "Удары/толчки больше не отбрасывают: при резком импульсе скорость возвращается к доударной. Ходить, бегать и прыгать можно как обычно. Threshold — с чего считать ударом.")
+    addToggle(pNoKb, "nokb.full", "1.8 Mode (режет и отскок вверх)", false, function(state)
+        S.noKbFull = state
+    end)
+    addDropdown(pNoKb, nil, "Game Preset", {"Standard", "1.8 Arena"}, "Standard", function(v)
+        if v == "1.8 Arena" then
+            local c = Cfg["nokb.threshold"] if c then c.set(28) end
+            local c2 = Cfg["nokb.full"] if c2 then c2.set(true) end
+        else
+            local c2 = Cfg["nokb.full"] if c2 then c2.set(false) end
+        end
+    end)
+    addText(pNoKb, "Preset 1.8 Arena: порог 28 + обнуление вертикального подскока от ударов — комбо не рвётся, движение свободное.")
 
     local pAf = addPanel(pg.col2, "Anti Fling")
     addToggle(pAf, "antifling.enabled", "Enabled", false, function(state)
@@ -3991,6 +4101,7 @@ function fullCleanupNL()
     pcall(disableAirStack)
     pcall(function() setInvisible(false) end)
     pcall(disableNoKb)
+    pcall(disableKillAura)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
