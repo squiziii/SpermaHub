@@ -3,7 +3,7 @@
 -- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
 -- Перенесены ВСЕ вкладки и функции:
 --   Combat:        Legitbot | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
---   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World (HUD)
+--   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
 --   Movement:      Main (Flight/Noclip/Jesus/Spin/Bhop) | Teleport (Click TP)
 --   Player:        Main (WalkSpeed + God Mode + TP Player)
 --   Miscellaneous: Configs (Save/Load/профили) | Script (Close Script)
@@ -67,7 +67,7 @@ local LP = Players.LocalPlayer
 
 -- ============ ОЧИСТКА СТАРЫХ ВЕРСИЙ ============
 for _, n in ipairs({
-    "SpermaHub","SpermaHubToast","SpermaHubToggle",
+    "SpermaHub","SpermaHubToast","SpermaHubWatermark","SpermaHubToggle",
     "SpermaHubESP","SpermaHubSettings","SpermaHubWsSettings","SpermaHubTpList",
     "SpermaHubFlingTarget","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle",
     "SpermaHubSpec","SpermaHubBoot"
@@ -100,6 +100,7 @@ local S = {
     flying=false, noclip=false, esp=false, speed=50,
     espBox=true, espSkeleton=true, espChams=true, espNames=true, chamStyle="Purple",
     targetEspOn=false, targetStyle="Pink", targetEspConn=nil,
+    wmOn=true,
     bv=nil, bg=nil, flyConn=nil, noclipConn=nil, espConn=nil,
     fps=60, ping=0,
     walkSpeed=16, walkSpeedOn=false, wsConn=nil,
@@ -450,7 +451,7 @@ end
 
 -- Клик разрешён только "в игре": не в чате и не когда курсор над любым GUI
 local hudIgnore = {
-    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, -- декоративные элементы скрипта не считаем
+    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, -- декоративные элементы скрипта не считаем
 }
 local function canClickInGame()
     if UIS:GetFocusedTextBox() then return false end -- чат / поле ввода
@@ -1706,73 +1707,187 @@ end
 
 bootStep("ESP OK")
 
--- ============ HUD (Minced-style: иконка | бренд | ник | время, как на скрине) ============
-local HUDGui = Instance.new("ScreenGui")
-HUDGui.Name = "SpermaHubHUD"
-HUDGui.ResetOnSpawn = false
-HUDGui.IgnoreGuiInset = true
-HUDGui.DisplayOrder = 101
-HUDGui.Enabled = true
-HUDGui.Parent = LP:WaitForChild("PlayerGui")
+-- ============ WATERMARK (старый: FPS/Ping/время/дата, перетаскивается) ============
+local WG = Instance.new("ScreenGui")
+WG.Name = "SpermaHubWatermark"
+WG.ResetOnSpawn = false
+WG.IgnoreGuiInset = true
+WG.DisplayOrder = 100
+WG.Parent = LP:WaitForChild("PlayerGui")
 
-local HUDBar = Instance.new("Frame")
-HUDBar.Name = "HUDBar"
-HUDBar.Position = UDim2.new(0, 10, 0, 10)
-HUDBar.Size = UDim2.new(0, 0, 0, 24)
-HUDBar.AutomaticSize = Enum.AutomaticSize.X
-HUDBar.BackgroundColor3 = Color3.fromRGB(14, 12, 20)
-HUDBar.BackgroundTransparency = 0.12
-HUDBar.BorderSizePixel = 0
-HUDBar.Active = true
-HUDBar.Draggable = true
-HUDBar.Parent = HUDGui
-do
-    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 6) c.Parent = HUDBar
-    local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(110, 80, 190) st.Thickness = 1 st.Transparency = 0.55 st.Parent = HUDBar
-    local pad = Instance.new("UIPadding")
-    pad.PaddingLeft = UDim.new(0, 10) pad.PaddingRight = UDim.new(0, 12)
-    pad.Parent = HUDBar
-    local lay = Instance.new("UIListLayout")
-    lay.FillDirection = Enum.FillDirection.Horizontal
-    lay.SortOrder = Enum.SortOrder.LayoutOrder
-    lay.VerticalAlignment = Enum.VerticalAlignment.Center
-    lay.Padding = UDim.new(0, 9)
-    lay.Parent = HUDBar
-end
+local WM = Instance.new("Frame")
+WM.Size = UDim2.new(0,280,0,68)
+WM.Position = UDim2.new(0,12,0,12)
+WM.BackgroundColor3 = Color3.fromRGB(18,18,22)
+WM.BackgroundTransparency = 0.15
+WM.BorderSizePixel = 0
+WM.Active = true
+WM.Draggable = true
+WM.Parent = WG
 
-local function hudSeg(order, text, color, bold)
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(0, 0, 1, 0)
-    l.AutomaticSize = Enum.AutomaticSize.X
-    l.BackgroundTransparency = 1
-    l.Text = text
-    l.TextColor3 = color
-    l.Font = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
-    l.TextSize = 12
-    l.LayoutOrder = order
-    l.Parent = HUDBar
-    return l
-end
+local WMC = Instance.new("UICorner")
+WMC.CornerRadius = UDim.new(0,10)
+WMC.Parent = WM
 
--- как на скрине Minced: иконка | бренд | 👤 ник | 🕐 время
-hudSeg(1, "⛰", Color3.fromRGB(160, 130, 255), true)
-hudSeg(2, "SpermaHub", Color3.fromRGB(190, 160, 255), true)
-local HUDNick = hudSeg(3, "👤 --", Color3.fromRGB(230, 230, 242), true)
-local HUDTime = hudSeg(4, "🕐 --:--", Color3.fromRGB(175, 175, 200), false)
+local WMS = Instance.new("UIStroke")
+WMS.Color = Color3.fromRGB(80,60,140)
+WMS.Thickness = 1
+WMS.Transparency = 0.5
+WMS.Parent = WM
 
-local function hudRefreshStatic()
-    local nick = LP.DisplayName
-    if nick == nil or nick == "" then nick = LP.Name end
-    HUDNick.Text = "👤 " .. tostring(nick)
-end
-hudRefreshStatic()
+local TopRow = Instance.new("Frame")
+TopRow.Size = UDim2.new(1,-20,0,24)
+TopRow.Position = UDim2.new(0,10,0,10)
+TopRow.BackgroundTransparency = 1
+TopRow.Parent = WM
+
+local BrandLabel = Instance.new("TextLabel")
+BrandLabel.Size = UDim2.new(0,90,1,0)
+BrandLabel.BackgroundTransparency = 1
+BrandLabel.Text = "✦ Cracked"
+BrandLabel.TextColor3 = Color3.fromRGB(160,140,220)
+BrandLabel.Font = Enum.Font.GothamBold
+BrandLabel.TextSize = 14
+BrandLabel.TextXAlignment = Enum.TextXAlignment.Left
+BrandLabel.Parent = TopRow
+
+local FpsIcon = Instance.new("TextLabel")
+FpsIcon.Size = UDim2.new(0,18,1,0)
+FpsIcon.Position = UDim2.new(0,92,0,0)
+FpsIcon.BackgroundTransparency = 1
+FpsIcon.Text = "📶"
+FpsIcon.TextColor3 = Color3.fromRGB(140,140,200)
+FpsIcon.Font = Enum.Font.Gotham
+FpsIcon.TextSize = 13
+FpsIcon.TextXAlignment = Enum.TextXAlignment.Center
+FpsIcon.Parent = TopRow
+
+local FpsLabel = Instance.new("TextLabel")
+FpsLabel.Size = UDim2.new(0,55,1,0)
+FpsLabel.Position = UDim2.new(0,110,0,0)
+FpsLabel.BackgroundTransparency = 1
+FpsLabel.Text = "-- Fps"
+FpsLabel.TextColor3 = Color3.fromRGB(200,200,220)
+FpsLabel.Font = Enum.Font.GothamBold
+FpsLabel.TextSize = 14
+FpsLabel.TextXAlignment = Enum.TextXAlignment.Left
+FpsLabel.Parent = TopRow
+
+local TimeIcon = Instance.new("TextLabel")
+TimeIcon.Size = UDim2.new(0,18,1,0)
+TimeIcon.Position = UDim2.new(0,170,0,0)
+TimeIcon.BackgroundTransparency = 1
+TimeIcon.Text = "🕐"
+TimeIcon.TextColor3 = Color3.fromRGB(140,140,200)
+TimeIcon.Font = Enum.Font.Gotham
+TimeIcon.TextSize = 13
+TimeIcon.TextXAlignment = Enum.TextXAlignment.Center
+TimeIcon.Parent = TopRow
+
+local TimeLabel = Instance.new("TextLabel")
+TimeLabel.Size = UDim2.new(0,80,1,0)
+TimeLabel.Position = UDim2.new(0,188,0,0)
+TimeLabel.BackgroundTransparency = 1
+TimeLabel.Text = "00:00:00"
+TimeLabel.TextColor3 = Color3.fromRGB(200,200,220)
+TimeLabel.Font = Enum.Font.GothamBold
+TimeLabel.TextSize = 14
+TimeLabel.TextXAlignment = Enum.TextXAlignment.Left
+TimeLabel.Parent = TopRow
+
+local BotRow = Instance.new("Frame")
+BotRow.Size = UDim2.new(1,-20,0,20)
+BotRow.Position = UDim2.new(0,10,0,38)
+BotRow.BackgroundTransparency = 1
+BotRow.Parent = WM
+
+local PingIcon = Instance.new("TextLabel")
+PingIcon.Size = UDim2.new(0,18,1,0)
+PingIcon.BackgroundTransparency = 1
+PingIcon.Text = "📡"
+PingIcon.TextColor3 = Color3.fromRGB(160,140,220)
+PingIcon.Font = Enum.Font.Gotham
+PingIcon.TextSize = 13
+PingIcon.Parent = BotRow
+
+local PingLabel = Instance.new("TextLabel")
+PingLabel.Size = UDim2.new(0,90,1,0)
+PingLabel.Position = UDim2.new(0,20,0,0)
+PingLabel.BackgroundTransparency = 1
+PingLabel.Text = "-- Ping"
+PingLabel.TextColor3 = Color3.fromRGB(200,200,220)
+PingLabel.Font = Enum.Font.GothamBold
+PingLabel.TextSize = 13
+PingLabel.TextXAlignment = Enum.TextXAlignment.Left
+PingLabel.Parent = BotRow
+
+local DateIcon = Instance.new("TextLabel")
+DateIcon.Size = UDim2.new(0,18,1,0)
+DateIcon.Position = UDim2.new(0,140,0,0)
+DateIcon.BackgroundTransparency = 1
+DateIcon.Text = "📅"
+DateIcon.TextColor3 = Color3.fromRGB(160,140,220)
+DateIcon.Font = Enum.Font.Gotham
+DateIcon.TextSize = 13
+DateIcon.Parent = BotRow
+
+local DateLabel = Instance.new("TextLabel")
+DateLabel.Size = UDim2.new(0,110,1,0)
+DateLabel.Position = UDim2.new(0,160,0,0)
+DateLabel.BackgroundTransparency = 1
+DateLabel.Text = "Sep.2026"
+DateLabel.TextColor3 = Color3.fromRGB(200,200,220)
+DateLabel.Font = Enum.Font.GothamBold
+DateLabel.TextSize = 13
+DateLabel.TextXAlignment = Enum.TextXAlignment.Left
+DateLabel.Parent = BotRow
 
 task.spawn(function()
-    while HUDGui.Parent do
-        HUDTime.Text = "🕐 " .. os.date("%H:%M")
+    while WG.Parent do
+        local f = 0
+        local conn
+        conn = RunService.RenderStepped:Connect(function()
+            f = f + 1
+        end)
         task.wait(1)
+        if conn then conn:Disconnect() end
+        S.fps = f
     end
 end)
+
+task.spawn(function()
+    local months = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"}
+    while WG.Parent do
+        if S.wmOn then
+            local p = 0
+            pcall(function()
+                local serverStats = Stats.Network.ServerStatsItem
+                if serverStats and serverStats["Data Ping"] then
+                    p = math.floor(serverStats["Data Ping"]:GetValue())
+                end
+            end)
+            S.ping = p
+            local fpsColor
+            if S.fps >= 50 then fpsColor = Color3.fromRGB(200,255,200)
+            elseif S.fps >= 30 then fpsColor = Color3.fromRGB(255,240,160)
+            else fpsColor = Color3.fromRGB(255,160,160) end
+            local pingColor
+            if p < 80 then pingColor = Color3.fromRGB(120,255,140)
+            elseif p < 150 then pingColor = Color3.fromRGB(255,220,100)
+            else pingColor = Color3.fromRGB(255,120,120) end
+            FpsLabel.Text = string.format("%d Fps", S.fps)
+            FpsLabel.TextColor3 = fpsColor
+            PingLabel.Text = string.format("%d Ping", p)
+            PingLabel.TextColor3 = pingColor
+            local t = os.date("*t")
+            TimeLabel.Text = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
+            DateLabel.Text = string.format("%s.%d", months[t.month], t.year)
+        end
+        task.wait(0.5)
+    end
+end)
+
+bootStep("Watermark OK")
 
 -- ============================================================
 -- ============ NEVERLOSE-STYLE GUI (кастом, с нуля) ==========
@@ -2869,13 +2984,14 @@ do
     addText(pTgt, "Пульсирующая неоновая подсветка текущей цели Aimbot / Silent Aim. Работает отдельно от обычного ESP.")
 end
 
--- ==== World (HUD) ====
+-- ==== World (Watermark) ====
 do
     local pg = addPage("Visuals", "🌐", "World")
 
     local pHud = addPanel(pg.col1, "Interface")
-    addToggle(pHud, "hud.enabled", "HUD (Minced-style)", true, function(state)
-        HUDGui.Enabled = state
+    addToggle(pHud, "wm.enabled", "Watermark", true, function(state)
+        S.wmOn = state
+        WM.Visible = state
     end)
 
     local pFx = addPanel(pg.col2, "Effects")
@@ -2888,7 +3004,7 @@ do
     addText(pFx, "Работают при выстреле с оружием в руках. Трассер — до точки попадания / цели Silent Aim.")
 
     local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "HUD как на скрине Minced: иконка + бренд + твой ник + время. Перетаскивается.")
+    addText(pInfo, "Watermark — ✦ Cracked с FPS/Ping/временем/датой. Перетаскивается.")
 end
 
 -- ---------------- MOVEMENT ----------------
@@ -3157,7 +3273,7 @@ function fullCleanupNL()
     end
     pcall(disableESP)
     pcall(disableTargetESP)
-    for _, n in ipairs({"SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubSpec"}) do
+    for _, n in ipairs({"SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubSpec","SpermaHubWatermark"}) do
         local g = LP.PlayerGui:FindFirstChild(n)
         if g then g:Destroy() end
     end
@@ -3369,6 +3485,7 @@ end)
 -- ============================================================
 updateFovCircle()
 updateSilentFovCircle()
+WM.Visible = S.wmOn
 
 -- открыть первую страницу (Legitbot)
 if Pages[1] then selectPage(Pages[1]) end
