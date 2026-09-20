@@ -2833,6 +2833,8 @@ bootStep("GUI OK")
 -- ============================================================
 -- ============ KEYBIND MANAGER + TARGET HUD ==================
 -- ============================================================
+-- обёрнуто в IIFE: локалки движка не держат регистры чанка (лимит Luau = 200)
+(function()
 
 -- список биндабельных функций (через Cfg-тогглы: меню и конфиг синхронно)
 BindEntries = {
@@ -3135,18 +3137,22 @@ task.spawn(function()
         task.wait(0.15)
     end
 end)
+end)()
 
 -- ============================================================
 -- ================ СТРАНИЦЫ (все вкладки) ====================
 -- ============================================================
+-- обёрнуто в do...end: ~130 локалов страниц освобождаются в конце секции (лимит Luau = 200)
+local doLoad, flingListCtl, killListCtl, specListCtl, tpListCtl
+do
 
 -- храним ссылки на контролы, которые нужно синкать извне
 local flightToggleCtl = nil
 local autoClickToggleCtl = nil
-local killListCtl = nil
-local tpListCtl = nil
-local flingListCtl = nil
-local specListCtl = nil
+killListCtl = nil
+tpListCtl = nil
+flingListCtl = nil
+specListCtl = nil
 
 -- ---------------- AIMBOT (категория) ----------------
 addCategory("Combat")
@@ -3675,7 +3681,7 @@ local function doSave(profile)
         toastImpl("Config", "writefile недоступен — JSON в консоли")
     end
 end
-local function doLoad(profile, silent)
+doLoad = function(profile, silent)
     if type(readfile) ~= "function" then
         if not silent then toastImpl("Config", "readfile недоступен") end
         return
@@ -4026,6 +4032,8 @@ LP.CharacterAdded:Connect(function()
 end)
 
 -- ============================================================
+end -- /СЕКЦИЯ СТРАНИЦ
+
 -- ==================== ИНИЦИАЛИЗАЦИЯ =========================
 -- ============================================================
 updateFovCircle()
