@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +silent-modes (Fortline/Network)")
+print("[SpermaHub] сборка: +stick-fling")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -139,6 +139,7 @@ local S = {
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
     silentMode="Universal",
+    flingMode="Velocity Burst", flingDur=5,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -957,6 +958,42 @@ local function flingPlayer(target)
             root.Velocity = Vector3.zero
             root.CFrame = oldCF
         end
+    end)
+end
+
+-- ============ FLING 2.0 (Stick TP — из твоего сниппета) ============
+-- клей: каждый кадр персонаж привязан к цели с Velocity (0, 100000, 0);
+-- по таймеру рвём и возвращаемся в исходную точку 50 раз подряд (как в коде).
+local function flingStickyPlayer(target, dur)
+    local ch = LP.Character
+    if not ch then return end
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local tChar = target and target.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+    if S.flingConn then pcall(function() S.flingConn:Disconnect() end) S.flingConn = nil end
+    local ogpos = root.CFrame
+    root.CFrame = tRoot.CFrame -- мгновенный прыжок на цель
+    S.flingConn = RunService.RenderStepped:Connect(function()
+        if not root.Parent or not tRoot.Parent then return end
+        root.CFrame = tRoot.CFrame
+        root.Velocity = Vector3.new(0, 100000, 0) -- твой импульс вверх
+    end)
+    task.delay(dur or 5, function()
+        if S.flingConn then S.flingConn:Disconnect() S.flingConn = nil end
+        local p = 0
+        task.spawn(function()
+            repeat
+                if root.Parent then
+                    root.Velocity = Vector3.new(0, 0, 0)
+                    root.CFrame = ogpos
+                    root.Velocity = Vector3.new(0, 0, 0)
+                end
+                task.wait()
+                p += 1
+            until p >= 50
+        end)
     end)
 end
 
@@ -3746,18 +3783,29 @@ do
     addButton(pTarget, "Refresh List", function()
         flingList.rebuild(getPlayerListData())
     end)
+    addDropdown(pTarget, "fling.mode", "Mode", {"Velocity Burst", "Stick TP"}, "Velocity Burst", function(v)
+        S.flingMode = v
+    end)
+    addSlider(pTarget, "fling.duration", "Stick Duration", 3, 10, 5, 1, function(v)
+        S.flingDur = math.floor(v)
+    end)
     addButton(pTarget, "Fling Target", function()
         local plr = flingSel and Players:FindFirstChild(flingSel)
         if plr then
-            flingPlayer(plr)
-            toastImpl("Fling", "Флингую: " .. plr.Name)
+            if S.flingMode == "Stick TP" then
+                flingStickyPlayer(plr, S.flingDur)
+                toastImpl("Fling", "Стик-флинг (" .. tostring(S.flingDur) .. " сек): " .. plr.Name)
+            else
+                flingPlayer(plr)
+                toastImpl("Fling", "Флингую: " .. plr.Name)
+            end
         else
             toastImpl("Fling", "Сначала выбери цель!")
         end
     end, C_RED, C_RED_H)
 
     local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "Налетает на цель с огромной скоростью ~0.8 сек и отбрасывает её, затем возвращает тебя на место.")
+    addText(pInfo, "Velocity Burst — старый: налет с Velocity ~0.8с. Stick TP (твой сниппет): телепорт на цель + клей каждый кадр с Velocity (0, 100000, 0) N секунд, сервер видит тебя внутри цели с гигантской скоростью => её откидывает; затем возврат 50-циклами с нулевой скоростью.")
 end
 
 -- ==== Spectate ====
