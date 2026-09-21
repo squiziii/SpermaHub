@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +autoshot-fortline")
+print("[SpermaHub] сборка: FATALITY-style GUI v1")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -2752,20 +2752,20 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 
 -- ---------- ПАЛИТРА (как на скрине NEVERLOSE) ----------
-local C_BG       = Color3.fromRGB(11, 14, 19)    -- фон окна
-local C_SIDE     = Color3.fromRGB(13, 16, 22)    -- сайдбар
-local C_PANEL    = Color3.fromRGB(16, 20, 28)    -- панели
-local C_CTRL     = Color3.fromRGB(21, 27, 37)    -- контролы
-local C_CTRL_H   = Color3.fromRGB(27, 35, 48)    -- hover
-local C_STROKE   = Color3.fromRGB(28, 35, 48)    -- обводка
-local C_SEL      = Color3.fromRGB(22, 29, 40)    -- выбранная вкладка
-local C_ACCENT   = Color3.fromRGB(78, 160, 216)  -- голубой акцент
+local C_BG       = Color3.fromRGB(10, 10, 12)    -- фон окна (почти чёрный)
+local C_SIDE     = Color3.fromRGB(13, 12, 16)    -- сайдбар
+local C_PANEL    = Color3.fromRGB(17, 17, 21)    -- панели (fatality dark)
+local C_CTRL     = Color3.fromRGB(24, 23, 29)    -- контролы
+local C_CTRL_H   = Color3.fromRGB(33, 32, 40)    -- hover
+local C_STROKE   = Color3.fromRGB(38, 38, 45)    -- обводка
+local C_SEL      = Color3.fromRGB(26, 20, 34)    -- выбранная вкладка (фиолет. подложка)
+local C_ACCENT   = Color3.fromRGB(178, 97, 252)  -- fatality purple
 local C_RED      = Color3.fromRGB(140, 48, 52)   -- красная кнопка
 local C_RED_H    = Color3.fromRGB(165, 58, 62)
-local C_TXT      = Color3.fromRGB(230, 235, 244)
-local C_GRAY     = Color3.fromRGB(140, 150, 168)
-local C_DIM      = Color3.fromRGB(92, 102, 117)
-local C_KNOB     = Color3.fromRGB(240, 244, 250)
+local C_TXT      = Color3.fromRGB(236, 233, 242)
+local C_GRAY     = Color3.fromRGB(140, 136, 152)
+local C_DIM      = Color3.fromRGB(92, 88, 105)
+local C_KNOB     = Color3.fromRGB(240, 238, 248)
 
 local WIN_W, WIN_H = 800, 520
 local SIDE_W, TOP_H = 190, 46
@@ -2808,7 +2808,7 @@ toastImpl = function(title, msg)
             BorderSizePixel = 0,
             ZIndex = 95,
         }, ToastHolder)
-        new("UICorner", {CornerRadius = UDim.new(0, 6)}, t)
+        new("UICorner", {CornerRadius = UDim.new(0, 3)}, t)
         local st = new("UIStroke", {Color = C_STROKE, Thickness = 1, Transparency = 1}, t)
         local l1 = new("TextLabel", {
             BackgroundTransparency = 1, Size = UDim2.new(1, -18, 0, 15), Position = UDim2.new(0, 9, 0, 5),
@@ -2844,7 +2844,7 @@ local Main = new("Frame", {
     BorderSizePixel = 0,
     ClipsDescendants = true,
 }, SG)
-new("UICorner", {CornerRadius = UDim.new(0, 7)}, Main)
+new("UICorner", {CornerRadius = UDim.new(0, 4)}, Main)
 new("UIStroke", {Color = Color3.fromRGB(0, 0, 0), Thickness = 1.5, Transparency = 0.35}, Main)
 
 -- ---------- САЙДБАР ----------
@@ -2854,7 +2854,7 @@ local Sidebar = new("Frame", {
     BorderSizePixel = 0,
     ZIndex = 2,
 }, Main)
-new("UICorner", {CornerRadius = UDim.new(0, 7)}, Sidebar)
+new("UICorner", {CornerRadius = UDim.new(0, 4)}, Sidebar)
 -- затычка правого нижнего/верхнего угла сайдбара
 new("Frame", {Size = UDim2.new(0, 8, 1, 0), Position = UDim2.new(1, -8, 0, 0), BackgroundColor3 = C_SIDE, BorderSizePixel = 0, ZIndex = 2}, Sidebar)
 -- разделитель справа
@@ -2964,7 +2964,7 @@ local Topbar = new("Frame", {
     BorderSizePixel = 0,
     ZIndex = 2,
 }, Main)
-new("Frame", {Size = UDim2.new(1, -20, 0, 1), Position = UDim2.new(0, 10, 1, 0), BackgroundColor3 = C_STROKE, BackgroundTransparency = 0.45, BorderSizePixel = 0, ZIndex = 3}, Topbar)
+new("Frame", {Size = UDim2.new(1, -20, 0, 1), Position = UDim2.new(0, 10, 1, 0), BackgroundColor3 = C_ACCENT, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 3}, Topbar)
 
 -- ---------- OVERLAY ДЛЯ ВЫПАДАЮЩИХ СПИСКОВ ----------
 local Overlay = new("TextButton", {
@@ -3062,6 +3062,7 @@ local function selectPage(pg)
         currentEntry.btn.BackgroundTransparency = 1
         currentEntry.nameL.TextColor3 = C_GRAY
         currentEntry.iconL.TextColor3 = C_GRAY
+        if currentEntry.barL then currentEntry.barL.BackgroundTransparency = 1 end
     end
     currentPage = pg
     currentEntry = pg.entry
@@ -3071,6 +3072,7 @@ local function selectPage(pg)
         currentEntry.btn.BackgroundColor3 = C_SEL
         currentEntry.nameL.TextColor3 = C_TXT
         currentEntry.iconL.TextColor3 = C_ACCENT
+        if currentEntry.barL then currentEntry.barL.BackgroundTransparency = 0 end
     end
 end
 
@@ -3105,7 +3107,7 @@ local function addPage(cat, icon, title)
         LayoutOrder = sideOrder,
         ZIndex = 3,
     }, SideScroll)
-    new("UICorner", {CornerRadius = UDim.new(0, 6)}, btn)
+    new("UICorner", {CornerRadius = UDim.new(0, 3)}, btn)
     local iconL = new("TextLabel", {
         BackgroundTransparency = 1, Size = UDim2.new(0, 18, 1, 0), Position = UDim2.new(0, 10, 0, 0),
         Text = icon, TextColor3 = C_GRAY, Font = Enum.Font.GothamBold, TextSize = 13, ZIndex = 3,
@@ -3115,6 +3117,12 @@ local function addPage(cat, icon, title)
         Text = title, TextColor3 = C_GRAY, Font = Enum.Font.GothamMedium, TextSize = 13,
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
     }, btn)
+    -- fatality accent bar слева у активной вкладки
+    local barL = new("Frame", {
+        BackgroundColor3 = C_ACCENT, BackgroundTransparency = 1, BorderSizePixel = 0,
+        Size = UDim2.new(0, 3, 0, 18), Position = UDim2.new(0, 3, 0.5, -9), ZIndex = 4,
+    }, btn)
+    new("UICorner", {CornerRadius = UDim.new(0, 2)}, barL)
 
     local pg = new("Frame", {
         BackgroundTransparency = 1,
@@ -3137,7 +3145,7 @@ local function addPage(cat, icon, title)
         new("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12)}, col)
         return col
     end
-    local page = {frame = pg, col1 = makeCol(12), col2 = makeCol(311), entry = {btn = btn, nameL = nameL, iconL = iconL}}
+    local page = {frame = pg, col1 = makeCol(12), col2 = makeCol(311), entry = {btn = btn, nameL = nameL, iconL = iconL, barL = barL}}
     table.insert(Pages, page)
     table.insert(sideItems, {kind = "entry", frame = btn, name = string.lower(title), page = page})
     btn.MouseButton1Click:Connect(function() selectPage(page) end)
@@ -3191,7 +3199,7 @@ local function addPanel(col, title)
         AutomaticSize = Enum.AutomaticSize.Y,
         ZIndex = 2,
     }, col)
-    new("UICorner", {CornerRadius = UDim.new(0, 6)}, p)
+    new("UICorner", {CornerRadius = UDim.new(0, 3)}, p)
     new("UIStroke", {Color = C_STROKE, Thickness = 1, Transparency = 0.4}, p)
     local pad = new("UIPadding", {}, p)
     pad.PaddingTop = UDim.new(0, 10)
@@ -3205,6 +3213,13 @@ local function addPanel(col, title)
             Text = title, TextColor3 = C_TXT, Font = Enum.Font.GothamBold, TextSize = 13,
             TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 0, ZIndex = 2,
         }, p)
+        -- fatality: тонкая акцентная линия под тайтлом панели
+        local ul = new("Frame", {
+            BackgroundColor3 = C_ACCENT, BackgroundTransparency = 0.55,
+            BorderSizePixel = 0, Size = UDim2.new(0, 22, 0, 2),
+            Position = UDim2.new(0, 0, 0, 19), ZIndex = 2,
+        }, p)
+        new("UICorner", {CornerRadius = UDim.new(0, 1)}, ul)
     end
     return p
 end
