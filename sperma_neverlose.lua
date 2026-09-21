@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +autoshot-silenthit")
+print("[SpermaHub] сборка: +safer-headdown")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -127,7 +127,7 @@ local S = {
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
-    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1,
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaNeck=nil, aaNeckParent=nil,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
@@ -1245,16 +1245,35 @@ local function enableAntiAim()
             if hum and hum.PlatformStand then hum.PlatformStand = false end
         end
 
-        -- СТОЯЧИЙ анти-аим "головой вниз": тело стоит и ходит как обычно,
-        -- голова физически гнётся ниже (сервер и другие видят её там) —
-        -- в голову не попадают, по ногам сложно анти-хедировать.
+        -- СТОЯЧИЙ анти-аим "головой вниз": тело стоит и ходит,
+        -- шейный мотор отсоединён, чтобы он НЕ волочил тело следом
+        -- (иначе физика проваливает персонажа под карту).
         if S.aaPitch == "Head Down" then
+            if hum and hum.RequiresNeck then
+                hum.RequiresNeck = false -- переживаем потерю шеи
+            end
+            if not S.aaNeck then
+                local neck = ch:FindFirstChild("Neck", true)
+                if neck then
+                    S.aaNeck = neck
+                    S.aaNeckParent = neck.Parent
+                    neck.Parent = nil -- отсоединяем шею: голова свободна, тело не тянется
+                end
+            end
             local head = ch:FindFirstChild("Head")
             if head then
+                -- голова висит у ног, сервер и другие видят её там
                 head.CFrame = CFrame.new(root.Position + Vector3.new(0, -(S.aaHeadDepth or 1), 0))
                 head.Velocity = Vector3.new(0, 0, 0)
                 head.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end
+        elseif S.aaNeck then
+            -- вышли из режима: цепляем шею обратно
+            pcall(function()
+                S.aaNeck.Parent = S.aaNeckParent
+            end)
+            S.aaNeck = nil
+            S.aaNeckParent = nil
         end
     end)
 end
@@ -4058,7 +4077,7 @@ do
     addSlider(pAng, "aa.headdepth", "Head Depth", 0.3, 2, 1, 0.1, function(v)
         S.aaHeadDepth = v
     end)
-    addText(pAng, "Head Down — СТОЯ: тело остаётся вертикальным и ты ходишь обычно, а голова физически уходит к ногам (сервер её видит там). Для лежания: Down/Up.")
+    addText(pAng, "Head Down — СТОЯ: шея отсоединена, голова висит у ног (RequiresNeck=false, поэтому живой), тело нормально ходит. Не подставляй лёгкие боссы. Для лежания: Down/Up.")
     addDropdown(pAng, "aa.yaw", "Yaw", {"Disabled", "Backward", "Spin", "Random"}, "Backward", function(v)
         S.aaYaw = v
     end)
