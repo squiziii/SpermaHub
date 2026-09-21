@@ -1809,9 +1809,10 @@ function enableAutoShot()
         if not root then return end
         local tool, handle = asGetWeapon()
 
-        -- INSTANT FLICK обрабатывается рендер-биндом ПОСЛЕ камеры игры (см. ниже),
-        -- Stepped тут пропускаем, чтобы не конфликтовать
-        if S.asFlick then return end
+        -- INSTANT FLICK обрабатывается рендер-биндом ПОСЛЕ камеры игры (см. ниже).
+        -- Обходим Stepped ТОЛЬКО в пушечном режиме (когда Silent Hit и TP Kill ВЫКЛЮЧЕНЫ),
+        -- чтобы мечи/TP Kill из Stepped не ломались
+        if S.asFlick and not S.asSilentHit and not S.asTp then return end
 
         -- ЦЕЛЬ (без camera-turn):
         local targetModel, targetRoot = nil, nil
@@ -1920,7 +1921,8 @@ function enableAutoShot()
     -- и огонь уходит СРАЗУ после снапа (без лага в один кадр)
     S.asFlickB = true
     RunService:BindToRenderStep("SpermaHubFlickStep", Enum.RenderPriority.Camera.Value + 1, function()
-        if not (S.asOn and S.asFlick) then
+        if not (S.asOn and S.asFlick) or S.asSilentHit or S.asTp then
+            -- если включили Silent Hit / TP Kill — флик-бинд отдыхает, пусть работает Stepped
             S.flickHead = nil
             return
         end
@@ -2012,13 +2014,31 @@ end
 
 function kaClick()
     -- инжект реального клика ЛКМ (как делает живой игрок)
+    if type(mouse1press) == "function" then
+        pcall(mouse1press)
+        task.delay(0.03, function()
+            pcall(function()
+                if type(mouse1release) == "function" then mouse1release() end
+            end)
+        end)
+        return
+    end
+    -- fallback: VirtualInputManager, клик СТРОГО В ЦЕНТР ЭКРАНА (не (0,0) — некоторые
+    -- игры/меню ловят клики в углу и гасят стрельбу)
+    local vx, vy = 0, 0
     pcall(function()
-        VIMService:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+        local cam2 = workspace.CurrentCamera
+        if cam2 then
+            vx = math.floor(cam2.ViewportSize.X / 2)
+            vy = math.floor(cam2.ViewportSize.Y / 2)
+        end
     end)
-    task.spawn(function()
-        task.wait(0.02)
+    pcall(function()
+        VIMService:SendMouseButtonEvent(vx, vy, 0, true, game, 1)
+    end)
+    task.delay(0.03, function()
         pcall(function()
-            VIMService:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+            VIMService:SendMouseButtonEvent(vx, vy, 0, false, game, 1)
         end)
     end)
 end
