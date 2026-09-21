@@ -3170,8 +3170,6 @@ local function addCategory(title)
     local cat = {key = title, tab = tab, iconL = iconL, nameL = nameL, under = under}
     table.insert(Categories, cat)
     tab.MouseButton1Click:Connect(function() selectCategory(title) end)
-    table.insert(sideItems, {kind = "cat", frame = h})
-    return h
 end
 
 local function addPage(cat, icon, title)
