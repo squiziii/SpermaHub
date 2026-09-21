@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +aa-desync-fortline")
+print("[SpermaHub] сборка: +autoshot-fortline")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -141,7 +141,7 @@ local S = {
     silentMode="Universal",
     flingMode="Velocity Burst", flingDur=5,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
-    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil,
+    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1828,11 +1828,21 @@ function enableAutoShot()
                 end
             end
         else
-            -- классический режим: цель в конусе прицела (сам огонь)
+            -- классический/фортлайн режим: цель в конусе прицела (сам огонь)
             local head = asTargetInCone()
             if head then
                 targetModel = head.Parent
                 targetRoot = head
+                -- FORTLINE-асист: пушки стреляют ПО КАМЕРЕ, поэтому плавно
+                -- подтягиваем камеру к голове (Assist=0 — камера не двигается)
+                if S.asAssist and S.asAssist > 0 then
+                    local camA = workspace.CurrentCamera
+                    if camA then
+                        camA.CFrame = camA.CFrame:Lerp(
+                            CFrame.new(camA.CFrame.Position, head.Position),
+                            S.asAssist)
+                    end
+                end
             end
         end
         if not targetModel then return end
@@ -3947,7 +3957,18 @@ do
     addSlider(pAs, "asd.range", "Reach Size", 4, 60, 20, 1, function(v)
         S.asRange = math.floor(v)
     end)
-    addText(pAs, "Silent Hit REACH: клинок раздувается в гигантский невидимый куб (Reach Size) — сервер регистрирует Handle.Touched по всем врагам в кубе. Камера/персонаж/рука НЕ двигаются. Держи Reach ≈ длине меча+5: слишком большой куб некоторые анти-читы ловят.")
+    addSlider(pAs, "asd.assist", "Cam Assist (Fortline)", 0, 1, 0, 0.05, function(v)
+        S.asAssist = v
+    end)
+    addDropdown(pAs, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
+        if v == "Fortline" then
+            local c1 = Cfg["asd.silenthit"] if c1 then c1.set(false) end
+            local c2 = Cfg["asd.radius"] if c2 then c2.set(70) end
+            local c3 = Cfg["asd.cps"] if c3 then c3.set(12) end
+            local c4 = Cfg["asd.assist"] if c4 then c4.set(0.4) end
+        end
+    end)
+    addText(pAs, "ПУШКИ (Fortline): Silent Hit=OFF + Cam Assist 0.3-0.5 — камера мягко подтягивается к голове цели в Cone Radius и пули летят в цель. МЕЧИ: Silent Hit=ON + Reach Size — клинок раздувается в куб, хиты без движения камеры.")
 
     local pMisc = addPanel(pg.col2, "Misc")
     addToggle(pMisc, "aimbot.visualize", "Visualize FOV", true, function(state)
