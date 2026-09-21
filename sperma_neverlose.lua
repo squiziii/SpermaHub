@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +smoothcam")
+print("[SpermaHub] сборка: +headdown-aa")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -127,7 +127,7 @@ local S = {
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
-    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0,
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
@@ -1197,6 +1197,8 @@ local function enableAntiAim()
             pitch = 90
         elseif S.aaPitch == "Jitter" then
             pitch = (math.random() < 0.5) and -90 or 90
+        elseif S.aaPitch == "Head Down" then
+            pitch = 0 -- рут не крутим: тело СТОИТ, движение обычное; гнётся отдельно ниже
         end
 
         if yaw or pitch ~= 0 then
@@ -1240,6 +1242,18 @@ local function enableAntiAim()
                 S.aaPinPos = nil
             end
             if hum and hum.PlatformStand then hum.PlatformStand = false end
+        end
+
+        -- СТОЯЧИЙ анти-аим "головой вниз": тело стоит и ходит как обычно,
+        -- голова физически гнётся ниже (сервер и другие видят её там) —
+        -- в голову не попадают, по ногам сложно анти-хедировать.
+        if S.aaPitch == "Head Down" then
+            local head = ch:FindFirstChild("Head")
+            if head then
+                head.CFrame = CFrame.new(root.Position + Vector3.new(0, -(S.aaHeadDepth or 1), 0))
+                head.Velocity = Vector3.new(0, 0, 0)
+                head.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
         end
     end)
 end
@@ -3904,9 +3918,13 @@ do
     end)
 
     local pAng = addPanel(pg.col1, "Angles")
-    addDropdown(pAng, "aa.pitch", "Pitch", {"Down", "Up", "Jitter", "None"}, "Down", function(v)
+    addDropdown(pAng, "aa.pitch", "Pitch", {"Down", "Up", "Jitter", "None", "Head Down"}, "Down", function(v)
         S.aaPitch = v
     end)
+    addSlider(pAng, "aa.headdepth", "Head Depth", 0.3, 2, 1, 0.1, function(v)
+        S.aaHeadDepth = v
+    end)
+    addText(pAng, "Head Down — СТОЯ: тело остаётся вертикальным и ты ходишь обычно, а голова физически уходит к ногам (сервер её видит там). Для лежания: Down/Up.")
     addDropdown(pAng, "aa.yaw", "Yaw", {"Disabled", "Backward", "Spin", "Random"}, "Backward", function(v)
         S.aaYaw = v
     end)
