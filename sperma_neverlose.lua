@@ -2875,7 +2875,7 @@ local Logo = new("TextLabel", {
 -- контейнер под поиск + список вкладок
 local SideMid = new("Frame", {
     BackgroundTransparency = 1,
-    Size = UDim2.new(1, 0, 1, -44 - 66),
+    Size = UDim2.new(1, 0, 1, -44 - 66 - 36),
     Position = UDim2.new(0, 0, 0, 44),
     ZIndex = 3,
 }, Sidebar)
@@ -2966,48 +2966,12 @@ local Topbar = new("Frame", {
 }, Main)
 new("Frame", {Size = UDim2.new(1, -20, 0, 1), Position = UDim2.new(0, 10, 1, 0), BackgroundColor3 = C_ACCENT, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 3}, Topbar)
 
--- FATALITY-style: бренд + топ-вкладки категорий + юзер-чип
-local TopBrand = new("TextLabel", {
-    BackgroundTransparency = 1, Size = UDim2.new(0, 118, 1, 0),
-    Text = "SPERMAHUB", TextColor3 = C_TXT, Font = Enum.Font.GothamBlack, TextSize = 15,
-    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
-}, Topbar)
-do
-    local pb = new("UIPadding", {}, TopBrand)
-    pb.PaddingLeft = UDim.new(0, 14)
-end
+-- FATALITY-style: верхние вкладки категорий (правая часть топбара — Save/Global)
 TopTabs = new("Frame", {
-    BackgroundTransparency = 1, Size = UDim2.new(1, -300, 1, 0),
-    Position = UDim2.new(0, 128, 0, 0), ZIndex = 3,
+    BackgroundTransparency = 1, Size = UDim2.new(1, -192, 1, 0),
+    Position = UDim2.new(0, 6, 0, 0), ZIndex = 3,
 }, Topbar)
 new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4)}, TopTabs)
-
-UserChip = new("Frame", {
-    BackgroundTransparency = 1, Size = UDim2.new(0, 150, 0, 34),
-    Position = UDim2.new(1, -158, 0.5, -17), AnchorPoint = Vector2.new(0, 0.5), ZIndex = 3,
-}, Topbar)
-new("TextLabel", {
-    BackgroundTransparency = 1, Size = UDim2.new(0, 100, 0, 15), Position = UDim2.new(0, 40, 0, 0),
-    Text = LP.Name, TextColor3 = C_TXT, Font = Enum.Font.GothamBold, TextSize = 12,
-    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 3,
-}, UserChip)
-new("TextLabel", {
-    BackgroundTransparency = 1, Size = UDim2.new(0, 100, 0, 12), Position = UDim2.new(0, 40, 0, 16),
-    Text = "expires: ∞", TextColor3 = C_ACCENT, Font = Enum.Font.GothamMedium, TextSize = 10,
-    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
-}, UserChip)
-local cAva = new("ImageLabel", {
-    BackgroundColor3 = C_PANEL, Size = UDim2.new(0, 30, 0, 30),
-    Position = UDim2.new(0, 4, 0.5, -15), ZIndex = 3,
-}, UserChip)
-new("UICorner", {CornerRadius = UDim.new(1, 0)}, cAva)
-new("UIStroke", {Color = C_ACCENT, Thickness = 1, Transparency = 0.4}, cAva)
-task.spawn(function()
-    local okA, imgA = pcall(function()
-        return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-    end)
-    if okA then cAva.Image = imgA end
-end)
 
 -- ---------- OVERLAY ДЛЯ ВЫПАДАЮЩИХ СПИСКОВ ----------
 local Overlay = new("TextButton", {
@@ -3127,6 +3091,10 @@ CatIcons = {
     Combat = "⚔", Visuals = "👁", Movement = "➤", Player = "👣",
     Server = "🛡", Miscellaneous = "🧩",
 }
+CatNames = {
+    Combat = "RAGE", Visuals = "VISUALS", Movement = "MOVE", Player = "PLAY",
+    Server = "SERVER", Miscellaneous = "MISC",
+}
 function selectCategory(catKey)
     catSelected = catKey
     for _, c in ipairs(Categories) do
@@ -3149,8 +3117,9 @@ end
 local function addCategory(title)
     catOrder = catOrder + 1
     local icon = CatIcons[title] or "▫"
+    local short = CatNames[title] or string.upper(title)
     local tab = new("TextButton", {
-        BackgroundTransparency = 1, Size = UDim2.new(0, 108, 1, 0),
+        BackgroundTransparency = 1, Size = UDim2.new(0, math.floor(#short * 6.2) + 34, 1, 0),
         Text = "", AutoButtonColor = false, LayoutOrder = catOrder, ZIndex = 3,
     }, TopTabs)
     local iconL = new("TextLabel", {
@@ -3159,7 +3128,7 @@ local function addCategory(title)
     }, tab)
     local nameL = new("TextLabel", {
         BackgroundTransparency = 1, Size = UDim2.new(1, -24, 1, 0), Position = UDim2.new(0, 26, 0, 0),
-        Text = (title == "Combat") and "RAGE" or string.upper(title),
+        Text = short,
         TextColor3 = C_GRAY, Font = Enum.Font.GothamBold, TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
     }, tab)
@@ -4835,8 +4804,8 @@ end
 
 -- Save (иконка + текст)
 local SaveBtn = new("TextButton", {
-    Size = UDim2.new(0, 86, 0, 26),
-    Position = UDim2.new(0, 14, 0.5, -13),
+    Size = UDim2.new(0, 66, 0, 26),
+    Position = UDim2.new(1, -170, 0.5, -13),
     BackgroundColor3 = C_CTRL, Text = "", AutoButtonColor = false, ZIndex = 4,
 }, Topbar)
 new("UICorner", {CornerRadius = UDim.new(0, 5)}, SaveBtn)
@@ -4854,8 +4823,8 @@ SaveBtn.MouseButton1Click:Connect(function() doSave(currentProfile) end)
 
 -- Profile dropdown ("Global")
 local ProfBox = new("TextButton", {
-    Size = UDim2.new(0, 120, 0, 26),
-    Position = UDim2.new(0, 108, 0.5, -13),
+    Size = UDim2.new(0, 96, 0, 26),
+    Position = UDim2.new(1, -98, 0.5, -13),
     BackgroundColor3 = C_CTRL, Text = "", AutoButtonColor = false, ZIndex = 4,
 }, Topbar)
 new("UICorner", {CornerRadius = UDim.new(0, 5)}, ProfBox)
@@ -4877,14 +4846,33 @@ ProfBox.MouseButton1Click:Connect(function()
     end)
 end)
 
--- иконки справа: discord / settings / search
+-- футер сайдбара (иконки снизу слева, как у fatality)
+local FooterBar = new("Frame", {
+    BackgroundColor3 = C_SIDE, BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, 36), Position = UDim2.new(0, 0, 1, -98),
+    ZIndex = 5,
+}, Sidebar)
+do
+    local fl = new("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Left,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 6),
+    }, FooterBar)
+    local fp = new("UIPadding", {}, FooterBar)
+    fp.PaddingLeft = UDim.new(0, 14)
+end
+new("Frame", {Size = UDim2.new(1, -20, 0, 1), Position = UDim2.new(0, 10, 0, 0), BackgroundColor3 = C_STROKE, BackgroundTransparency = 0.45, BorderSizePixel = 0, ZIndex = 5}, FooterBar)
+
+-- иконки: discord / settings / search
 local function topIcon(txt, xoff, cb)
     local b = new("TextButton", {
         Size = UDim2.new(0, 26, 0, 26),
-        Position = UDim2.new(1, xoff, 0.5, -13),
+        LayoutOrder = math.abs(xoff),
         BackgroundColor3 = C_CTRL, Text = txt, TextSize = 13,
-        AutoButtonColor = false, ZIndex = 4,
-    }, Topbar)
+        AutoButtonColor = false, ZIndex = 5,
+    }, FooterBar)
     new("UICorner", {CornerRadius = UDim.new(0, 5)}, b)
     b.MouseButton1Click:Connect(function() if cb then cb() end end)
     return b
