@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +autoshot")
+print("[SpermaHub] сборка: +autoshot-silenthit")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -141,7 +141,7 @@ local S = {
     silentMode="Universal",
     flingMode="Velocity Burst", flingDur=5,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
-    asOn=false, asConn=nil, asFovPx=80, asCps=10,
+    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=10,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1751,22 +1751,81 @@ function asTargetInCone()
     return best
 end
 
+-- оружие + клинок (фолбэки для кастомных мечей)
+function asGetWeapon()
+    local ch = LP.Character
+    local tool = ch and ch:FindFirstChildOfClass("Tool")
+    local handle = nil
+    if tool then
+        handle = tool:FindFirstChild("Handle")
+        if not (handle and handle:IsA("BasePart")) then
+            handle = tool:FindFirstChildWhichIsA("BasePart", true)
+        end
+    end
+    return tool, handle
+end
+
 function enableAutoShot()
     S.asOn = true
     if S.asConn then S.asConn:Disconnect() end
     local acc = 0
-    S.asConn = RunService.Heartbeat:Connect(function(dt)
+    -- Stepped (до физики): сервер застаёт клинок во враге => попадание гарантировано,
+    -- КАМЕРА НЕ ДВИЖЕТСЯ ВООБЩЕ
+    S.asConn = RunService.Stepped:Connect(function(dt)
         if not S.asOn then return end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local tool, handle = asGetWeapon()
+
+        -- ЦЕЛЬ (без camera-turn):
+        local targetModel, targetRoot = nil, nil
+        if S.asSilentHit then
+            -- silent hit: ближайший живой враг в радиусе удара
+            local bd = S.asRange
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LP and not isTeammate(plr) then
+                    local tch = plr.Character
+                    local thr = tch and tch:FindFirstChild("HumanoidRootPart")
+                    local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+                    if thr and thum and thum.Health > 0 then
+                        local d = (thr.Position - root.Position).Magnitude
+                        if d < bd then
+                            bd = d
+                            targetModel = tch
+                            targetRoot = thr
+                        end
+                    end
+                end
+            end
+        else
+            -- классический режим: цель в конусе прицела (сам огонь)
+            local head = asTargetInCone()
+            if head then
+                targetModel = head.Parent
+                targetRoot = head
+            end
+        end
+        if not targetModel then return end
+
+        -- РАБОЧИЙ САЙЛЕНТ ХИТ: клинок каждый тик кладётся в цель —
+        -- сервер регистрирует Handle.Touched сам, камера на месте
+        if S.asSilentHit and handle and targetRoot then
+            pcall(function()
+                handle.CFrame = targetRoot.CFrame
+                handle.Velocity = Vector3.new(0, 0, 0)
+            end)
+        end
+
+        -- авто-огонь по CPS
         acc = acc + dt
-        if acc < 1 / math.max(S.asCps, 1) then return end
-        acc = 0
-        if not asTargetInCone() then return end -- цели в конусе нет — не стреляем
-        kaClick() -- инжект ЛКМ
-        pcall(function()
-            local ch2 = LP.Character
-            local tool = ch2 and ch2:FindFirstChildOfClass("Tool")
-            if tool then tool:Activate() end
-        end)
+        if acc >= 1 / math.max(S.asCps, 1) then
+            acc = 0
+            kaClick()
+            pcall(function()
+                if tool then tool:Activate() end
+            end)
+        end
     end)
 end
 
@@ -3812,7 +3871,13 @@ do
     addSlider(pAs, "asd.cps", "Fire Rate (CPS)", 2, 25, 10, 1, function(v)
         S.asCps = math.floor(v)
     end)
-    addText(pAs, "Тригер-бот без наводки: как только голова врага попадает в конус у прицела — сам стреляет. Камера НЕ двигается (незаметно для наблюдателей).")
+    addToggle(pAs, "asd.silenthit", "Silent Hit (попадает сам, без камеры)", true, function(state)
+        S.asSilentHit = state
+    end)
+    addSlider(pAs, "asd.range", "Silent Hit Range", 4, 21, 10, 1, function(v)
+        S.asRange = math.floor(v)
+    end)
+    addText(pAs, "Silent Hit: КЛИНОК каждый тик кладётся во врага — сервер сам считает касание, ты ПОПАДАЕШЬ, а камера вообще не двигается. Range держи под свою длину меча (~7-10). Выключишь — старый режим по конусу прицела.")
 
     local pMisc = addPanel(pg.col2, "Misc")
     addToggle(pMisc, "aimbot.visualize", "Visualize FOV", true, function(state)
