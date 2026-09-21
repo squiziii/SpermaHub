@@ -142,6 +142,7 @@ local S = {
     flingMode="Velocity Burst", flingDur=5,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
+    asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1810,8 +1811,8 @@ function enableAutoShot()
         -- ЦЕЛЬ (без camera-turn):
         local targetModel, targetRoot = nil, nil
         if S.asSilentHit then
-            -- silent hit: ближайший живой враг в радиусе удара
-            local bd = S.asRange
+            -- silent hit: ближайший живой враг в радиусе удара (в TP-режиме — в радиусе TP Дальности)
+            local bd = S.asTp and S.asTpRange or S.asRange
             for _, plr in ipairs(Players:GetPlayers()) do
                 if plr ~= LP and not isTeammate(plr) then
                     local tch = plr.Character
@@ -1869,6 +1870,35 @@ function enableAutoShot()
             end
         end
 
+        -- TP KILL (старый стиль): телепорт за спину цели -> удар -> назад
+        if S.asTp and targetRoot then
+            local nowT = os.clock()
+            local tpPeriod = math.max(0.22, 2 / math.max(S.asCps, 1))
+            if S.asBackCF then
+                -- возврат на исходную позицию
+                pcall(function() root.CFrame = S.asBackCF end)
+                S.asBackCF = nil
+            elseif nowT - (S.asLastSwing or 0) >= tpPeriod then
+                S.asLastSwing = nowT
+                S.asBackCF = root.CFrame
+                local behind = targetRoot.Position - targetRoot.CFrame.LookVector * S.asTpDist
+                pcall(function()
+                    root.CFrame = CFrame.lookAt(behind, targetRoot.Position)
+                end)
+                -- мгновенный удар с места атаки
+                pcall(function()
+                    if tool then tool:Activate() end
+                end)
+                if saHasTouch and handle then
+                    for _, part in ipairs(targetModel:GetChildren()) do
+                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                            saTouch(handle, part)
+                        end
+                    end
+                end
+            end
+        end
+
         -- авто-огонь по CPS
         acc = acc + dt
         if acc >= 1 / math.max(S.asCps, 1) then
@@ -1884,6 +1914,13 @@ end
 function disableAutoShot()
     S.asOn = false
     if S.asConn then S.asConn:Disconnect() S.asConn = nil end
+    -- восстановить позицию, если отключили во время TP Kill
+    if S.asBackCF then
+        local ch0 = LP.Character
+        local root0 = ch0 and ch0:FindFirstChild("HumanoidRootPart")
+        if root0 then pcall(function() root0.CFrame = S.asBackCF end) end
+        S.asBackCF = nil
+    end
     -- вернуть размер клинка
     local ch2 = LP.Character
     local tool2 = ch2 and ch2:FindFirstChildOfClass("Tool")
@@ -3950,6 +3987,16 @@ do
     addSlider(pAs, "asd.range", "Reach Size", 4, 60, 20, 1, function(v)
         S.asRange = math.floor(v)
     end)
+    addToggle(pAs, "asd.tpkill", "TP Kill (старый стиль: ТП к цели и назад)", false, function(state)
+        S.asTp = state
+    end)
+    addSlider(pAs, "asd.tprange", "TP Дальность", 10, 1000, 200, 10, function(v)
+        S.asTpRange = math.floor(v)
+    end)
+    addSlider(pAs, "asd.tpdist", "TP Дистанция от цели", 1, 30, 4, 1, function(v)
+        S.asTpDist = math.floor(v)
+    end)
+    addText(pAs, "TP Kill: персонаж прыгает к цели на указанной дальности, бьёт и возвращается обратно. Для мечей (1.8 Arena и подобное).")
     addSlider(pAs, "asd.assist", "Cam Assist (Fortline)", 0, 1, 0, 0.05, function(v)
         S.asAssist = v
     end)
@@ -4351,10 +4398,10 @@ do
     addToggle(pSpin, "move.spin.enabled", "Enabled", false, function(state)
         if state then enableSpin() else disableSpin() end
     end)
-    addSlider(pSpin, "move.spin.speed", "Spin Speed", 10, 720, 90, 10, function(v)
+    addSlider(pSpin, "move.spin.speed", "Spin Speed", 1, 5000, 90, 10, function(v)
         S.spinSpeed = math.floor(v)
     end)
-    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду.")
+    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду (до 5000 — фланг).")
 
     local pSpider = addPanel(pg.col2, "Spider")
     addToggle(pSpider, "spider.enabled", "Enabled", false, function(state)
