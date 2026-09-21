@@ -2752,14 +2752,14 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 
 -- ---------- ПАЛИТРА (как на скрине NEVERLOSE) ----------
-local C_BG       = Color3.fromRGB(10, 10, 12)    -- фон окна (почти чёрный)
-local C_SIDE     = Color3.fromRGB(13, 12, 16)    -- сайдбар
-local C_PANEL    = Color3.fromRGB(17, 17, 21)    -- панели (fatality dark)
-local C_CTRL     = Color3.fromRGB(24, 23, 29)    -- контролы
-local C_CTRL_H   = Color3.fromRGB(33, 32, 40)    -- hover
-local C_STROKE   = Color3.fromRGB(38, 38, 45)    -- обводка
-local C_SEL      = Color3.fromRGB(26, 20, 34)    -- выбранная вкладка (фиолет. подложка)
-local C_ACCENT   = Color3.fromRGB(178, 97, 252)  -- fatality purple
+local C_BG       = Color3.fromRGB(16, 14, 24)    -- фон окна (violet-navy)
+local C_SIDE     = Color3.fromRGB(19, 16, 28)    -- сайдбар
+local C_PANEL    = Color3.fromRGB(26, 22, 36)    -- панели (fatality dark-violet)
+local C_CTRL     = Color3.fromRGB(31, 27, 42)    -- контролы
+local C_CTRL_H   = Color3.fromRGB(40, 34, 54)    -- hover
+local C_STROKE   = Color3.fromRGB(45, 39, 60)    -- обводка
+local C_SEL      = Color3.fromRGB(40, 29, 52)    -- выбранная вкладка
+local C_ACCENT   = Color3.fromRGB(255, 76, 152)  -- fatality pink-magenta
 local C_RED      = Color3.fromRGB(140, 48, 52)   -- красная кнопка
 local C_RED_H    = Color3.fromRGB(165, 58, 62)
 local C_TXT      = Color3.fromRGB(236, 233, 242)
@@ -2966,6 +2966,49 @@ local Topbar = new("Frame", {
 }, Main)
 new("Frame", {Size = UDim2.new(1, -20, 0, 1), Position = UDim2.new(0, 10, 1, 0), BackgroundColor3 = C_ACCENT, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 3}, Topbar)
 
+-- FATALITY-style: бренд + топ-вкладки категорий + юзер-чип
+local TopBrand = new("TextLabel", {
+    BackgroundTransparency = 1, Size = UDim2.new(0, 118, 1, 0),
+    Text = "SPERMAHUB", TextColor3 = C_TXT, Font = Enum.Font.GothamBlack, TextSize = 15,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
+}, Topbar)
+do
+    local pb = new("UIPadding", {}, TopBrand)
+    pb.PaddingLeft = UDim.new(0, 14)
+end
+TopTabs = new("Frame", {
+    BackgroundTransparency = 1, Size = UDim2.new(1, -300, 1, 0),
+    Position = UDim2.new(0, 128, 0, 0), ZIndex = 3,
+}, Topbar)
+new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4)}, TopTabs)
+
+UserChip = new("Frame", {
+    BackgroundTransparency = 1, Size = UDim2.new(0, 150, 0, 34),
+    Position = UDim2.new(1, -158, 0.5, -17), AnchorPoint = Vector2.new(0, 0.5), ZIndex = 3,
+}, Topbar)
+new("TextLabel", {
+    BackgroundTransparency = 1, Size = UDim2.new(0, 100, 0, 15), Position = UDim2.new(0, 40, 0, 0),
+    Text = LP.Name, TextColor3 = C_TXT, Font = Enum.Font.GothamBold, TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 3,
+}, UserChip)
+new("TextLabel", {
+    BackgroundTransparency = 1, Size = UDim2.new(0, 100, 0, 12), Position = UDim2.new(0, 40, 0, 16),
+    Text = "expires: ∞", TextColor3 = C_ACCENT, Font = Enum.Font.GothamMedium, TextSize = 10,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
+}, UserChip)
+local cAva = new("ImageLabel", {
+    BackgroundColor3 = C_PANEL, Size = UDim2.new(0, 30, 0, 30),
+    Position = UDim2.new(0, 4, 0.5, -15), ZIndex = 3,
+}, UserChip)
+new("UICorner", {CornerRadius = UDim.new(1, 0)}, cAva)
+new("UIStroke", {Color = C_ACCENT, Thickness = 1, Transparency = 0.4}, cAva)
+task.spawn(function()
+    local okA, imgA = pcall(function()
+        return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+    end)
+    if okA then cAva.Image = imgA end
+end)
+
 -- ---------- OVERLAY ДЛЯ ВЫПАДАЮЩИХ СПИСКОВ ----------
 local Overlay = new("TextButton", {
     Size = UDim2.new(1, 0, 1, 0),
@@ -3077,21 +3120,56 @@ local function selectPage(pg)
 end
 
 local sideOrder = 0
+Categories = {}
+catSelected = nil
+local catOrder = 0
+CatIcons = {
+    Combat = "⚔", Visuals = "👁", Movement = "➤", Player = "👣",
+    Server = "🛡", Miscellaneous = "🧩",
+}
+function selectCategory(catKey)
+    catSelected = catKey
+    for _, c in ipairs(Categories) do
+        local on = (c.key == catKey)
+        if c.under then c.under.BackgroundTransparency = on and 0 or 1 end
+        if c.iconL then c.iconL.TextColor3 = on and C_ACCENT or C_GRAY end
+        if c.nameL then c.nameL.TextColor3 = on and C_TXT or C_GRAY end
+    end
+    local firstInCat = nil
+    for _, page in ipairs(Pages) do
+        local vis = (page.cat == catKey)
+        if page.entry and page.entry.btn then page.entry.btn.Visible = vis end
+        if vis and not firstInCat then firstInCat = page end
+    end
+    if firstInCat and (not currentPage or currentPage.cat ~= catKey) then
+        selectPage(firstInCat)
+    end
+end
+
 local function addCategory(title)
-    sideOrder = sideOrder + 1
-    local h = new("TextLabel", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 22),
-        Text = string.upper(title),
-        TextColor3 = C_DIM,
-        Font = Enum.Font.GothamBold,
-        TextSize = 10,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder = sideOrder,
-        ZIndex = 3,
-    }, SideScroll)
-    local hp = new("UIPadding", {}, h)
-    hp.PaddingLeft = UDim.new(0, 4)
+    catOrder = catOrder + 1
+    local icon = CatIcons[title] or "▫"
+    local tab = new("TextButton", {
+        BackgroundTransparency = 1, Size = UDim2.new(0, 108, 1, 0),
+        Text = "", AutoButtonColor = false, LayoutOrder = catOrder, ZIndex = 3,
+    }, TopTabs)
+    local iconL = new("TextLabel", {
+        BackgroundTransparency = 1, Size = UDim2.new(0, 18, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+        Text = icon, TextColor3 = C_GRAY, Font = Enum.Font.GothamBold, TextSize = 13, ZIndex = 3,
+    }, tab)
+    local nameL = new("TextLabel", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, -24, 1, 0), Position = UDim2.new(0, 26, 0, 0),
+        Text = (title == "Combat") and "RAGE" or string.upper(title),
+        TextColor3 = C_GRAY, Font = Enum.Font.GothamBold, TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
+    }, tab)
+    local under = new("Frame", {
+        BackgroundColor3 = C_ACCENT, BackgroundTransparency = 1, BorderSizePixel = 0,
+        Size = UDim2.new(1, -12, 0, 2), Position = UDim2.new(0, 6, 1, -3), ZIndex = 4,
+    }, tab)
+    local cat = {key = title, tab = tab, iconL = iconL, nameL = nameL, under = under}
+    table.insert(Categories, cat)
+    tab.MouseButton1Click:Connect(function() selectCategory(title) end)
     table.insert(sideItems, {kind = "cat", frame = h})
     return h
 end
@@ -3145,7 +3223,7 @@ local function addPage(cat, icon, title)
         new("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12)}, col)
         return col
     end
-    local page = {frame = pg, col1 = makeCol(12), col2 = makeCol(311), entry = {btn = btn, nameL = nameL, iconL = iconL, barL = barL}}
+    local page = {frame = pg, col1 = makeCol(12), col2 = makeCol(311), cat = cat, entry = {btn = btn, nameL = nameL, iconL = iconL, barL = barL}}
     table.insert(Pages, page)
     table.insert(sideItems, {kind = "entry", frame = btn, name = string.lower(title), page = page})
     btn.MouseButton1Click:Connect(function() selectPage(page) end)
@@ -3158,7 +3236,8 @@ local function applySearchFilter(q)
     q = string.lower(q or "")
     for i, it in ipairs(sideItems) do
         if it.kind == "entry" then
-            it.frame.Visible = (q == "") or (string.find(it.name, q, 1, true) ~= nil)
+            it.frame.Visible = ((q == "") or (string.find(it.name, q, 1, true) ~= nil))
+                and ((catSelected == nil) or (it.page and it.page.cat == catSelected))
         end
     end
     for i, it in ipairs(sideItems) do
@@ -4961,8 +5040,12 @@ updateFovCircle()
 updateSilentFovCircle()
 WM.Visible = S.wmOn
 
--- открыть первую страницу (Legitbot)
-if Pages[1] then selectPage(Pages[1]) end
+-- открыть первую категорию и её первую страницу (Legitbot)
+if Categories[1] then
+    selectCategory(Categories[1].key)
+elseif Pages[1] then
+    selectPage(Pages[1])
+end
 
 -- первичное заполнение списков игроков
 task.spawn(function()
