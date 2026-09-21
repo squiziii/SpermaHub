@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +stick-fling")
+print("[SpermaHub] сборка: +smoothcam")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -140,6 +140,7 @@ local S = {
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
     silentMode="Universal",
     flingMode="Velocity Burst", flingDur=5,
+    scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1578,6 +1579,61 @@ task.spawn(function()
 end)
 
 local TeleportService = game:GetService("TeleportService")
+
+-- ============ SMOOTH CAMERA (плавное движение камеры) ============
+-- кастомный камера-контроллер: CameraType=Scriptable, yaw/pitch сглаживаются
+-- экспоненциальным фильтром; камера орбитирует вокруг головы персонажа.
+scYaw = 0 scPitch = 0 scTgtYaw = 0 scTgtPitch = 0
+
+function enableSmoothCam()
+    local cam = workspace.CurrentCamera
+    if not cam then
+        notify("Smooth Camera", "Нет камеры")
+        return
+    end
+    S.scOn = true
+    S.scPrevType = cam.CameraType
+    cam.CameraType = Enum.CameraType.Scriptable
+    -- стартовые углы из текущего вида камеры
+    local x, y = cam.CFrame:ToEulerAnglesYXZ()
+    scPitch = x
+    scYaw = y
+    scTgtPitch = x
+    scTgtYaw = y
+    if S.scConn then S.scConn:Disconnect() end
+    S.scConn = RunService.RenderStepped:Connect(function(dt)
+        if not S.scOn then return end
+        local cam2 = workspace.CurrentCamera
+        if not cam2 then return end
+        -- цель вращения — по дельте мыши (без мгновенного скачка)
+        local md = UIS:GetMouseDelta()
+        local sens = 0.0035 * S.scSens
+        scTgtYaw = scTgtYaw - md.X * sens
+        scTgtPitch = math.clamp(scTgtPitch - md.Y * sens, -1.45, 1.45)
+        -- сглаживание (экспоненциальный фильтр, не зависит от FPS)
+        local k = 1 - math.exp(-dt * S.scSpeed)
+        scYaw = scYaw + (scTgtYaw - scYaw) * k
+        scPitch = scPitch + (scTgtPitch - scPitch) * k
+        -- орбита вокруг головы
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if root then
+            local headPos = root.Position + Vector3.new(0, 1.5, 0)
+            local look = CFrame.Angles(0, scYaw, 0) * CFrame.Angles(scPitch, 0, 0)
+            local camPos = headPos - look.LookVector * S.scDist
+            cam2.CFrame = CFrame.new(camPos, headPos)
+        end
+    end)
+end
+
+function disableSmoothCam()
+    S.scOn = false
+    if S.scConn then S.scConn:Disconnect() S.scConn = nil end
+    local cam = workspace.CurrentCamera
+    if cam then
+        cam.CameraType = S.scPrevType or Enum.CameraType.Custom
+    end
+end
 
 -- ============ SPIDER (лазание по стенам) ============
 spiderRayParams = RaycastParams.new()
@@ -3324,6 +3380,7 @@ BindEntries = {
     {label = "No Knockback", cfg = "nokb.enabled"},
     {label = "Kill Aura",    cfg = "ka.enabled"},
     {label = "Silent Aura",  cfg = "sa.enabled"},
+    {label = "Smooth Cam",   cfg = "scam.enabled"},
 }
 BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
 
@@ -3966,6 +4023,21 @@ do
     end)
     addText(pFx, "Работают при выстреле с оружием в руках. Трассер — до точки попадания / цели Silent Aim.")
 
+    local pSc = addPanel(pg.col2, "Smooth Camera")
+    addToggle(pSc, "scam.enabled", "Enabled", false, function(state)
+        if state then enableSmoothCam() else disableSmoothCam() end
+    end)
+    addSlider(pSc, "scam.smooth", "Smoothness", 2, 15, 6, 1, function(v)
+        S.scSpeed = v
+    end)
+    addSlider(pSc, "scam.dist", "Distance", 4, 14, 8, 1, function(v)
+        S.scDist = v
+    end)
+    addSlider(pSc, "scam.sens", "Sensitivity", 0.2, 2, 1, 0.1, function(v)
+        S.scSens = v
+    end)
+    addText(pSc, "Кинематографическая плавная камера: движение мыши сглаживается (без рывков), орбита вокруг персонажа. Чем БОЛЬШЕ Smoothness, тем БЫСТРЕЕ доезжает до взгляда (меньше — сильнее смягчение).")
+
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "Watermark — ✦ Cracked с FPS/Ping/временем/датой. Перетаскивается.")
 end
@@ -4373,6 +4445,7 @@ function fullCleanupNL()
     pcall(disableNoKb)
     pcall(disableKillAura)
     pcall(disableSilentAura)
+    pcall(disableSmoothCam)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
