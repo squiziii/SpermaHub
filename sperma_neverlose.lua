@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +autoshot-reach60")
+print("[SpermaHub] сборка: +sa-reach-too")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -143,7 +143,7 @@ local S = {
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
-    saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
+    saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
 }
@@ -2012,11 +2012,17 @@ function enableSilentAura()
         S.saTarget = targetModel
         if not targetRoot then return end
 
-        -- 1) ГЛАВНОЕ: кладём клинок прямо во врага (велд вернёт его в руку следующим кадром)
-        pcall(function()
-            handle.CFrame = targetRoot.CFrame
-            handle.Velocity = Vector3.new(0, 0, 0)
-        end)
+        -- 1) REACH: клинок раздувается в куб Reach — Handle.Touched считается
+        --    по всем врагам внутри. НИЧТО не телепортируется (ни рука, ни персонаж).
+        if handle then
+            if not S.saOrigSize then
+                S.saOrigSize = handle.Size
+            end
+            pcall(function()
+                handle.CanCollide = false
+                handle.Size = Vector3.new(S.saRange, S.saRange, S.saRange)
+            end)
+        end
 
         -- 2) firetouchinterest (если executor даёт): дублируем касание по всем партам
         if saHasTouch then
@@ -2042,6 +2048,16 @@ function disableSilentAura()
     S.saOn = false
     S.saTarget = nil
     if S.saConn then S.saConn:Disconnect() S.saConn = nil end
+    -- вернуть размер клинка
+    local ch3 = LP.Character
+    local tool3 = ch3 and ch3:FindFirstChildOfClass("Tool")
+    local handle3 = tool3 and (tool3:FindFirstChild("Handle") or tool3:FindFirstChildWhichIsA("BasePart", true))
+    if handle3 and S.saOrigSize then
+        pcall(function()
+            handle3.Size = S.saOrigSize
+        end)
+    end
+    S.saOrigSize = nil
 end
 
 -- ============ NO KNOCKBACK (удар не отталкивает) ============
@@ -3960,13 +3976,13 @@ do
     addToggle(pSa, "sa.enabled", "Enabled", false, function(state)
         if state then enableSilentAura() else disableSilentAura() end
     end)
-    addSlider(pSa, "sa.range", "Range", 4, 21, 8, 1, function(v)
+    addSlider(pSa, "sa.range", "Reach Size", 4, 60, 15, 1, function(v)
         S.saRange = math.floor(v)
     end)
     addSlider(pSa, "sa.delay", "Attack Delay", 0.25, 1, 0.3, 0.05, function(v)
         S.saDelay = v
     end)
-    addText(pSa, "Клинок каждый тик кладётся во врага (Stepped) — сервер сам видит касание Handle.Touched, кликать ничего не надо. ВАЖНО: Range держи в пределах реальной дальности меча (у сервера своя проверка ~7-9), иначе бан/промахи. Delay >= 0.25 — иначе бан.")
+    addText(pSa, "Silent Aura REACH: клинок раздувается в невидимый куб Reach — сервер засчитывает касания всех врагов внутри, ты не клеишься к ним. Атака сама идёт по Delay (>= 0.25 — иначе бан), камера/персонаж не двигаются.")
 end
 
 -- ==== Hitbox ====
