@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +sa-reach-too")
+print("[SpermaHub] сборка: +aa-desync-fortline")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -127,7 +127,7 @@ local S = {
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
-    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaHipOrig=nil,
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaHipOrig=nil, aaDesync=false, aaDesyncAmt=0.35, aaDesyncPrev=nil,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
@@ -1265,6 +1265,18 @@ local function enableAntiAim()
                 end)
             end
             S.aaHipOrig = nil
+        end
+
+        -- DESYNC-JITTER: позиция хитбокса дёргается на пара стадов туда-сюда
+        -- каждый тик; ДЕЛАЕТСЯ КАК ДЕЛЬТА (новый - старый) => НЕ СЛЫШАТСЯ.
+        if S.aaDesync then
+            local prev = S.aaDesyncPrev or Vector3.new(0, 0, 0)
+            local nx = (math.random() * 2 - 1) * S.aaDesyncAmt
+            local nz = (math.random() * 2 - 1) * S.aaDesyncAmt
+            root.CFrame = root.CFrame + Vector3.new(nx - prev.X, 0, nz - prev.Z)
+            S.aaDesyncPrev = Vector3.new(nx, 0, nz)
+        else
+            S.aaDesyncPrev = nil
         end
     end)
 end
@@ -4117,6 +4129,24 @@ do
         S.aaHeadDepth = v
     end)
     addText(pAng, "Head Down — присед: стойка ниже на Head Depth, голова для других на уровне ног, ты стоишь и ходишь как обычно, никаких провалов. Не хочешь поворотов тела — поставь Yaw = Disabled.")
+
+    local pDes = addPanel(pg.col1, "Desync (Fortline)")
+    addToggle(pDes, "aa.desync", "Jitter Enabled", false, function(state)
+        S.aaDesync = state
+    end)
+    addSlider(pDes, "aa.desyncamt", "Jitter Amount", 0.1, 1, 0.35, 0.05, function(v)
+        S.aaDesyncAmt = v
+    end)
+    addDropdown(pDes, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
+        if v == "Fortline" then
+            local cy = Cfg["aa.yaw"] if cy then cy.set("Random") end
+            local cj = Cfg["aa.yawjitter"] if cj then cj.set("Random") end
+            local cp = Cfg["aa.pitch"] if cp then cp.set("None") end
+            local cd = Cfg["aa.desync"] if cd then cd.set(true) end
+            local ca = Cfg["aa.desyncamt"] if ca then ca.set(0.35) end
+        end
+    end)
+    addText(pDes, "Jitter = хитбокс дёргано шатается каждый тик (без накопления) => по тебе сложно попасть из оружия. Пресет Fortline: Yaw=Random + Jitter=Random + Pitch=None + Desync h0.35.")
     addDropdown(pAng, "aa.yaw", "Yaw", {"Disabled", "Backward", "Spin", "Random"}, "Backward", function(v)
         S.aaYaw = v
     end)
