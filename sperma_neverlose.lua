@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +reach-autoshot+crouch-aa")
+print("[SpermaHub] сборка: +fixaa-spin+grip-autoshot")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -141,7 +141,7 @@ local S = {
     silentMode="Universal",
     flingMode="Velocity Burst", flingDur=5,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
-    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=10, asOrigSize=nil,
+    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=10, asOrigSize=nil, asWeld=nil, asWeldParent=nil,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1250,14 +1250,20 @@ local function enableAntiAim()
         -- голова для других ниже, ходишь как обычно, физика не ломается.
         if S.aaPitch == "Head Down" then
             if hum then
-                if S.aaHipOrig == nil then
-                    S.aaHipOrig = hum.HipHeight
-                end
-                hum.HipHeight = (S.aaHipOrig or 0) - (S.aaHeadDepth or 1)
+                pcall(function()
+                    if S.aaHipOrig == nil then
+                        S.aaHipOrig = hum.HipHeight
+                    end
+                    -- pcall обязательно, иначе молчаливый краш связи убивает ВЕСЬ анти-аим
+                    hum.HipHeight = math.max(0, (S.aaHipOrig or 0) - (S.aaHeadDepth or 1))
+                end)
             end
         elseif S.aaHipOrig ~= nil then
-            -- вышли из режима: вернуть рост
-            if hum then hum.HipHeight = S.aaHipOrig end
+            if hum then
+                pcall(function()
+                    hum.HipHeight = S.aaHipOrig
+                end)
+            end
             S.aaHipOrig = nil
         end
     end)
@@ -1280,7 +1286,9 @@ local function disableAntiAim()
     end
     -- вернуть рост после Head Down
     if S.aaHipOrig ~= nil and hum then
-        hum.HipHeight = S.aaHipOrig
+        pcall(function()
+            hum.HipHeight = S.aaHipOrig
+        end)
         S.aaHipOrig = nil
     end
 end
@@ -1817,15 +1825,28 @@ function enableAutoShot()
         end
         if not targetModel then return end
 
-        -- САЙЛЕНТ ХИТ REACH: клинок делается огромным и невидимым —
-        -- сервер сам регистрирует Handle.Touched по всем врагам в радиусе.
-        -- Ничего не телепортируется: ни камера, ни твоя рука/персонаж.
-        if S.asSilentHit and handle then
-            if not S.asOrigSize then
-                S.asOrigSize = handle.Size
+        -- НАСТОЯЩИЙ САЙЛЕНТ ХИТ:
+        --  1) отцепляем сварку меча в руке (RightGrip) -> клинок СВОБОДЕН;
+        --  2) кладём его каждый тик во врага — сервер регистрирует Handle.Touched,
+        --     попадание ГАРАНТИРОВАНО, и уже НИКОГО/НИЧЕГО не тянет (нет сварки!);
+        --  3) камера и персонаж НЕ двигаются.
+        if S.asSilentHit then
+            local ch3 = LP.Character
+            if ch3 and not S.asWeld then
+                local w = ch3:FindFirstChild("RightGrip", true)
+                if w and w:IsA("Weld") then
+                    S.asWeld = w
+                    S.asWeldParent = w.Parent
+                    w.Parent = nil -- клинок отцеплён от руки (внешне зафиксирован в воздухе, никто не видит драггинга)
+                end
             end
-            handle.CanCollide = false
-            handle.Size = Vector3.new(S.asRange, S.asRange, S.asRange)
+            if handle and targetRoot then
+                pcall(function()
+                    handle.CFrame = targetRoot.CFrame -- клинок свободно летит к врагу
+                    handle.Velocity = Vector3.new(0, 0, 0)
+                    handle.CanCollide = false
+                end)
+            end
         end
 
         -- авто-огонь по CPS
@@ -1843,15 +1864,14 @@ end
 function disableAutoShot()
     S.asOn = false
     if S.asConn then S.asConn:Disconnect() S.asConn = nil end
-    -- вернуть размер клинка
-    local ch2 = LP.Character
-    local tool2 = ch2 and ch2:FindFirstChildOfClass("Tool")
-    local handle2 = tool2 and tool2:FindFirstChild("Handle") or tool2 and tool2:FindFirstChildWhichIsA("BasePart", true)
-    if handle2 and S.asOrigSize then
+    -- вернуть сварку меча
+    if S.asWeld then
         pcall(function()
-            handle2.Size = S.asOrigSize
+            S.asWeld.Parent = S.asWeldParent
         end)
     end
+    S.asWeld = nil
+    S.asWeldParent = nil
     S.asOrigSize = nil
 end
 
@@ -3898,7 +3918,7 @@ do
     addSlider(pAs, "asd.range", "Reach Size", 4, 21, 10, 1, function(v)
         S.asRange = math.floor(v)
     end)
-    addText(pAs, "Silent Hit REACH: клинок делается огромным невидимым кубом — сервер сам регистрирует касания по врагам рядом. НИКТО ни к чему не телепортируется, ничто не двигается. Range = размер куба (держи в пределах 21). Выключишь — старый режим по конусу прицела.")
+    addText(pAs, "Silent Hit: сварка меча в руке отцепляется (RightGrip = nil) -> клинок свободно кладется во врага каждый тик, ты ПОПАДАЕШЬ. Камера и персонаж НЕ двигаются. Range = радиус поиска цели (в пределах 21). Выключишь — старый режим по конусу прицела.")
 
     local pMisc = addPanel(pg.col2, "Misc")
     addToggle(pMisc, "aimbot.visualize", "Visualize FOV", true, function(state)
