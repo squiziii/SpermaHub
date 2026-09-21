@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +safer-headdown")
+print("[SpermaHub] сборка: +reach-autoshot+crouch-aa")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -127,7 +127,7 @@ local S = {
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
-    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaNeck=nil, aaNeckParent=nil,
+    aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaHipOrig=nil,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
@@ -141,7 +141,7 @@ local S = {
     silentMode="Universal",
     flingMode="Velocity Burst", flingDur=5,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
-    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=10,
+    asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=10, asOrigSize=nil,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1245,35 +1245,20 @@ local function enableAntiAim()
             if hum and hum.PlatformStand then hum.PlatformStand = false end
         end
 
-        -- СТОЯЧИЙ анти-аим "головой вниз": тело стоит и ходит,
-        -- шейный мотор отсоединён, чтобы он НЕ волочил тело следом
-        -- (иначе физика проваливает персонажа под карту).
+        -- СТОЯЧИЙ анти-аим "Head Down" = присед к ногам.
+        -- Опускается ВСЯ стойка (HipHeight): тело остаётся вертикальным,
+        -- голова для других ниже, ходишь как обычно, физика не ломается.
         if S.aaPitch == "Head Down" then
-            if hum and hum.RequiresNeck then
-                hum.RequiresNeck = false -- переживаем потерю шеи
-            end
-            if not S.aaNeck then
-                local neck = ch:FindFirstChild("Neck", true)
-                if neck then
-                    S.aaNeck = neck
-                    S.aaNeckParent = neck.Parent
-                    neck.Parent = nil -- отсоединяем шею: голова свободна, тело не тянется
+            if hum then
+                if S.aaHipOrig == nil then
+                    S.aaHipOrig = hum.HipHeight
                 end
+                hum.HipHeight = (S.aaHipOrig or 0) - (S.aaHeadDepth or 1)
             end
-            local head = ch:FindFirstChild("Head")
-            if head then
-                -- голова висит у ног, сервер и другие видят её там
-                head.CFrame = CFrame.new(root.Position + Vector3.new(0, -(S.aaHeadDepth or 1), 0))
-                head.Velocity = Vector3.new(0, 0, 0)
-                head.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end
-        elseif S.aaNeck then
-            -- вышли из режима: цепляем шею обратно
-            pcall(function()
-                S.aaNeck.Parent = S.aaNeckParent
-            end)
-            S.aaNeck = nil
-            S.aaNeckParent = nil
+        elseif S.aaHipOrig ~= nil then
+            -- вышли из режима: вернуть рост
+            if hum then hum.HipHeight = S.aaHipOrig end
+            S.aaHipOrig = nil
         end
     end)
 end
@@ -1292,6 +1277,11 @@ local function disableAntiAim()
     -- вернуть скорость после Slow Walk
     if S.aaSlowWalk and hum then
         hum.WalkSpeed = S.walkSpeedOn and S.walkSpeed or 16
+    end
+    -- вернуть рост после Head Down
+    if S.aaHipOrig ~= nil and hum then
+        hum.HipHeight = S.aaHipOrig
+        S.aaHipOrig = nil
     end
 end
 
@@ -1827,13 +1817,15 @@ function enableAutoShot()
         end
         if not targetModel then return end
 
-        -- РАБОЧИЙ САЙЛЕНТ ХИТ: клинок каждый тик кладётся в цель —
-        -- сервер регистрирует Handle.Touched сам, камера на месте
-        if S.asSilentHit and handle and targetRoot then
-            pcall(function()
-                handle.CFrame = targetRoot.CFrame
-                handle.Velocity = Vector3.new(0, 0, 0)
-            end)
+        -- САЙЛЕНТ ХИТ REACH: клинок делается огромным и невидимым —
+        -- сервер сам регистрирует Handle.Touched по всем врагам в радиусе.
+        -- Ничего не телепортируется: ни камера, ни твоя рука/персонаж.
+        if S.asSilentHit and handle then
+            if not S.asOrigSize then
+                S.asOrigSize = handle.Size
+            end
+            handle.CanCollide = false
+            handle.Size = Vector3.new(S.asRange, S.asRange, S.asRange)
         end
 
         -- авто-огонь по CPS
@@ -1851,6 +1843,16 @@ end
 function disableAutoShot()
     S.asOn = false
     if S.asConn then S.asConn:Disconnect() S.asConn = nil end
+    -- вернуть размер клинка
+    local ch2 = LP.Character
+    local tool2 = ch2 and ch2:FindFirstChildOfClass("Tool")
+    local handle2 = tool2 and tool2:FindFirstChild("Handle") or tool2 and tool2:FindFirstChildWhichIsA("BasePart", true)
+    if handle2 and S.asOrigSize then
+        pcall(function()
+            handle2.Size = S.asOrigSize
+        end)
+    end
+    S.asOrigSize = nil
 end
 
 -- ============ KILL AURA (закликивает врага) ============
@@ -3893,10 +3895,10 @@ do
     addToggle(pAs, "asd.silenthit", "Silent Hit (попадает сам, без камеры)", true, function(state)
         S.asSilentHit = state
     end)
-    addSlider(pAs, "asd.range", "Silent Hit Range", 4, 21, 10, 1, function(v)
+    addSlider(pAs, "asd.range", "Reach Size", 4, 21, 10, 1, function(v)
         S.asRange = math.floor(v)
     end)
-    addText(pAs, "Silent Hit: КЛИНОК каждый тик кладётся во врага — сервер сам считает касание, ты ПОПАДАЕШЬ, а камера вообще не двигается. Range держи под свою длину меча (~7-10). Выключишь — старый режим по конусу прицела.")
+    addText(pAs, "Silent Hit REACH: клинок делается огромным невидимым кубом — сервер сам регистрирует касания по врагам рядом. НИКТО ни к чему не телепортируется, ничто не двигается. Range = размер куба (держи в пределах 21). Выключишь — старый режим по конусу прицела.")
 
     local pMisc = addPanel(pg.col2, "Misc")
     addToggle(pMisc, "aimbot.visualize", "Visualize FOV", true, function(state)
@@ -4077,7 +4079,7 @@ do
     addSlider(pAng, "aa.headdepth", "Head Depth", 0.3, 2, 1, 0.1, function(v)
         S.aaHeadDepth = v
     end)
-    addText(pAng, "Head Down — СТОЯ: шея отсоединена, голова висит у ног (RequiresNeck=false, поэтому живой), тело нормально ходит. Не подставляй лёгкие боссы. Для лежания: Down/Up.")
+    addText(pAng, "Head Down — присед: стойка ниже на Head Depth, голова для других на уровне ног, ты стоишь и ходишь как обычно, никаких провалов. Не хочешь поворотов тела — поставь Yaw = Disabled.")
     addDropdown(pAng, "aa.yaw", "Yaw", {"Disabled", "Backward", "Spin", "Random"}, "Backward", function(v)
         S.aaYaw = v
     end)
