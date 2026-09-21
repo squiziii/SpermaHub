@@ -1187,8 +1187,9 @@ local function enableAntiAim()
         -- Yaw Jitter поверх выбранного yaw
         if yaw and S.aaYawJitter ~= "Disabled" then
             if S.aaYawJitter == "Offset" then
+                -- ЖЁСТКИЙ TWITCH: спина -> разворот на 180 -> спина (каждый тик)
                 S.aaJitSide = not S.aaJitSide
-                yaw = yaw + (S.aaJitSide and 45 or -45)
+                yaw = yaw + (S.aaJitSide and 0 or 180)
             else -- Random
                 yaw = yaw + math.random(-60, 60)
             end
@@ -1211,29 +1212,22 @@ local function enableAntiAim()
                 if hum and not hum.PlatformStand then
                     hum.PlatformStand = true -- отключить автовыпрямление: физика не борется с позой
                 end
-                -- зафиксировать точку лежания ОДИН раз -> тело не ездит/не крутится по земле, камера не дёргается
-                if S.aaPinPos and (root.Position - S.aaPinPos).Magnitude > 6 then
-                    S.aaPinPos = nil -- сдох/зареспавнился/телепорт — закрепить новое место
+                -- БЕЗ ОДНОКРАТНОГО ПИНА: дроп считается КАЖДЫЙ ТИК от текущего root.Position.
+                -- Тело ложится ровно на пол (центр капсулы = пол + ~1), не проваливается
+                -- под землю и ездит лёжа вместе с движением. Никаких накоплений Y.
+                local drop = 1.5
+                if hum then
+                    pcall(function()
+                        drop = math.max(hum.HipHeight or 0, 0.5)
+                    end)
                 end
-                if not S.aaPinPos then
-                    local p0 = root.Position
-                    local drop0 = hum and ((hum.HipHeight or 0) + root.Size.Y / 2 - 0.5) or 0
-                    if drop0 > 0 then
-                        p0 = p0 - Vector3.new(0, drop0, 0)
-                    end
-                    S.aaPinPos = p0
-                    S.aaPinDrop = math.max(drop0, 0)
-                end
-                pos = S.aaPinPos
+                pos = root.Position - Vector3.new(0, drop, 0)
             else
-                -- Pitch = None: вернуть стоячую высоту, потом выпрямить (иначе выбросит вверх)
-                if S.aaPinPos then
-                    pos = S.aaPinPos + Vector3.new(0, S.aaPinDrop or 0, 0)
-                    S.aaPinPos = nil
-                else
-                    pos = root.Position
-                end
+                -- Pitch = None: тело стоит; если откинуло вниз — физика сама поднимет,
+                -- нам только выпрямиться и снять PlatformStand
+                S.aaPinPos = nil
                 if hum and hum.PlatformStand then hum.PlatformStand = false end
+                pos = root.Position
             end
             root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
             if pitch ~= 0 then
@@ -1241,10 +1235,7 @@ local function enableAntiAim()
                 root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             end
         else
-            if S.aaPinPos then
-                root.CFrame = CFrame.new(S.aaPinPos + Vector3.new(0, S.aaPinDrop or 0, 0))
-                S.aaPinPos = nil
-            end
+            S.aaPinPos = nil
             if hum and hum.PlatformStand then hum.PlatformStand = false end
         end
 
@@ -1992,12 +1983,18 @@ function enableAutoShot()
             asReleaseLMB()
             return
         end
-        -- мгновенный снап камеры на голову (ТОЛЬКО flick; в чистом сайленте камера НЕ двигается)
-        if S.asFlick and not S.asSilentNet then
+        -- автонаведение камеры на цель ПОКА СТРЕЛЯЕМ:
+        --  flick → МГНОВЕННЫЙ снап; сайлент без flick → плавный трек (камера сама догоняет)
+        if not S.asSilentNet and S.asFlick then
             local okS = pcall(function()
                 camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
             end)
             if not okS then return end
+        else
+            pcall(function()
+                camF.CFrame = camF.CFrame:Lerp(
+                    CFrame.new(camF.CFrame.Position, head.Position), 0.55)
+            end)
         end
         -- человеческий ритм: пауза-реакция на новую цель, дальше разброс интервалов
         local targetModelF = head.Parent
