@@ -143,7 +143,7 @@ local S = {
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
-    asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false,
+    asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false, flickHold=false,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1916,6 +1916,41 @@ function enableAutoShot()
         end
     end)
 
+    -- УДЕРЖАНИЕ ЛКМ: Fortline стреляет пока кнопка ЗАЖАТА (как из сниппета silent aim),
+    -- поэтому авто-шот сам зажимает ЛКМ, пока есть цель (tap-клики не работают)
+    local function asHoldLMB()
+        if S.flickHold then return end
+        S.flickHold = true
+        if type(mouse1press) == "function" then
+            pcall(mouse1press)
+            return
+        end
+        pcall(function()
+            local cam2 = workspace.CurrentCamera
+            if cam2 then
+                local vx = math.floor(cam2.ViewportSize.X / 2)
+                local vy = math.floor(cam2.ViewportSize.Y / 2)
+                VIMService:SendMouseButtonEvent(vx, vy, 0, true, game, 1)
+            end
+        end)
+    end
+    local function asReleaseLMB()
+        if not S.flickHold then return end
+        S.flickHold = false
+        if type(mouse1release) == "function" then
+            pcall(mouse1release)
+            return
+        end
+        pcall(function()
+            local cam2 = workspace.CurrentCamera
+            if cam2 then
+                local vx = math.floor(cam2.ViewportSize.X / 2)
+                local vy = math.floor(cam2.ViewportSize.Y / 2)
+                VIMService:SendMouseButtonEvent(vx, vy, 0, false, game, 1)
+            end
+        end)
+    end
+
     -- INSTANT FLICK (skeet): пишем камеру на приоритете ВЫШЕ игровой камеры,
     -- чтобы игра её не перезаписала — снап реально доезжает до кадра,
     -- и огонь уходит СРАЗУ после снапа (без лага в один кадр)
@@ -1932,6 +1967,7 @@ function enableAutoShot()
         S.flickHead = head
         if not head then
             S.asLastTarget = nil
+            asReleaseLMB()
             return
         end
         -- мгновенный снап камеры на голову
@@ -1947,11 +1983,14 @@ function enableAutoShot()
             S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
         end
         if nowF >= (S.asNextFire or 0) then
-            kaClick()
+            -- реакция вышла: жмём ЛКМ УДЕРЖИВАЕМО (автоматный огонь по темпу пушки)
+            asHoldLMB()
             local toolF = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
             if toolF then
                 pcall(function() toolF:Activate() end)
             end
+            -- доп. тап: для полуавтоматик, где hold не канает
+            kaClick()
             local base = 1 / math.max(S.asCps, 1)
             S.asNextFire = nowF + base * (0.8 + math.random() * 0.5)
         end
@@ -1964,6 +2003,23 @@ function disableAutoShot()
         S.asFlickB = false
     end
     S.flickHead = nil
+    -- отпустить автозажатую ЛКМ
+    if S.flickHold then
+        S.flickHold = false
+        if type(mouse1release) == "function" then
+            pcall(mouse1release)
+        else
+            pcall(function()
+                local cam2 = workspace.CurrentCamera
+                if cam2 then
+                    VIMService:SendMouseButtonEvent(
+                        math.floor(cam2.ViewportSize.X / 2),
+                        math.floor(cam2.ViewportSize.Y / 2),
+                        0, false, game, 1)
+                end
+            end)
+        end
+    end
     S.asOn = false
     if S.asConn then S.asConn:Disconnect() S.asConn = nil end
     -- восстановить позицию, если отключили во время TP Kill
