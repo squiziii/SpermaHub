@@ -2562,7 +2562,7 @@ end
 
 bootStep("ESP OK")
 
--- ============ WATERMARK (старый: FPS/Ping/время/дата, перетаскивается) ============
+-- ============ WATERMARK (пилюля fatality: 🐱 ник [тег] | fps | ms | kbps) ============
 local WG = Instance.new("ScreenGui")
 WG.Name = "SpermaHubWatermark"
 WG.ResetOnSpawn = false
@@ -2571,131 +2571,69 @@ WG.DisplayOrder = 100
 WG.Parent = LP:WaitForChild("PlayerGui")
 
 local WM = Instance.new("Frame")
-WM.Size = UDim2.new(0,280,0,68)
-WM.Position = UDim2.new(0,12,0,12)
-WM.BackgroundColor3 = Color3.fromRGB(18,18,22)
-WM.BackgroundTransparency = 0.15
+WM.Size = UDim2.new(0, 0, 0, 26)
+WM.AutomaticSize = Enum.AutomaticSize.X
+WM.Position = UDim2.new(0, 12, 0, 12)
+WM.BackgroundColor3 = Color3.fromRGB(14, 13, 20)
+WM.BackgroundTransparency = 0.08
 WM.BorderSizePixel = 0
 WM.Active = true
 WM.Draggable = true
 WM.Parent = WG
 
 local WMC = Instance.new("UICorner")
-WMC.CornerRadius = UDim.new(0,10)
+WMC.CornerRadius = UDim.new(0.5, 0)
 WMC.Parent = WM
 
 local WMS = Instance.new("UIStroke")
-WMS.Color = Color3.fromRGB(80,60,140)
+WMS.Color = Color3.fromRGB(120, 90, 170)
 WMS.Thickness = 1
-WMS.Transparency = 0.5
+WMS.Transparency = 0.45
 WMS.Parent = WM
 
-local TopRow = Instance.new("Frame")
-TopRow.Size = UDim2.new(1,-20,0,24)
-TopRow.Position = UDim2.new(0,10,0,10)
-TopRow.BackgroundTransparency = 1
-TopRow.Parent = WM
+local WMP = Instance.new("UIPadding")
+WMP.PaddingLeft = UDim.new(0, 10)
+WMP.PaddingRight = UDim.new(0, 10)
+WMP.Parent = WM
 
-local BrandLabel = Instance.new("TextLabel")
-BrandLabel.Size = UDim2.new(0,90,1,0)
-BrandLabel.BackgroundTransparency = 1
-BrandLabel.Text = "✦ Cracked"
-BrandLabel.TextColor3 = Color3.fromRGB(160,140,220)
-BrandLabel.Font = Enum.Font.GothamBold
-BrandLabel.TextSize = 14
-BrandLabel.TextXAlignment = Enum.TextXAlignment.Left
-BrandLabel.Parent = TopRow
+local WML = Instance.new("UIListLayout")
+WML.FillDirection = Enum.FillDirection.Horizontal
+WML.HorizontalAlignment = Enum.HorizontalAlignment.Center
+WML.VerticalAlignment = Enum.VerticalAlignment.Center
+WML.SortOrder = Enum.SortOrder.LayoutOrder
+WML.Padding = UDim.new(0, 5)
+WML.Parent = WM
 
-local FpsIcon = Instance.new("TextLabel")
-FpsIcon.Size = UDim2.new(0,18,1,0)
-FpsIcon.Position = UDim2.new(0,92,0,0)
-FpsIcon.BackgroundTransparency = 1
-FpsIcon.Text = "📶"
-FpsIcon.TextColor3 = Color3.fromRGB(140,140,200)
-FpsIcon.Font = Enum.Font.Gotham
-FpsIcon.TextSize = 13
-FpsIcon.TextXAlignment = Enum.TextXAlignment.Center
-FpsIcon.Parent = TopRow
+local WM_PINK   = Color3.fromRGB(255, 76, 152)
+local WM_VIOLET = Color3.fromRGB(160, 152, 200)
+local WM_GREY   = Color3.fromRGB(152, 150, 170)
+local WM_DIM    = Color3.fromRGB(90, 87, 106)
 
-local FpsLabel = Instance.new("TextLabel")
-FpsLabel.Size = UDim2.new(0,55,1,0)
-FpsLabel.Position = UDim2.new(0,110,0,0)
-FpsLabel.BackgroundTransparency = 1
-FpsLabel.Text = "-- Fps"
-FpsLabel.TextColor3 = Color3.fromRGB(200,200,220)
-FpsLabel.Font = Enum.Font.GothamBold
-FpsLabel.TextSize = 14
-FpsLabel.TextXAlignment = Enum.TextXAlignment.Left
-FpsLabel.Parent = TopRow
+local wmOrder = 0
+local function wmSeg(txt, color, font, size)
+    wmOrder = wmOrder + 1
+    local l = Instance.new("TextLabel")
+    l.AutomaticSize = Enum.AutomaticSize.X
+    l.Size = UDim2.new(0, 0, 1, 0)
+    l.BackgroundTransparency = 1
+    l.Text = txt
+    l.TextColor3 = color
+    l.Font = font
+    l.TextSize = size
+    l.LayoutOrder = wmOrder
+    l.Parent = WM
+    return l
+end
 
-local TimeIcon = Instance.new("TextLabel")
-TimeIcon.Size = UDim2.new(0,18,1,0)
-TimeIcon.Position = UDim2.new(0,170,0,0)
-TimeIcon.BackgroundTransparency = 1
-TimeIcon.Text = "🕐"
-TimeIcon.TextColor3 = Color3.fromRGB(140,140,200)
-TimeIcon.Font = Enum.Font.Gotham
-TimeIcon.TextSize = 13
-TimeIcon.TextXAlignment = Enum.TextXAlignment.Center
-TimeIcon.Parent = TopRow
-
-local TimeLabel = Instance.new("TextLabel")
-TimeLabel.Size = UDim2.new(0,80,1,0)
-TimeLabel.Position = UDim2.new(0,188,0,0)
-TimeLabel.BackgroundTransparency = 1
-TimeLabel.Text = "00:00:00"
-TimeLabel.TextColor3 = Color3.fromRGB(200,200,220)
-TimeLabel.Font = Enum.Font.GothamBold
-TimeLabel.TextSize = 14
-TimeLabel.TextXAlignment = Enum.TextXAlignment.Left
-TimeLabel.Parent = TopRow
-
-local BotRow = Instance.new("Frame")
-BotRow.Size = UDim2.new(1,-20,0,20)
-BotRow.Position = UDim2.new(0,10,0,38)
-BotRow.BackgroundTransparency = 1
-BotRow.Parent = WM
-
-local PingIcon = Instance.new("TextLabel")
-PingIcon.Size = UDim2.new(0,18,1,0)
-PingIcon.BackgroundTransparency = 1
-PingIcon.Text = "📡"
-PingIcon.TextColor3 = Color3.fromRGB(160,140,220)
-PingIcon.Font = Enum.Font.Gotham
-PingIcon.TextSize = 13
-PingIcon.Parent = BotRow
-
-local PingLabel = Instance.new("TextLabel")
-PingLabel.Size = UDim2.new(0,90,1,0)
-PingLabel.Position = UDim2.new(0,20,0,0)
-PingLabel.BackgroundTransparency = 1
-PingLabel.Text = "-- Ping"
-PingLabel.TextColor3 = Color3.fromRGB(200,200,220)
-PingLabel.Font = Enum.Font.GothamBold
-PingLabel.TextSize = 13
-PingLabel.TextXAlignment = Enum.TextXAlignment.Left
-PingLabel.Parent = BotRow
-
-local DateIcon = Instance.new("TextLabel")
-DateIcon.Size = UDim2.new(0,18,1,0)
-DateIcon.Position = UDim2.new(0,140,0,0)
-DateIcon.BackgroundTransparency = 1
-DateIcon.Text = "📅"
-DateIcon.TextColor3 = Color3.fromRGB(160,140,220)
-DateIcon.Font = Enum.Font.Gotham
-DateIcon.TextSize = 13
-DateIcon.Parent = BotRow
-
-local DateLabel = Instance.new("TextLabel")
-DateLabel.Size = UDim2.new(0,110,1,0)
-DateLabel.Position = UDim2.new(0,160,0,0)
-DateLabel.BackgroundTransparency = 1
-DateLabel.Text = "Sep.2026"
-DateLabel.TextColor3 = Color3.fromRGB(200,200,220)
-DateLabel.Font = Enum.Font.GothamBold
-DateLabel.TextSize = 13
-DateLabel.TextXAlignment = Enum.TextXAlignment.Left
-DateLabel.Parent = BotRow
+wmSeg("🐱", Color3.fromRGB(255, 255, 255), Enum.Font.GothamBold, 12)
+local NameLabel = wmSeg(LP.DisplayName or LP.Name, WM_PINK, Enum.Font.GothamBold, 13)
+local TagLabel = wmSeg("[Разработчик]", WM_VIOLET, Enum.Font.GothamMedium, 12)
+wmSeg("|", WM_DIM, Enum.Font.Gotham, 12)
+local FpsLabel = wmSeg("--fps", WM_PINK, Enum.Font.GothamBold, 13)
+wmSeg("|", WM_DIM, Enum.Font.Gotham, 12)
+local PingLabel = wmSeg("--ms", WM_GREY, Enum.Font.GothamBold, 12)
+wmSeg("|", WM_DIM, Enum.Font.Gotham, 12)
+local BpsLabel = wmSeg("0.00kbps", WM_GREY, Enum.Font.GothamMedium, 12)
 
 task.spawn(function()
     while WG.Parent do
@@ -2711,7 +2649,6 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    local months = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"}
     while WG.Parent do
         if S.wmOn then
             local p = 0
@@ -2722,21 +2659,16 @@ task.spawn(function()
                 end
             end)
             S.ping = p
-            local fpsColor
-            if S.fps >= 50 then fpsColor = Color3.fromRGB(200,255,200)
-            elseif S.fps >= 30 then fpsColor = Color3.fromRGB(255,240,160)
-            else fpsColor = Color3.fromRGB(255,160,160) end
-            local pingColor
-            if p < 80 then pingColor = Color3.fromRGB(120,255,140)
-            elseif p < 150 then pingColor = Color3.fromRGB(255,220,100)
-            else pingColor = Color3.fromRGB(255,120,120) end
-            FpsLabel.Text = string.format("%d Fps", S.fps)
-            FpsLabel.TextColor3 = fpsColor
-            PingLabel.Text = string.format("%d Ping", p)
-            PingLabel.TextColor3 = pingColor
-            local t = os.date("*t")
-            TimeLabel.Text = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
-            DateLabel.Text = string.format("%s.%d", months[t.month], t.year)
+            local kb = 0
+            pcall(function()
+                local serverStats = Stats.Network.ServerStatsItem
+                if serverStats and serverStats["Data Receive Kbps"] then
+                    kb = serverStats["Data Receive Kbps"]:GetValue()
+                end
+            end)
+            FpsLabel.Text = string.format("%dfps", S.fps or 0)
+            PingLabel.Text = string.format("%dms", p)
+            BpsLabel.Text = string.format("%.2fkbps", kb or 0)
         end
         task.wait(0.5)
     end
