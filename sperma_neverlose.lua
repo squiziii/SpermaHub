@@ -143,6 +143,7 @@ local S = {
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
+    asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1834,6 +1835,13 @@ function enableAutoShot()
             if head then
                 targetModel = head.Parent
                 targetRoot = head
+                -- INSTANT FLICK (skeet-стайл): КАМЕРА МГНОВЕННО смотрит в голову, без плавности
+                if S.asFlick then
+                    local camF = workspace.CurrentCamera
+                    if camF then
+                        camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
+                    end
+                end
                 -- FORTLINE-асист: пушки стреляют ПО КАМЕРЕ, поэтому плавно
                 -- подтягиваем камеру к голове (Assist=0 — камера не двигается)
                 if S.asAssist and S.asAssist > 0 then
@@ -1899,14 +1907,33 @@ function enableAutoShot()
             end
         end
 
-        -- авто-огонь по CPS
-        acc = acc + dt
-        if acc >= 1 / math.max(S.asCps, 1) then
-            acc = 0
-            kaClick()
-            pcall(function()
-                if tool then tool:Activate() end
-            end)
+        -- авто-огонь
+        if S.asFlick then
+            -- человеческий ритм: пауза "реакция" после первого флика на новую цель,
+            -- дальше выстрелы с разбросом интервала (как руками, не идеально ровно)
+            local nowF = os.clock()
+            if S.asLastTarget ~= targetModel then
+                S.asLastTarget = targetModel
+                S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
+            end
+            if nowF >= (S.asNextFire or 0) then
+                kaClick()
+                pcall(function()
+                    if tool then tool:Activate() end
+                end)
+                local base = 1 / math.max(S.asCps, 1)
+                S.asNextFire = nowF + base * (0.8 + math.random() * 0.5)
+            end
+        else
+            -- авто-огонь по CPS
+            acc = acc + dt
+            if acc >= 1 / math.max(S.asCps, 1) then
+                acc = 0
+                kaClick()
+                pcall(function()
+                    if tool then tool:Activate() end
+                end)
+            end
         end
     end)
 end
@@ -4000,6 +4027,13 @@ do
     addSlider(pAs, "asd.assist", "Cam Assist (Fortline)", 0, 1, 0, 0.05, function(v)
         S.asAssist = v
     end)
+    addToggle(pAs, "asd.flick", "Instant Flick (skeet: мгновенный флик + огонь)", false, function(state)
+        S.asFlick = state
+    end)
+    addSlider(pAs, "asd.react", "Реакция флика (ms)", 0, 500, 120, 10, function(v)
+        S.asReaction = v / 1000
+    end)
+    addText(pAs, "Instant Flick: камера ДЁРГАЕТСЯ на голову мгновенно и бьёт с человеческим темпом (пауза-реакция + разброс). Работает в конусном режиме (Silent Hit выключить).")
     addDropdown(pAs, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
         if v == "Fortline" then
             local c1 = Cfg["asd.silenthit"] if c1 then c1.set(false) end
