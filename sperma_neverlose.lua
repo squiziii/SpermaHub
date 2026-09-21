@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: +headdown-aa")
+print("[SpermaHub] сборка: +autoshot")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -141,6 +141,7 @@ local S = {
     silentMode="Universal",
     flingMode="Velocity Burst", flingDur=5,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
+    asOn=false, asConn=nil, asFovPx=80, asCps=10,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=8, saDelay=0.3, saTarget=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1717,6 +1718,61 @@ function disableAirStack()
     if S.airstackPlatform and S.airstackPlatform.Parent then
         S.airstackPlatform.Position = Vector3.new(0, -1e5, 0) -- прячем платформу далеко вниз
     end
+end
+
+-- ============ AUTO SHOT (тригер-бот: не наводится, но попадает) ============
+-- камера НЕ трогается: как только вражья голова попадает в конус у прицела —
+-- сам жмёт ЛКМ (инжект) + активирует оружие. Снаряд летит по центру => хит.
+function asTargetInCone()
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local cx = cam.ViewportSize.X / 2
+    local cy = cam.ViewportSize.Y / 2
+    local best, bd = nil, S.asFovPx
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and not isTeammate(plr) then
+            local ch2 = plr.Character
+            local head = ch2 and ch2:FindFirstChild("Head")
+            local hum = ch2 and ch2:FindFirstChildOfClass("Humanoid")
+            if head and hum and hum.Health > 0 and isVisible(head) then
+                local sp, on = cam:WorldToViewportPoint(head.Position)
+                if on then
+                    local dx = sp.X - cx
+                    local dy = sp.Y - cy
+                    local d = math.sqrt(dx * dx + dy * dy)
+                    if d < bd then
+                        bd = d
+                        best = head
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+function enableAutoShot()
+    S.asOn = true
+    if S.asConn then S.asConn:Disconnect() end
+    local acc = 0
+    S.asConn = RunService.Heartbeat:Connect(function(dt)
+        if not S.asOn then return end
+        acc = acc + dt
+        if acc < 1 / math.max(S.asCps, 1) then return end
+        acc = 0
+        if not asTargetInCone() then return end -- цели в конусе нет — не стреляем
+        kaClick() -- инжект ЛКМ
+        pcall(function()
+            local ch2 = LP.Character
+            local tool = ch2 and ch2:FindFirstChildOfClass("Tool")
+            if tool then tool:Activate() end
+        end)
+    end)
+end
+
+function disableAutoShot()
+    S.asOn = false
+    if S.asConn then S.asConn:Disconnect() S.asConn = nil end
 end
 
 -- ============ KILL AURA (закликивает врага) ============
@@ -3395,6 +3451,7 @@ BindEntries = {
     {label = "Kill Aura",    cfg = "ka.enabled"},
     {label = "Silent Aura",  cfg = "sa.enabled"},
     {label = "Smooth Cam",   cfg = "scam.enabled"},
+    {label = "Auto Shot",    cfg = "asd.enabled"},
 }
 BindRowRefs = {} -- entry -> fn обновления текста бинда в меню
 
@@ -3744,6 +3801,18 @@ do
         end
     end)
     addText(pSilent, "Fortline — камера сама целится ПОКА зажата кнопка огня (работает на Xeno без хуков). Network — перенаправление FireServer оружия в голов (нужны хуки). Universal — Ray/Mouse.Hit хук (нужны хуки).")
+
+    local pAs = addPanel(pg.col2, "Auto Shot")
+    addToggle(pAs, "asd.enabled", "Enabled", false, function(state)
+        if state then enableAutoShot() else disableAutoShot() end
+    end)
+    addSlider(pAs, "asd.radius", "Cone Radius (px)", 20, 160, 80, 5, function(v)
+        S.asFovPx = math.floor(v)
+    end)
+    addSlider(pAs, "asd.cps", "Fire Rate (CPS)", 2, 25, 10, 1, function(v)
+        S.asCps = math.floor(v)
+    end)
+    addText(pAs, "Тригер-бот без наводки: как только голова врага попадает в конус у прицела — сам стреляет. Камера НЕ двигается (незаметно для наблюдателей).")
 
     local pMisc = addPanel(pg.col2, "Misc")
     addToggle(pMisc, "aimbot.visualize", "Visualize FOV", true, function(state)
@@ -4464,6 +4533,7 @@ function fullCleanupNL()
     pcall(disableKillAura)
     pcall(disableSilentAura)
     pcall(disableSmoothCam)
+    pcall(disableAutoShot)
     pcall(disableAntiKick)
     if S.godConn then S.godConn:Disconnect() end
     if S.flingConn then S.flingConn:Disconnect() end
