@@ -143,7 +143,7 @@ local S = {
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
-    asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil,
+    asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1809,6 +1809,10 @@ function enableAutoShot()
         if not root then return end
         local tool, handle = asGetWeapon()
 
+        -- INSTANT FLICK обрабатывается рендер-биндом ПОСЛЕ камеры игры (см. ниже),
+        -- Stepped тут пропускаем, чтобы не конфликтовать
+        if S.asFlick then return end
+
         -- ЦЕЛЬ (без camera-turn):
         local targetModel, targetRoot = nil, nil
         if S.asSilentHit then
@@ -1835,13 +1839,6 @@ function enableAutoShot()
             if head then
                 targetModel = head.Parent
                 targetRoot = head
-                -- INSTANT FLICK (skeet-стайл): КАМЕРА МГНОВЕННО смотрит в голову, без плавности
-                if S.asFlick then
-                    local camF = workspace.CurrentCamera
-                    if camF then
-                        camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
-                    end
-                end
                 -- FORTLINE-асист: пушки стреляют ПО КАМЕРЕ, поэтому плавно
                 -- подтягиваем камеру к голове (Assist=0 — камера не двигается)
                 if S.asAssist and S.asAssist > 0 then
@@ -1907,38 +1904,64 @@ function enableAutoShot()
             end
         end
 
-        -- авто-огонь
-        if S.asFlick then
-            -- человеческий ритм: пауза "реакция" после первого флика на новую цель,
-            -- дальше выстрелы с разбросом интервала (как руками, не идеально ровно)
-            local nowF = os.clock()
-            if S.asLastTarget ~= targetModel then
-                S.asLastTarget = targetModel
-                S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
+        -- авто-огонь по CPS
+        acc = acc + dt
+        if acc >= 1 / math.max(S.asCps, 1) then
+            acc = 0
+            kaClick()
+            pcall(function()
+                if tool then tool:Activate() end
+            end)
+        end
+    end)
+
+    -- INSTANT FLICK (skeet): пишем камеру на приоритете ВЫШЕ игровой камеры,
+    -- чтобы игра её не перезаписала — снап реально доезжает до кадра,
+    -- и огонь уходит СРАЗУ после снапа (без лага в один кадр)
+    S.asFlickB = true
+    RunService:BindToRenderStep("SpermaHubFlickStep", Enum.RenderPriority.Camera.Value + 1, function()
+        if not (S.asOn and S.asFlick) then
+            S.flickHead = nil
+            return
+        end
+        local camF = workspace.CurrentCamera
+        if not camF then return end
+        local head = asTargetInCone()
+        S.flickHead = head
+        if not head then
+            S.asLastTarget = nil
+            return
+        end
+        -- мгновенный снап камеры на голову
+        local okS = pcall(function()
+            camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
+        end)
+        if not okS then return end
+        -- человеческий ритм: пауза-реакция на новую цель, дальше разброс интервалов
+        local targetModelF = head.Parent
+        local nowF = os.clock()
+        if S.asLastTarget ~= targetModelF then
+            S.asLastTarget = targetModelF
+            S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
+        end
+        if nowF >= (S.asNextFire or 0) then
+            kaClick()
+            local toolF = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+            if toolF then
+                pcall(function() toolF:Activate() end)
             end
-            if nowF >= (S.asNextFire or 0) then
-                kaClick()
-                pcall(function()
-                    if tool then tool:Activate() end
-                end)
-                local base = 1 / math.max(S.asCps, 1)
-                S.asNextFire = nowF + base * (0.8 + math.random() * 0.5)
-            end
-        else
-            -- авто-огонь по CPS
-            acc = acc + dt
-            if acc >= 1 / math.max(S.asCps, 1) then
-                acc = 0
-                kaClick()
-                pcall(function()
-                    if tool then tool:Activate() end
-                end)
-            end
+            local base = 1 / math.max(S.asCps, 1)
+            S.asNextFire = nowF + base * (0.8 + math.random() * 0.5)
         end
     end)
 end
 
 function disableAutoShot()
+    if S.asFlickB then
+        RunService:UnbindFromRenderStep("SpermaHubFlickStep")
+        S.asFlickB = false
+    end
+    S.flickHead = nil
     S.asOn = false
     if S.asConn then S.asConn:Disconnect() S.asConn = nil end
     -- восстановить позицию, если отключили во время TP Kill
