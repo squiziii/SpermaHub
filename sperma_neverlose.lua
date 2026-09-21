@@ -144,6 +144,7 @@ local S = {
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
     asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false, flickHold=false,
+    asSilentNet=true, asNetByAuto=false,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1951,14 +1952,35 @@ function enableAutoShot()
         end)
     end
 
-    -- INSTANT FLICK (skeet): пишем камеру на приоритете ВЫШЕ игровой камеры,
-    -- чтобы игра её не перезаписала — снап реально доезжает до кадра,
-    -- и огонь уходит СРАЗУ после снапа (без лага в один кадр)
+    -- НОРМАЛЬНЫЙ САЙЛЕНТ (Network): если executor с хуками — собственно
+    -- перенаправляем FireServer оружия В ГОЛОВУ цели. Камеру двигать НЕ НАДО,
+    -- пули летят куда надо сами. Мы только держим ЛКМ пока цель в конусе.
+    if S.asSilentNet then
+        pcall(function()
+            if checkSilentAimSupport() then
+                enableSilentNetwork()
+                S.asNetByAuto = true
+                S.silentAimOn = true
+            else
+                S.asSilentNet = false
+                notify("Auto Shot", "Silent Redirect: нет хуков на этом executor — выкл", 4, "alert-triangle")
+            end
+        end)
+    end
+
+    -- Рендер-бинд ПОСЛЕ игровой камеры: flick-снап (если включён) и
+    -- автозажим ЛКМ, когда цель в конусе
     S.asFlickB = true
     RunService:BindToRenderStep("SpermaHubFlickStep", Enum.RenderPriority.Camera.Value + 1, function()
-        if not (S.asOn and S.asFlick) or S.asSilentHit or S.asTp then
-            -- если включили Silent Hit / TP Kill — флик-бинд отдыхает, пусть работает Stepped
+        if not S.asOn or S.asSilentHit or S.asTp then
+            -- SilentHit/TP Kill — пусть работает Stepped-механика, бинд отдыхает
             S.flickHead = nil
+            asReleaseLMB()
+            return
+        end
+        if not S.asFlick and not S.asSilentNet then
+            S.flickHead = nil
+            asReleaseLMB()
             return
         end
         local camF = workspace.CurrentCamera
@@ -1970,11 +1992,13 @@ function enableAutoShot()
             asReleaseLMB()
             return
         end
-        -- мгновенный снап камеры на голову
-        local okS = pcall(function()
-            camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
-        end)
-        if not okS then return end
+        -- мгновенный снап камеры на голову (ТОЛЬКО flick; в чистом сайленте камера НЕ двигается)
+        if S.asFlick and not S.asSilentNet then
+            local okS = pcall(function()
+                camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
+            end)
+            if not okS then return end
+        end
         -- человеческий ритм: пауза-реакция на новую цель, дальше разброс интервалов
         local targetModelF = head.Parent
         local nowF = os.clock()
@@ -2003,6 +2027,13 @@ function disableAutoShot()
         S.asFlickB = false
     end
     S.flickHead = nil
+    -- если сайлент включали мы (Auto Shot) — аккуратно снять
+    if S.asNetByAuto then
+        S.asNetByAuto = false
+        pcall(function()
+            if S.silentAimOn and disableSilentAim then disableSilentAim() end
+        end)
+    end
     -- отпустить автозажатую ЛКМ
     if S.flickHold then
         S.flickHold = false
@@ -4126,13 +4157,22 @@ do
     addSlider(pAs, "asd.assist", "Cam Assist (Fortline)", 0, 1, 0, 0.05, function(v)
         S.asAssist = v
     end)
+    addToggle(pAs, "asd.silentnet", "Silent Redirect (пули САМИ в голову, камера целая)", true, function(state)
+        S.asSilentNet = state
+        if not state and S.asNetByAuto then
+            S.asNetByAuto = false
+            pcall(function()
+                if S.silentAimOn and disableSilentAim then disableSilentAim() end
+            end)
+        end
+    end)
     addToggle(pAs, "asd.flick", "Instant Flick (skeet: мгновенный флик + огонь)", false, function(state)
         S.asFlick = state
     end)
     addSlider(pAs, "asd.react", "Реакция флика (ms)", 0, 500, 120, 10, function(v)
         S.asReaction = v / 1000
     end)
-    addText(pAs, "Instant Flick: камера ДЁРГАЕТСЯ на голову мгновенно и бьёт с человеческим темпом (пауза-реакция + разброс). Работает в конусном режиме (Silent Hit выключить).")
+    addText(pAs, "ГЛАВНОЕ на Real: оставь только Silent Redirect ON и Конуc ON — камера стоит на месте, а пули редиректятся в голову. Instant Flick включай только если хочешь именно дёрганье камеры (на сайленте оно не нужно).")
     addDropdown(pAs, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
         if v == "Fortline" then
             local c1 = Cfg["asd.silenthit"] if c1 then c1.set(false) end
