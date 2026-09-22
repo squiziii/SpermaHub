@@ -2268,7 +2268,7 @@ function enableAutoShot()
                 local dpxT = math.sqrt((spT.X - cxT) ^ 2 + (spT.Y - cyT) ^ 2)
                 if dpxT <= 30 then
                     local nowT = os.clock()
-                    if (S.asLastTrig or 0) > 0 == false or nowT - (S.asLastTrig or 0)
+                    if nowT - (S.asLastTrig or 0)
                         >= (S.asTrigDelay or 0.08) + math.random() * 0.03 then
                         S.asLastTrig = nowT
                         kaClick()
