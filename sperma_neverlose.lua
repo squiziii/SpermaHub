@@ -1,6 +1,6 @@
--- SpermaHub v41 | NeverLose-style GUI
--- Интерфейс в стиле NEVERLOSE (как на скрине): сайдбар + топбар + двухколоночные панели,
--- сделан с нуля на Instance.new — внешних UI-библиотек НЕ нужно.
+-- SpermaHub | GAMESENSE GUI (единый скрипт: библиотека gamesense встроена + весь функционал)
+-- Интерфейс в стиле GAMESENSE / SKEET.CC: иконные вкладки, подвкладки с иконками,
+-- авто-растущие секции, тема gamesense (зелёный акцент). Внешних UI-библиотек не нужно.
 -- Перенесены ВСЕ вкладки и функции:
 --   Combat:        Legitbot | Kill Aura + Silent Aura (1.8 Arena) | Hitbox | Kill Player | Fling | Spectate | Anti-Aim | Auto Clicker
 --   Visuals:       Players (ESP: Chams/Box/Skeleton/Names + Target ESP) | World
@@ -8,11 +8,11 @@
 --   Player:        Main (WalkSpeed + God Mode + TP Player) | Invisible | No Knockback
 --   Server:        Bypass (Anti-Cheat Bypass) | Server (Rejoin/Hop/Copy ID)
 --   Miscellaneous: Configs | Script | Key Binds (клавиши/мышь/колёсико) + Target HUD
--- Управление: RightShift или круглая кнопка ✦ = скрыть/показать меню
+-- Управление: RightShift = скрыть/показать меню gamesense
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: FATALITY-style GUI v1")
+print("[SpermaHub] сборка: GAMESENSE GUI (либа встроена, все функции на месте)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
