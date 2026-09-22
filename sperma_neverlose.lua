@@ -129,6 +129,7 @@ local S = {
     spinOn=false, spinSpeed=90, spinConn=nil, spinHeadDown=false, spinAngle=0, spinBaseYaw=0,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
     aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaHipOrig=nil, aaDesync=false, aaDesyncAmt=0.35, aaDesyncPrev=nil,
+    aaFakeLag=false, flHistory=nil, flCycle=0, aaOnShot=false, aaFakeDuck=false, fdT=0, aaAntiBS=false, aaResAA=false,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
     afOn=false, afConn=nil, afMax=150,
     strafeOn=false, strafeConn=nil, strafeSpeed=40,
@@ -146,6 +147,7 @@ local S = {
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
     asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false, flickHold=false,
     asSilentNet=true, asNetByAuto=false, flHookOn=false, flOldFire=nil,
+    asTrigger=false, asTrigDelay=0.08, asLastTrig=0,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -1333,6 +1335,39 @@ local function enableAntiAim()
             yaw = math.random(0, 359)
         end
 
+        -- ANTI-BACKSTAB: враг за спиной близко => моментально лицом к нему
+        if S.aaAntiBS then
+            local bsBest, bsD = nil, 10
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LP and not isTeammate(plr) then
+                    local tch = plr.Character
+                    local trt = tch and tch:FindFirstChild("HumanoidRootPart")
+                    local thm = tch and tch:FindFirstChildOfClass("Humanoid")
+                    if trt and thm and thm.Health > 0 then
+                        local d = (trt.Position - root.Position).Magnitude
+                        if d < bsD then
+                            bsBest, bsD = trt, d
+                        end
+                    end
+                end
+            end
+            if bsBest then
+                local dir = bsBest.Position - root.Position
+                -- он позади? (наш forward ~= -dir)
+                local fwd = root.CFrame.LookVector
+                local dot = (fwd.X * dir.X + fwd.Z * dir.Z) / math.max(dir.Magnitude, 0.001)
+                if dot < -0.2 then
+                    yaw = math.deg(math.atan2(-dir.X, -dir.Z)) -- лицом к нему
+                end
+            end
+        end
+
+        -- ON-SHOT (уровень бог): пока жмём огонь, yaw дико рандомится каждый тик
+        local onShotNow = S.aaOnShot and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+        if onShotNow then
+            yaw = (yaw or baseYaw) + math.random(-170, 170)
+        end
+
         -- Yaw Jitter поверх выбранного yaw
         if yaw and S.aaYawJitter ~= "Disabled" then
             if S.aaYawJitter == "Offset" then
@@ -1422,16 +1457,67 @@ local function enableAntiAim()
             S.aaHipOrig = nil
         end
 
+        -- FAKE DUCK: быстрый присед-пульс (~0.35с вниз / ~0.45с вверх)
+        if S.aaFakeDuck and hum and S.aaPitch ~= "Head Down" then
+            S.fdT = (S.fdT or 0) + dt
+            pcall(function()
+                if S.fdOrig == nil then
+                    S.fdOrig = hum.HipHeight
+                end
+                local phase = (S.fdT or 0) % 0.8
+                if phase < 0.35 then
+                    hum.HipHeight = 0 -- присел
+                else
+                    hum.HipHeight = (S.fdOrig or 0)
+                end
+            end)
+        elseif S.fdOrig ~= nil then
+            if hum then pcall(function() hum.HipHeight = S.fdOrig end) end
+            S.fdOrig = nil
+        end
+
         -- DESYNC-JITTER: позиция хитбокса дёргается на пара стадов туда-сюда
         -- каждый тик; ДЕЛАЕТСЯ КАК ДЕЛЬТА (новый - старый) => НЕ СЛЫШАТСЯ.
         if S.aaDesync then
+            local mAmt = S.aaDesyncAmt
+            if onShotNow then mAmt = mAmt * 2.5 end
+            if S.aaResAA and hum and hum.Health > 0 and hum.MaxHealth > 0
+                and hum.Health / hum.MaxHealth < 0.3 then
+                mAmt = mAmt * 2
+                -- RESSURECT-AA: редкие случайные мигания при низком HP
+                if math.random() < 0.08 then
+                    pcall(function()
+                        root.CFrame = root.CFrame + Vector3.new(math.random(-2, 2), 0, math.random(-2, 2))
+                    end)
+                end
+            end
             local prev = S.aaDesyncPrev or Vector3.new(0, 0, 0)
-            local nx = (math.random() * 2 - 1) * S.aaDesyncAmt
-            local nz = (math.random() * 2 - 1) * S.aaDesyncAmt
+            local nx = (math.random() * 2 - 1) * mAmt
+            local nz = (math.random() * 2 - 1) * mAmt
             root.CFrame = root.CFrame + Vector3.new(nx - prev.X, 0, nz - prev.Z)
             S.aaDesyncPrev = Vector3.new(nx, 0, nz)
         else
             S.aaDesyncPrev = nil
+        end
+
+        -- FAKE LAG: часть тиков сервер видит тебя на ПРОШЛОЙ позиции
+        -- (цикл 16 тиков: 12 в прошлом -> 4 догоняем) = враги видят "в двух местах"
+        if S.aaFakeLag then
+            S.flHistory = S.flHistory or {}
+            table.insert(S.flHistory, 1, root.Position)
+            if #S.flHistory > 24 then table.remove(S.flHistory) end
+            S.flCycle = (S.flCycle or 0) + 1
+            if S.flCycle % 16 < 12 then
+                local old = S.flHistory[math.min(12, #S.flHistory)]
+                if old then
+                    pcall(function()
+                        root.CFrame = CFrame.new(old) * (root.CFrame - root.CFrame.Position)
+                    end)
+                end
+            end
+        else
+            S.flHistory = nil
+            S.flCycle = 0
         end
     end)
 end
@@ -2172,6 +2258,23 @@ function enableAutoShot()
         if S.asLastTarget ~= targetModelF then
             S.asLastTarget = targetModelF
             S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
+        end
+        -- TRIGGER FIRE (skeet): как только прицел РЕАЛЬНО на цели (<=30 px) — мгновенный выстрел
+        if S.asTrigger then
+            local spT, onT = camF:WorldToViewportPoint(head.Position)
+            if onT then
+                local cxT = camF.ViewportSize.X / 2
+                local cyT = camF.ViewportSize.Y / 2
+                local dpxT = math.sqrt((spT.X - cxT) ^ 2 + (spT.Y - cyT) ^ 2)
+                if dpxT <= 30 then
+                    local nowT = os.clock()
+                    if (S.asLastTrig or 0) > 0 == false or nowT - (S.asLastTrig or 0)
+                        >= (S.asTrigDelay or 0.08) + math.random() * 0.03 then
+                        S.asLastTrig = nowT
+                        kaClick()
+                    end
+                end
+            end
         end
         if nowF >= (S.asNextFire or 0) then
             -- реакция вышла: жмём ЛКМ УДЕРЖИВАЕМО (автоматный огонь по темпу пушки)
@@ -4346,6 +4449,12 @@ do
     addSlider(pAs, "asd.react", "Реакция флика (ms)", 0, 500, 120, 10, function(v)
         S.asReaction = v / 1000
     end)
+    addToggle(pAs, "asd.trigger", "Trigger Fire (скит: прицел на цели => ОГОНЬ)", false, function(state)
+        S.asTrigger = state
+    end)
+    addSlider(pAs, "asd.trigdelay", "Trigger Delay (ms)", 30, 300, 80, 5, function(v)
+        S.asTrigDelay = v / 1000
+    end)
     addText(pAs, "САЙЛЕНТ (Real): Silent Redirect ON — каждый выстрел летит В ГОЛОВУ (Vector3/CFrame и таблиц-аргументов в ремоуте подменяются). Камера сама следит за целью пока стреляешь. Не оставляй включённым Instant Flick на сайленте — тут он не нужен.")
     addDropdown(pAs, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
         if v == "Fortline" then
@@ -4577,6 +4686,59 @@ do
         S.aaFreestanding = state
     end)
     addText(pExtra, "Freestanding — сам встаёт спиной к ближайшему врагу (до 60 стадов). Если врага рядом нет — спиной к камере.")
+
+    local pHvH = addPanel(pg.col2, "AA 2.0 (HvH)")
+    addToggle(pHvH, "aa.fakelag", "Fake Lag", false, function(state)
+        S.aaFakeLag = state
+        if not state then S.flHistory = nil S.flCycle = 0 end
+    end)
+    addToggle(pHvH, "aa.onshot", "On-Shot (твич бога при стрельбе)", false, function(state)
+        S.aaOnShot = state
+    end)
+    addToggle(pHvH, "aa.fakeduck", "Fake Duck (присед-пульс)", false, function(state)
+        S.aaFakeDuck = state
+    end)
+    addToggle(pHvH, "aa.antibs", "Anti-Backstab", false, function(state)
+        S.aaAntiBS = state
+    end)
+    addToggle(pHvH, "aa.resaa", "Ressurect AA (при low HP)", false, function(state)
+        S.aaResAA = state
+    end)
+    addDropdown(pHvH, nil, "Jit Preset", {"Custom", "Skeet Slip", "HvH Classic", "Insanity", "Fortline RAGE"}, "Custom", function(v)
+        local cy = Cfg["aa.yaw"]
+        local cj = Cfg["aa.yawjitter"] or Cfg["aa.jitter"]
+        local cp = Cfg["aa.pitch"]
+        local cd = Cfg["aa.desync"]
+        local ca = Cfg["aa.desyncamt"]
+        if v == "Skeet Slip" then
+            if cy then cy.set("Backward") end
+            if cj then cj.set("Offset") end
+            if cp then cp.set("None") end
+            if cd then cd.set(true) end
+            if ca then ca.set(0.4) end
+        elseif v == "HvH Classic" then
+            if cy then cy.set("Random") end
+            if cj then cj.set("Random") end
+            if cp then cp.set("None") end
+            if cd then cd.set(true) end
+            if ca then ca.set(0.7) end
+        elseif v == "Insanity" then
+            if cy then cy.set("Spin") end
+            if cj then cj.set("Offset") end
+            if cp then cp.set("None") end
+            if cd then cd.set(true) end
+            if ca then ca.set(1.5) end
+            local cfd = Cfg["aa.fakeduck"] if cfd then cfd.set(true) end
+        elseif v == "Fortline RAGE" then
+            if cy then cy.set("Backward") end
+            if cj then cj.set("Offset") end
+            if cp then cp.set("None") end
+            if cd then cd.set(true) end
+            if ca then ca.set(0.6) end
+            local cos = Cfg["aa.onshot"] if cos then cos.set(true) end
+        end
+    end)
+    addText(pHvH, "Fake Lag: сервер часть времени видит тебя в прошлом — врагам трудно прицелиться. On-Shot: пока ЛКМ — твич максимум. Fake Duck: присядочный пульс. Anti-Backstab: лицом к тому, кто за спиной. Ressurect: при low HP — мигания + жёсткий дёрг.")
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "НАСТОЯЩИЕ fake angles: фейк держится постоянно — его видят и сервер, и другие игроки. Вражеский аимбот целится в фейковое тело.")
