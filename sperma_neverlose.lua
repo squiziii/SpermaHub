@@ -126,7 +126,7 @@ local S = {
     jesusOn=false, jesusConn=nil, jesusPlatform=nil,
     teamCheck=false, visibleCheck=false,
     tracersOn=false, hitmarkerOn=false, fxConn=nil,
-    spinOn=false, spinSpeed=90, spinConn=nil,
+    spinOn=false, spinSpeed=90, spinConn=nil, spinHeadDown=false, spinAngle=0, spinBaseYaw=0,
     aaOn=false, aaConn=nil, aaPitch="Down", aaYaw="Backward", aaYawJitter="Disabled",
     aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaHipOrig=nil, aaDesync=false, aaDesyncAmt=0.35, aaDesyncPrev=nil,
     bhopOn=false, bhopConn=nil, bhopMode="Hold Space", bhopMethod="Velocity",
@@ -1002,19 +1002,55 @@ end
 local function enableSpin()
     S.spinOn = true
     if S.spinConn then S.spinConn:Disconnect() end
+    S.spinAngle = 0
+    -- стартовый угол берём ИЗ ТЕКУЩЕЙ позы — спин начинается без дёргания
+    S.spinBaseYaw = 0
+    do
+        local ch0 = LP.Character
+        local root0 = ch0 and ch0:FindFirstChild("HumanoidRootPart")
+        if root0 then
+            local _, yy = root0.CFrame:ToEulerAnglesYXZ()
+            S.spinBaseYaw = math.deg(yy)
+        end
+    end
     S.spinConn = RunService.RenderStepped:Connect(function(dt)
         if not S.spinOn then return end
         local ch = LP.Character
         if not ch then return end
         local root = ch:FindFirstChild("HumanoidRootPart")
         if not root then return end
-        root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(S.spinSpeed) * dt, 0)
+        S.spinAngle = (S.spinAngle + S.spinSpeed * dt) % 360
+        local totalYaw = math.rad(S.spinBaseYaw + S.spinAngle)
+        if S.spinHeadDown then
+            -- ГОЛОВА ВНИЗУ (вертолёт): питч -90° от ТЕКУЩЕЙ позиции root.
+            -- Y НЕ ЗАНИЖАЕМ => пол не пробивается, гравитация не борется.
+            -- PlatformStand гасит самовыпрямление humanoid, иначе оно
+            -- каждый кадр крутит тело обратно вертикально.
+            local hum = ch:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function()
+                    if not hum.PlatformStand then hum.PlatformStand = true end
+                end)
+            end
+            pcall(function()
+                root.CFrame = CFrame.new(root.Position) * CFrame.Angles(math.rad(-90), totalYaw, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end)
+        else
+            -- обычный вертикальный спин (как был)
+            root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, totalYaw, 0)
+        end
     end)
 end
 
 local function disableSpin()
     S.spinOn = false
     if S.spinConn then S.spinConn:Disconnect() S.spinConn = nil end
+    -- спина выпрямляется обратно
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then pcall(function() hum.PlatformStand = false end) end
 end
 
 -- ============ GOD MODE (лок HP) ============
@@ -4710,10 +4746,14 @@ do
     addToggle(pSpin, "move.spin.enabled", "Enabled", false, function(state)
         if state then enableSpin() else disableSpin() end
     end)
+    addToggle(pSpin, "move.spin.headdown", "Головой вниз (вертолёт)", false, function(state)
+        S.spinHeadDown = state
+    end)
     addSlider(pSpin, "move.spin.speed", "Spin Speed", 1, 1000000, 90, 1000, function(v)
         S.spinSpeed = math.floor(v)
     end)
     addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду (до 1 000 000 — абсолютный фланг-турбонаддув).")
+    addText(pSpin, "«Головой вниз» = вертолётик: тело плоское, голова в полу, лопасти-ноги крутятся. Y не занижается — под землю не проваливаешься.")
 
     local pSpider = addPanel(pg.col2, "Spider")
     addToggle(pSpider, "spider.enabled", "Enabled", false, function(state)
