@@ -144,7 +144,7 @@ local S = {
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
     asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false, flickHold=false,
-    asSilentNet=true, asNetByAuto=false,
+    asSilentNet=true, asNetByAuto=false, flHookOn=false, flOldFire=nil,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
@@ -580,6 +580,44 @@ local function disableSilentAim()
         S.silentAimConn = nil
     end
 end
+
+-- ============ FORTLINE SILENT: хук BaseWeapon.fire (по сырцам сайлента) ====
+-- WeaponsSystem.Libraries.BaseWeapon — модуль оружейной системы Fortline.
+-- fire(p1, p2, p3, p4): p2 = точка выстрела, p3 = направление (Unit).
+-- Редиректим p3 -> направление в голову цели из конуса (S.flickHead).
+function enableFortlineSilent()
+    if S.flHookOn then return true end
+    if type(hookfunction) ~= "function" then return false end
+    local ok = pcall(function()
+        local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
+        local RS = cR(game:GetService("ReplicatedStorage"))
+        local ws = RS:FindFirstChild("WeaponsSystem")
+        if not ws then error("WeaponsSystem not found") end
+        local libs = ws:FindFirstChild("Libraries")
+        if not libs then error("Libraries not found") end
+        local bwMod = libs:FindFirstChild("BaseWeapon")
+        if not bwMod then error("BaseWeapon not found") end
+        local BaseWeapon = require(bwMod)
+        if type(BaseWeapon) ~= "table" or type(BaseWeapon.fire) ~= "function" then
+            error("BaseWeapon.fire not a function")
+        end
+        local oldFire
+        oldFire = hookfunction(BaseWeapon.fire, function(p1, p2, p3, p4)
+            if S.asOn and S.asSilentNet and S.flickHead then
+                local okH, headPos = pcall(function() return S.flickHead.Position end)
+                if okH and headPos and typeof(p2) == "Vector3" then
+                    local okN, newDir = pcall(function() return (headPos - p2).Unit end)
+                    if okN and newDir then p3 = newDir end
+                end
+            end
+            return oldFire(p1, p2, p3, p4)
+        end)
+        S.flOldFire = oldFire
+        S.flHookOn = true
+    end)
+    return ok and S.flHookOn
+end
+
 
 -- ============ AUTO CLICKER ЛОГИКА ============
 -- Клик через VirtualInputManager (резерв, если нет функций executor'а)
@@ -1996,7 +2034,11 @@ function enableAutoShot()
     if S.asSilentNet then
         pcall(function()
             if checkSilentAimSupport() then
-                enableSilentNetwork()
+                -- Fortline: точный хук BaseWeapon.fire (там настоящая пушечная система),
+                -- иначе — универсальный метатабличный редирект FireServer
+                if not enableFortlineSilent() then
+                    enableSilentNetwork()
+                end
                 S.asNetByAuto = true
                 S.silentAimOn = true
             else
