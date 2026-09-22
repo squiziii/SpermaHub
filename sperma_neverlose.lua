@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: GAMESENSE GUI (либа встроена, все функции на месте)")
+print("[SpermaHub] сборка: GAMESENSE GUI build2 (fix: aimbot cleanup)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -320,7 +320,10 @@ end
 
 local function enableAimbot()
     S.aimbotOn = true
-    if S.aimbotConn then S.aimbotConn:Disconnect() end
+    if S.aimbotConn then
+        RunService:UnbindFromRenderStep("SpermaHubAimbot")
+        S.aimbotConn = nil
+    end
     S.aimbotConn = true
     -- Нормально: аим пишется ПОСЛЕ игровой камеры (иначе Фортлайн её перезаписывает)
     RunService:BindToRenderStep("SpermaHubAimbot", Enum.RenderPriority.Camera.Value + 1, function()
@@ -776,7 +779,7 @@ end
 local function enableHitbox()
     S.hitboxOn = true
     applyHitbox()
-    if S.hitboxConn then S.hitboxConn:Disconnect() end
+    dcc(S.hitboxConn)
     S.hitboxConn = RunService.Heartbeat:Connect(function()
         if not S.hitboxOn then return end
         applyHitbox()
@@ -875,7 +878,7 @@ local function startFly()
     S.bg.Parent = root
     local hum = ch:FindFirstChildOfClass("Humanoid")
     if hum then hum.PlatformStand = true end
-    if S.flyConn then S.flyConn:Disconnect() end
+    dcc(S.flyConn)
     S.flyConn = RunService.RenderStepped:Connect(function()
         if not S.flying then return end
         local cam = workspace.CurrentCamera
@@ -906,7 +909,7 @@ end
 -- ============ NOCLIP ============
 local function enableNoclip()
     S.noclip = true
-    if S.noclipConn then S.noclipConn:Disconnect() end
+    dcc(S.noclipConn)
     S.noclipConn = RunService.Stepped:Connect(function()
         if not S.noclip then return end
         local ch = LP.Character
@@ -931,7 +934,7 @@ end
 -- ============ CLICK TP ============
 local function enableClickTp()
     S.clickTpOn = true
-    if S.clickTpConn then S.clickTpConn:Disconnect() end
+    dcc(S.clickTpConn)
     S.clickTpConn = UIS.InputBegan:Connect(function(input, gpe)
         if gpe then return end
         if not S.clickTpOn then return end
@@ -973,7 +976,7 @@ local function enableJesus()
         p.Parent = workspace
         S.jesusPlatform = p
     end
-    if S.jesusConn then S.jesusConn:Disconnect() end
+    dcc(S.jesusConn)
     S.jesusConn = RunService.Heartbeat:Connect(function()
         if not S.jesusOn then return end
         local ch = LP.Character
@@ -1003,7 +1006,7 @@ end
 -- ============ SPIN (вращение персонажа) ============
 local function enableSpin()
     S.spinOn = true
-    if S.spinConn then S.spinConn:Disconnect() end
+    dcc(S.spinConn)
     S.spinAngle = 0
     -- стартовый угол берём ИЗ ТЕКУЩЕЙ позы — спин начинается без дёргания
     S.spinBaseYaw = 0
@@ -1058,7 +1061,7 @@ end
 -- ============ GOD MODE (лок HP) ============
 local function enableGod()
     S.godOn = true
-    if S.godConn then S.godConn:Disconnect() end
+    dcc(S.godConn)
     S.godConn = RunService.Heartbeat:Connect(function()
         if not S.godOn then return end
         local ch = LP.Character
@@ -1295,7 +1298,7 @@ end
 
 local function enableAntiAim()
     S.aaOn = true
-    if S.aaConn then S.aaConn:Disconnect() end
+    dcc(S.aaConn)
     S.aaConn = RunService.Heartbeat:Connect(function(dt)
         if not S.aaOn then return end
         local ch = LP.Character
@@ -1554,7 +1557,7 @@ end
 -- ============ BHOP (авто-прыжки) ============
 local function enableBhop()
     S.bhopOn = true
-    if S.bhopConn then S.bhopConn:Disconnect() end
+    dcc(S.bhopConn)
     S.bhopConn = RunService.Heartbeat:Connect(function()
         if not S.bhopOn then return end
         local ch = LP.Character
@@ -1584,7 +1587,7 @@ end
 -- ============ ANTI FLING (защита от флинга) ============
 local function enableAntiFling()
     S.afOn = true
-    if S.afConn then S.afConn:Disconnect() end
+    dcc(S.afConn)
     S.afConn = RunService.Stepped:Connect(function()
         if not S.afOn then return end
         if S.flying then return end -- Fly сам управляет скоростью
@@ -1614,7 +1617,7 @@ end
 -- ============ AUTO STRAFE (усиление bhop) ============
 local function enableStrafe()
     S.strafeOn = true
-    if S.strafeConn then S.strafeConn:Disconnect() end
+    dcc(S.strafeConn)
     S.strafeConn = RunService.Heartbeat:Connect(function()
         if not S.strafeOn then return end
         local ch = LP.Character
@@ -1727,7 +1730,7 @@ local function startSpectate(plr)
         toastImpl("Spectate", "У цели нет персонажа!")
         return
     end
-    if S.specConn then S.specConn:Disconnect() end
+    dcc(S.specConn)
     S.specOn = true
     S.specTarget = plr
     local cam = workspace.CurrentCamera
@@ -1890,7 +1893,7 @@ function enableSmoothCam()
     scYaw = y
     scTgtPitch = x
     scTgtYaw = y
-    if S.scConn then S.scConn:Disconnect() end
+    dcc(S.scConn)
     S.scConn = RunService.RenderStepped:Connect(function(dt)
         if not S.scOn then return end
         local cam2 = workspace.CurrentCamera
@@ -1931,7 +1934,7 @@ spiderRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 function enableSpider()
     S.spiderOn = true
-    if S.spiderConn then S.spiderConn:Disconnect() end
+    dcc(S.spiderConn)
     S.spiderConn = RunService.Heartbeat:Connect(function()
         if not S.spiderOn then return end
         local ch = LP.Character
@@ -1972,7 +1975,7 @@ function enableAirStack()
         p.Parent = workspace
         S.airstackPlatform = p
     end
-    if S.airstackConn then S.airstackConn:Disconnect() end
+    dcc(S.airstackConn)
     S.airstackConn = RunService.Heartbeat:Connect(function()
         if not S.airstackOn then return end
         local ch2 = LP.Character
@@ -2042,7 +2045,7 @@ end
 
 function enableAutoShot()
     S.asOn = true
-    if S.asConn then S.asConn:Disconnect() end
+    dcc(S.asConn)
     local acc = 0
     -- Stepped (до физики): сервер застаёт клинок во враге => попадание гарантировано,
     -- КАМЕРА НЕ ДВИЖЕТСЯ ВООБЩЕ
@@ -2402,7 +2405,7 @@ end
 
 function enableKillAura()
     S.kaOn = true
-    if S.kaConn then S.kaConn:Disconnect() end
+    dcc(S.kaConn)
     local acc = 0
     S.kaConn = RunService.Heartbeat:Connect(function(dt)
         if not S.kaOn then return end
@@ -2454,7 +2457,7 @@ end
 
 function enableSilentAura()
     S.saOn = true
-    if S.saConn then S.saConn:Disconnect() end
+    dcc(S.saConn)
     if not saHasTouch then
         notify("Silent Aura", "firetouchinterest нет — работаем на телепорте клинка (основной режим)")
     end
@@ -2551,7 +2554,7 @@ noKbZero = Vector3.new(0, 0, 0)
 
 function enableNoKb()
     S.noKbOn = true
-    if S.noKbConn then S.noKbConn:Disconnect() end
+    dcc(S.noKbConn)
     S.noKbConn = RunService.Heartbeat:Connect(function()
         if not S.noKbOn then return end
         local ch = LP.Character
@@ -2584,7 +2587,7 @@ end
 function setInvisible(state)
     S.invisOn = state
     if state then
-        if S.invisConn then S.invisConn:Disconnect() end
+        dcc(S.invisConn)
         local ch = LP.Character
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
         S.invisY = root and root.Position.Y or 60
@@ -2953,7 +2956,7 @@ local function enableESP()
         removeESP(plr)
         skeletonFrames[plr] = nil
     end)
-    if S.espConn then S.espConn:Disconnect() end
+    dcc(S.espConn)
     S.espConn = RunService.RenderStepped:Connect(function()
         if not S.esp then return end
         updateESP()
@@ -2999,7 +3002,7 @@ end
 
 local function enableTargetESP()
     S.targetEspOn = true
-    if S.targetEspConn then S.targetEspConn:Disconnect() end
+    dcc(S.targetEspConn)
     S.targetEspConn = RunService.RenderStepped:Connect(function()
         if not S.targetEspOn then return end
         local p = currentEspTarget()
@@ -10448,27 +10451,31 @@ function fullCleanupNL()
     if unloadedNL then return end
     unloadedNL = true
     S.guiAlive = false
-    if S.flyConn then S.flyConn:Disconnect() end
-    if S.noclipConn then S.noclipConn:Disconnect() end
-    if S.espConn then S.espConn:Disconnect() end
-    if S.targetEspConn then S.targetEspConn:Disconnect() end
-    if S.wsConn then S.wsConn:Disconnect() end
-    if S.clickTpConn then S.clickTpConn:Disconnect() end
-    if S.hitboxConn then S.hitboxConn:Disconnect() end
-    if S.aimbotConn then S.aimbotConn:Disconnect() end
+    local function dcc(c)
+        if typeof(c) == "RBXScriptConnection" then pcall(function() c:Disconnect() end) end
+    end
+    dcc(S.flyConn)
+    dcc(S.noclipConn)
+    dcc(S.espConn)
+    dcc(S.targetEspConn)
+    dcc(S.wsConn)
+    dcc(S.clickTpConn)
+    dcc(S.hitboxConn)
+    if S.aimbotConn then pcall(function() RunService:UnbindFromRenderStep("SpermaHubAimbot") end) S.aimbotConn = nil end
+    pcall(function() RunService:UnbindFromRenderStep("SpermaHubFlickStep") end)
     if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) end
     disableAutoClicker()
-    if S.autoClickBindConn then S.autoClickBindConn:Disconnect() end
-    if S.jesusConn then S.jesusConn:Disconnect() end
+    dcc(S.autoClickBindConn)
+    dcc(S.jesusConn)
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
-    if S.spinConn then S.spinConn:Disconnect() end
-    if S.aaConn then S.aaConn:Disconnect() end
-    if S.bhopConn then S.bhopConn:Disconnect() end
-    if S.afConn then S.afConn:Disconnect() end
-    if S.strafeConn then S.strafeConn:Disconnect() end
-    if S.specConn then S.specConn:Disconnect() end
-    if bindInputConn1 then bindInputConn1:Disconnect() end
-    if bindInputConn2 then bindInputConn2:Disconnect() end
+    dcc(S.spinConn)
+    dcc(S.aaConn)
+    dcc(S.bhopConn)
+    dcc(S.afConn)
+    dcc(S.strafeConn)
+    dcc(S.specConn)
+    dcc(bindInputConn1)
+    dcc(bindInputConn2)
     pcall(exitSpectate)
     pcall(disableSpider)
     pcall(disableAirStack)
@@ -10479,9 +10486,9 @@ function fullCleanupNL()
     pcall(disableSmoothCam)
     pcall(disableAutoShot)
     pcall(disableAntiKick)
-    if S.godConn then S.godConn:Disconnect() end
-    if S.flingConn then S.flingConn:Disconnect() end
-    if S.fxConn then S.fxConn:Disconnect() end
+    dcc(S.godConn)
+    dcc(S.flingConn)
+    dcc(S.fxConn)
     if S.bv then S.bv:Destroy() end
     if S.bg then S.bg:Destroy() end
     pcall(restoreHitbox)
@@ -10558,7 +10565,7 @@ LP.CharacterAdded:Connect(function()
         if flightToggleCtl then flightToggleCtl.set(false) end
     end
     if S.noclip then
-        if S.noclipConn then S.noclipConn:Disconnect() end
+        dcc(S.noclipConn)
         S.noclip = true
         enableNoclip()
     end
