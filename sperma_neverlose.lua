@@ -429,6 +429,37 @@ local function enableSilentNetwork()
                                 args[i] = CFrame.new(head.Position) changed = true
                             end
                         end
+                        -- дахK: таблицы с полями Position/p/Hit/target тоже в голову
+                        for i, a in ipairs(args) do
+                            if typeof(a) == "table" then
+                                local okT, key = pcall(function()
+                                    local k = next(a)
+                                    return k
+                                end)
+                                if okT and key then
+                                    local copied = false
+                                    local newT = {}
+                                    for k, v in pairs(a) do
+                                        if k == "Position" or k == "p" or k == "Hit"
+                                            or k == "Target" or k == "target"
+                                            or k == "aim" or k == "Aim" then
+                                            if typeof(v) == "Vector3" then
+                                                newT[k] = head.Position copied = true
+                                            elseif typeof(v) == "CFrame" then
+                                                newT[k] = CFrame.new(head.Position) copied = true
+                                            else
+                                                newT[k] = v
+                                            end
+                                        else
+                                            newT[k] = v
+                                        end
+                                    end
+                                    if copied then
+                                        args[i] = newT changed = true
+                                    end
+                                end
+                            end
+                        end
                         if changed then
                             return oldNamecall(self, unpack(args))
                         end
@@ -1174,6 +1205,17 @@ local function enableAntiAim()
             baseYaw = freestandingYaw(root) or baseYaw
         end
 
+        -- КЛЮЧЕВОЕ против «AA не работает в шутерах»: отрубаем AutoRotate,
+        -- иначе контроллер движения каждый кадр перезаписывает наш yaw
+        if hum then
+            pcall(function()
+                if S.aaOrigAutoRotate == nil then
+                    S.aaOrigAutoRotate = hum.AutoRotate
+                end
+                if hum.AutoRotate then hum.AutoRotate = false end
+            end)
+        end
+
         local yaw = nil
         if S.aaYaw == "Backward" or S.aaYaw == "Backwards" then
             yaw = baseYaw
@@ -1286,6 +1328,11 @@ local function disableAntiAim()
         S.aaPinPos = nil
     end
     if hum and hum.PlatformStand then hum.PlatformStand = false end
+    -- вернуть AutoRotate (а то мышь перестанет крутить персонажа, как у людей)
+    if hum and S.aaOrigAutoRotate ~= nil then
+        pcall(function() hum.AutoRotate = S.aaOrigAutoRotate end)
+        S.aaOrigAutoRotate = nil
+    end
     -- вернуть скорость после Slow Walk
     if S.aaSlowWalk and hum then
         hum.WalkSpeed = S.walkSpeedOn and S.walkSpeed or 16
@@ -4169,7 +4216,7 @@ do
     addSlider(pAs, "asd.react", "Реакция флика (ms)", 0, 500, 120, 10, function(v)
         S.asReaction = v / 1000
     end)
-    addText(pAs, "ГЛАВНОЕ на Real: оставь только Silent Redirect ON и Конуc ON — камера стоит на месте, а пули редиректятся в голову. Instant Flick включай только если хочешь именно дёрганье камеры (на сайленте оно не нужно).")
+    addText(pAs, "САЙЛЕНТ (Real): Silent Redirect ON — каждый выстрел летит В ГОЛОВУ (Vector3/CFrame и таблиц-аргументов в ремоуте подменяются). Камера сама следит за целью пока стреляешь. Не оставляй включённым Instant Flick на сайленте — тут он не нужен.")
     addDropdown(pAs, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
         if v == "Fortline" then
             local c1 = Cfg["asd.silenthit"] if c1 then c1.set(false) end
@@ -4365,7 +4412,7 @@ do
     addToggle(pDes, "aa.desync", "Jitter Enabled", false, function(state)
         S.aaDesync = state
     end)
-    addSlider(pDes, "aa.desyncamt", "Jitter Amount", 0.1, 1, 0.35, 0.05, function(v)
+    addSlider(pDes, "aa.desyncamt", "Jitter Amount", 0.1, 3, 0.35, 0.05, function(v)
         S.aaDesyncAmt = v
     end)
     addDropdown(pDes, nil, "Game Preset", {"Custom", "Fortline"}, "Custom", function(v)
@@ -4374,7 +4421,7 @@ do
             local cj = Cfg["aa.yawjitter"] if cj then cj.set("Random") end
             local cp = Cfg["aa.pitch"] if cp then cp.set("None") end
             local cd = Cfg["aa.desync"] if cd then cd.set(true) end
-            local ca = Cfg["aa.desyncamt"] if ca then ca.set(0.35) end
+            local ca = Cfg["aa.desyncamt"] if ca then ca.set(0.6) end
         end
     end)
     addText(pDes, "Jitter = хитбокс дёргано шатается каждый тик (без накопления) => по тебе сложно попасть из оружия. Пресет Fortline: Yaw=Random + Jitter=Random + Pitch=None + Desync h0.35.")
