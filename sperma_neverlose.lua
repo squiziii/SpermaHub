@@ -106,6 +106,11 @@ local function notify(title, content)
         print(("[SpermaHub] %s: %s"):format(tostring(title), tostring(content)))
     end
 end
+-- безопасный Disconnect с проверкой типа (некоторые conn-поля — булевы маркеры)
+function dcc(c)
+    if typeof(c) == "RBXScriptConnection" then pcall(function() c:Disconnect() end) end
+end
+
 -- ============ СОСТОЯНИЕ ============
 local S = {
     flying=false, noclip=false, esp=false, speed=50,
@@ -10451,9 +10456,6 @@ function fullCleanupNL()
     if unloadedNL then return end
     unloadedNL = true
     S.guiAlive = false
-    local function dcc(c)
-        if typeof(c) == "RBXScriptConnection" then pcall(function() c:Disconnect() end) end
-    end
     dcc(S.flyConn)
     dcc(S.noclipConn)
     dcc(S.espConn)
