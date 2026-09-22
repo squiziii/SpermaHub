@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: GAMESENSE GUI build2 (fix: aimbot cleanup)")
+print("[SpermaHub] сборка: GAMESENSE GUI build3 (diag: uiCall guards)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -9017,13 +9017,13 @@ Pages = {}
 catSelected = nil
 local catTabs = {}
 
-local function addCategory(title)
+local function addCategoryImpl(title)
     local tab = GSWindow:CreateTab({Icon = CAT_ICONS[title] or "rbxassetid://18686402989"})
     catTabs[title] = tab
     table.insert(Categories, {key = title, tab = tab})
 end
 
-local function addPage(cat, icon, title)
+local function addPageImpl(cat, icon, title)
     local tab = catTabs[cat]
     local si
     if cat == "Player" then
@@ -9042,7 +9042,7 @@ local function addPage(cat, icon, title)
     return pg
 end
 
-local function addPanel(col, title)
+local function addPanelImpl(col, title)
     local pg = col.__page
     local sec = pg.si:Section({
         Name = title,
@@ -9076,7 +9076,7 @@ local Cfg = {}
 
 -- ---------- КОНТРОЛЫ ----------
 -- тумблер
-local function addToggle(panel, key, label, default, cb)
+local function addToggleImpl(panel, key, label, default, cb)
     local ctl = panel.sec:Toggle({
         Name = cleanText(label),
         Default = default and true or false,
@@ -9089,7 +9089,7 @@ local function addToggle(panel, key, label, default, cb)
 end
 
 -- слайдер
-local function addSlider(panel, key, label, minV, maxV, default, step, cb)
+local function addSliderImpl(panel, key, label, minV, maxV, default, step, cb)
     local ctl = panel.sec:Slider({
         Name = cleanText(label),
         Min = minV,
@@ -9106,7 +9106,7 @@ local function addSlider(panel, key, label, minV, maxV, default, step, cb)
 end
 
 -- выпадающий список
-local function addDropdown(panel, key, label, options, default, cb)
+local function addDropdownImpl(panel, key, label, options, default, cb)
     local ctl = panel.sec:Dropdown({
         Name = cleanText(label),
         Content = options,
@@ -9120,7 +9120,7 @@ local function addDropdown(panel, key, label, options, default, cb)
 end
 
 -- бинд клавиши (Label + attached Keybind; Callback в lib срабатывает при переназначении)
-local function addKeybind(panel, key, label, defaultName, cb)
+local function addKeybindImpl(panel, key, label, defaultName, cb)
     local lab = panel.sec:Label({Message = cleanText(label)})
     local defKey = Enum.KeyCode.Backspace
     if defaultName then
@@ -9147,7 +9147,7 @@ local function addKeybind(panel, key, label, defaultName, cb)
 end
 
 -- кнопка
-local function addButton(panel, label, cb, color, hover)
+local function addButtonImpl(panel, label, cb, color, hover)
     return panel.sec:Button({
         Name = cleanText(label),
         Risky = (color == C_RED) and true or false,
@@ -9159,14 +9159,14 @@ local function addButton(panel, label, cb, color, hover)
 end
 
 -- текст-описание
-local function addText(panel, text)
+local function addTextImpl(panel, text)
     for _, line in ipairs(wrapLines(cleanText(text), 44)) do
         panel.sec:Label({Message = line})
     end
 end
 
 -- список игроков (gamesense List + деселект по повторному клику)
-local function makePlayerList(panel, height)
+local function makePlayerListImpl(panel, height)
     local selected = nil
     local lastData = {}
     local onSelectCb = nil
@@ -9234,6 +9234,114 @@ local function getPlayerListData()
         end
     end
     return out
+end
+
+-- ============================================================
+-- ДИАГНОСТИКА ПОСТРОЙКИ GUI: ошибка одного контрола НЕ роняет сборку
+-- (красные строки [UI-ERR] в консоли покажут точное место)
+-- ============================================================
+GSBuildErrors = 0
+
+local function uiCall(kind, label, f, ...)
+    local args = table.pack(...)
+    local ok, res = xpcall(function()
+        return f(table.unpack(args, 1, args.n))
+    end, debug.traceback)
+    if not ok then
+        GSBuildErrors = GSBuildErrors + 1
+        warn(("[SpermaHub][UI-ERR] %s '%s': %s"):format(tostring(kind), tostring(label), tostring(res)))
+        pcall(function()
+            if toastImpl then toastImpl("UI ERR", tostring(kind) .. ": " .. tostring(label)) end
+        end)
+        return nil
+    end
+    return res
+end
+
+local dummySec = {}
+do
+    local mt = {__index = function()
+        return function()
+            return {set = function() end, get = function() return nil end,
+                    refresh = function() end, connect = function() end,
+                    rebuild = function() end, getSelected = function() return nil end}
+        end
+    end}
+    setmetatable(dummySec, mt)
+end
+local dummyPanel = {sec = dummySec, holder = nil}
+local dummyPage = {cat = nil, si = nil, tab = nil, col1 = nil, col2 = nil}
+do
+    dummyPage.col1 = {__page = dummyPage, __side = "Left"}
+    dummyPage.col2 = {__page = dummyPage, __side = "Right"}
+end
+local function dummyCtl()
+    return {set = function() end, get = function() return nil end,
+            refresh = function() end, connect = function() end,
+            rebuild = function() end, getSelected = function() return nil end}
+end
+
+local function addCategory(title)
+    return uiCall("addCategory", title, addCategoryImpl, title)
+end
+
+local function addPage(cat, icon, title)
+    local label = tostring(cat) .. "." .. tostring(title)
+    local r = uiCall("addPage", label, addPageImpl, cat, icon, title)
+    if r == nil then
+        local pg = {cat = cat, si = nil, tab = nil}
+        pg.col1 = {__page = pg, __side = "Left"}
+        pg.col2 = {__page = pg, __side = "Right"}
+        if type(Pages) == "table" then table.insert(Pages, pg) end
+        return pg
+    end
+    return r
+end
+
+local function addPanel(col, title)
+    local pg = col and col.__page
+    if pg == nil or pg.si == nil then
+        return {sec = dummySec, holder = nil}
+    end
+    local r = uiCall("addPanel", tostring(title), addPanelImpl, col, title)
+    if r == nil then
+        return {sec = dummySec, holder = nil}
+    end
+    return r
+end
+
+local function addToggle(panel, key, label, default, cb)
+    local r = uiCall("addToggle", label, addToggleImpl, panel, key, label, default, cb)
+    return r or dummyCtl()
+end
+
+local function addSlider(panel, key, label, minV, maxV, default, step, cb)
+    local r = uiCall("addSlider", label, addSliderImpl, panel, key, label, minV, maxV, default, step, cb)
+    return r or dummyCtl()
+end
+
+local function addDropdown(panel, key, label, options, default, cb)
+    local r = uiCall("addDropdown", label, addDropdownImpl, panel, key, label, options, default, cb)
+    return r or dummyCtl()
+end
+
+local function addKeybind(panel, key, label, defaultName, cb)
+    local r = uiCall("addKeybind", label, addKeybindImpl, panel, key, label, defaultName, cb)
+    return r or dummyCtl()
+end
+
+local function addButton(panel, label, cb, color, hover)
+    local r = uiCall("addButton", label, addButtonImpl, panel, label, cb, color, hover)
+    return r or dummyCtl()
+end
+
+local function addText(panel, text)
+    return uiCall("addText", tostring(text):sub(1, 32), addTextImpl, panel, text)
+end
+
+local function makePlayerList(panel, height)
+    local r = uiCall("makePlayerList", tostring(panel), makePlayerListImpl, panel, height)
+    return r or dummyCtl()
 end
 
 -- ============================================================
@@ -10593,6 +10701,10 @@ end
 
 -- gamesense: финальная инициализация (viewport-коннекты; watermark заглушен)
 pcall(function() getgenv().Library:Init() end)
+print(("[SpermaHub] постройка GUI завершена, UI-ошибок: " .. tostring(GSBuildErrors or 0)))
+if (GSBuildErrors or 0) > 0 then
+    warn("[SpermaHub] ВНИМАНИЕ: часть контролов не построилась — скинь разработчику красные строки [UI-ERR] из консоли (F9)")
+end
 
 -- первичное заполнение списков игроков
 task.spawn(function()
