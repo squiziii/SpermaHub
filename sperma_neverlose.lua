@@ -118,6 +118,7 @@ local S = {
     clickTpOn=false, clickTpHeight=3, clickTpConn=nil,
     hitboxOn=false, hitboxSize=5, hitboxConn=nil,
     aimbotOn=false, aimbotFov=120, aimbotSmooth=0.3, aimbotConn=nil,
+    aimKey="Hold RMB", aimBone="Head",
     fovCircle=nil,
     silentAimOn=false, silentAimFov=150, silentAimConn=nil, silentAimFovCircle=nil,
     autoClickOn=false, autoClickCps=10, autoClickMode="ЛКМ",
@@ -267,6 +268,17 @@ local function flashFovCircle(kind, circle, isOn)
 end
 
 -- ============ AIMBOT ЛОГИКА ============
+local function aimBonePart(ch)
+    if S.aimBone == "Torso" then
+        return ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
+            or ch:FindFirstChild("HumanoidRootPart")
+    elseif S.aimBone == "Body" then
+        return ch:FindFirstChild("Torso") or ch:FindFirstChild("UpperTorso")
+            or ch:FindFirstChild("HumanoidRootPart")
+    end
+    return ch:FindFirstChild("Head")
+end
+
 local function getClosestTarget()
     local cam = workspace.CurrentCamera
     local closest = nil
@@ -275,7 +287,7 @@ local function getClosestTarget()
         if plr ~= LP then
             local ch = plr.Character
             if ch then
-                local head = ch:FindFirstChild("Head")
+                local head = aimBonePart(ch)
                 local hum = ch:FindFirstChildOfClass("Humanoid")
                 if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
                     local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
@@ -295,25 +307,46 @@ local function getClosestTarget()
     return closest
 end
 
+local function aimKeyPressed()
+    if S.aimKey == "Always" then return true end
+    if S.aimKey == "Hold E" then
+        return UIS:IsKeyDown(Enum.KeyCode.E)
+    end
+    -- Hold RMB по умолчанию
+    return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+end
+
 local function enableAimbot()
     S.aimbotOn = true
     if S.aimbotConn then S.aimbotConn:Disconnect() end
-    S.aimbotConn = RunService.RenderStepped:Connect(function()
+    S.aimbotConn = true
+    -- Нормально: аим пишется ПОСЛЕ игровой камеры (иначе Фортлайн её перезаписывает)
+    RunService:BindToRenderStep("SpermaHubAimbot", Enum.RenderPriority.Camera.Value + 1, function()
         if not S.aimbotOn then return end
+        if not aimKeyPressed() then return end
         local target = getClosestTarget()
         if target then
             local cam = workspace.CurrentCamera
+            if not cam then return end
             local targetPos = target.Position
             local currentCF = cam.CFrame
             local lookAt = CFrame.new(currentCF.Position, targetPos)
-            cam.CFrame = currentCF:Lerp(lookAt, S.aimbotSmooth)
+            local k = S.aimbotSmooth
+            if k >= 0.95 then
+                cam.CFrame = lookAt -- snap
+            else
+                cam.CFrame = currentCF:Lerp(lookAt, k)
+            end
         end
     end)
 end
 
 local function disableAimbot()
     S.aimbotOn = false
-    if S.aimbotConn then S.aimbotConn:Disconnect() S.aimbotConn = nil end
+    if S.aimbotConn then
+        RunService:UnbindFromRenderStep("SpermaHubAimbot")
+        S.aimbotConn = nil
+    end
 end
 
 -- ============ SILENT AIM ЛОГИКА (Real-compatible) ============
@@ -4186,6 +4219,13 @@ do
     addSlider(pAcc, "aimbot.smooth", "Smooth", 0.05, 1, 0.3, 0.05, function(v)
         S.aimbotSmooth = v
     end)
+    addDropdown(pAcc, "aimbot.key", "Aim Key", {"Hold RMB", "Always", "Hold E"}, "Hold RMB", function(v)
+        S.aimKey = v
+    end)
+    addDropdown(pAcc, "aimbot.bone", "Bone", {"Head", "Torso", "Body"}, "Head", function(v)
+        S.aimBone = v
+    end)
+    addText(pAcc, "Аимте пишется ПОСЛЕ камеры игры (не затирается). Smooth=1 => мгновенный снап. Бери Hold RMB — целишься при зажатой ПКМ.")
     addDropdown(pAcc, nil, "FOV Preset", {"60", "120", "200", "350"}, "120", function(v)
         local c = Cfg["aimbot.fov"]
         if c then c.set(tonumber(v)) end
@@ -4657,10 +4697,10 @@ do
     addToggle(pSpin, "move.spin.enabled", "Enabled", false, function(state)
         if state then enableSpin() else disableSpin() end
     end)
-    addSlider(pSpin, "move.spin.speed", "Spin Speed", 1, 5000, 90, 10, function(v)
+    addSlider(pSpin, "move.spin.speed", "Spin Speed", 1, 50000, 90, 100, function(v)
         S.spinSpeed = math.floor(v)
     end)
-    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду (до 5000 — фланг).")
+    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду (до 50000 — чистый фLANг).")
 
     local pSpider = addPanel(pg.col2, "Spider")
     addToggle(pSpider, "spider.enabled", "Enabled", false, function(state)
