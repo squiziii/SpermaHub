@@ -1309,6 +1309,7 @@ local function enableAntiAim()
         end
 
         local pitch = 0
+        local rollUD = false -- Upside Down: вверх ногами, голова ВНИЗУ
         if S.aaPitch == "Down" then
             pitch = -90
         elseif S.aaPitch == "Up" then
@@ -1317,11 +1318,21 @@ local function enableAntiAim()
             pitch = (math.random() < 0.5) and -90 or 90
         elseif S.aaPitch == "Head Down" then
             pitch = 0 -- рут не крутим: тело СТОИТ, движение обычное; гнётся отдельно ниже
+        elseif S.aaPitch == "Upside Down" then
+            pitch = 0
+            rollUD = true
         end
 
-        if yaw or pitch ~= 0 then
+        if yaw or pitch ~= 0 or rollUD then
             local pos
-            if pitch ~= 0 then
+            if rollUD then
+                -- вверх ногами БЕЗ БАГОВ: Y НЕ ТРОГАЕМ (капсула тем же дном на полу),
+                -- просто крен рута на 180° + отключули автовыпрямление humanoid
+                if hum and not hum.PlatformStand then
+                    hum.PlatformStand = true
+                end
+                pos = root.Position
+            elseif pitch ~= 0 then
                 if hum and not hum.PlatformStand then
                     hum.PlatformStand = true -- отключить автовыпрямление: физика не борется с позой
                 end
@@ -1342,8 +1353,9 @@ local function enableAntiAim()
                 if hum and hum.PlatformStand then hum.PlatformStand = false end
                 pos = root.Position
             end
-            root.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), 0)
-            if pitch ~= 0 then
+            root.CFrame = CFrame.new(pos)
+                * CFrame.Angles(math.rad(pitch), math.rad(yaw or getCamYawDeg()), rollUD and math.pi or 0)
+            if pitch ~= 0 or rollUD then
                 root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             end
@@ -4482,13 +4494,14 @@ do
     end)
 
     local pAng = addPanel(pg.col1, "Angles")
-    addDropdown(pAng, "aa.pitch", "Pitch", {"Down", "Up", "Jitter", "None", "Head Down"}, "Down", function(v)
+    addDropdown(pAng, "aa.pitch", "Pitch", {"Down", "Up", "Jitter", "None", "Head Down", "Upside Down"}, "Down", function(v)
         S.aaPitch = v
     end)
     addSlider(pAng, "aa.headdepth", "Head Depth", 0.3, 2, 1, 0.1, function(v)
         S.aaHeadDepth = v
     end)
     addText(pAng, "Head Down — присед: стойка ниже на Head Depth, голова для других на уровне ног, ты стоишь и ходишь как обычно, никаких провалов. Не хочешь поворотов тела — поставь Yaw = Disabled.")
+    addText(pAng, "Upside Down — стоишь НА ГОЛОВЕ (голова внизу). Y не занижается, поэтому без провалов под землю; движение при такой позе ограничено, как у лежачих режимов.")
 
     local pDes = addPanel(pg.col1, "Desync (Fortline)")
     addToggle(pDes, "aa.desync", "Jitter Enabled", false, function(state)
@@ -4697,10 +4710,10 @@ do
     addToggle(pSpin, "move.spin.enabled", "Enabled", false, function(state)
         if state then enableSpin() else disableSpin() end
     end)
-    addSlider(pSpin, "move.spin.speed", "Spin Speed", 1, 50000, 90, 100, function(v)
+    addSlider(pSpin, "move.spin.speed", "Spin Speed", 1, 1000000, 90, 1000, function(v)
         S.spinSpeed = math.floor(v)
     end)
-    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду (до 50000 — чистый фLANг).")
+    addText(pSpin, "Вращает персонажа вокруг своей оси. Скорость — градусов в секунду (до 1 000 000 — абсолютный фланг-турбонаддув).")
 
     local pSpider = addPanel(pg.col2, "Spider")
     addToggle(pSpider, "spider.enabled", "Enabled", false, function(state)
