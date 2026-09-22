@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: GAMESENSE GUI build3 (diag: uiCall guards)")
+print("[SpermaHub] сборка: GAMESENSE GUI build4 (fix: dropdown CanvasPosition)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -3816,6 +3816,21 @@ do -- Library
     Library.Sections.__index = Library.Sections
     --
     local Sections = Library.Sections
+    -- безопасный CanvasPosition: ближайший предок-скроллер (Frame секций не имеет CanvasPosition)
+    local function gsFindScroller(inst)
+        local cur = inst
+        while cur ~= nil and typeof(cur) == "Instance" do
+            if cur:IsA("ScrollingFrame") then return cur end
+            cur = cur.Parent
+        end
+        return nil
+    end
+    --
+    local function gsCanvasOf(inst)
+        local scr = gsFindScroller(inst)
+        return scr and scr.CanvasPosition or Vector2.new(0, 0)
+    end
+    --
     function Library:ColorPicker(Options)
         Options = Library:Validate({
             Name = "Preview Color Picker",
@@ -4253,12 +4268,12 @@ do -- Library
                     --
                     local StartingY = ColorPickerOutline_1.AbsolutePosition.Y
                     local MainUIStartingY = Options.MainUI.AbsolutePosition.Y
-                    local StartingCanvasPosition = Options.Parent.Parent.CanvasPosition
+                    local StartingCanvasPosition = gsCanvasOf(Options.Parent)
                     --
                     Library:Connection(ColorPickerOutline_1:GetPropertyChangedSignal("AbsolutePosition"), function()
                         local CurrentY = ColorPickerOutline_1.AbsolutePosition.Y
                         local MainUICurrentY = Options.MainUI.AbsolutePosition.Y
-                        local CurrentCanvasPosition = Options.Parent.Parent.CanvasPosition
+                        local CurrentCanvasPosition = gsCanvasOf(Options.Parent)
                         --
                         if MainUICurrentY ~= MainUIStartingY then
                             MainUIStartingY = MainUICurrentY
@@ -4287,18 +4302,18 @@ do -- Library
                     --
                     Library:Connection(Options.MainUI:GetPropertyChangedSignal("AbsoluteSize"), function()
                         if ColorPicker.Active then
-                            ColorPickerOutline.Visible = Library:ScrollingCheck(Options.Parent.Parent, ColorPickerChecker)
+                            ColorPickerOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), ColorPickerChecker)
                         end
                         --
                         ColorPicker:UpdateSize()
                     end)
                     --
-                    if Options.Parent.Parent:IsA("ScrollingFrame") then
-                        Library:Connection(Options.Parent.Parent:GetPropertyChangedSignal("CanvasPosition"), function()
+                    if gsFindScroller(Options.Parent) then
+                        Library:Connection(gsFindScroller(Options.Parent):GetPropertyChangedSignal("CanvasPosition"), function()
                             ColorPicker:UpdateSize()
                             --
                             if ColorPicker.Active then
-                                ColorPickerOutline.Visible = Library:ScrollingCheck(Options.Parent.Parent, ColorPickerChecker)
+                                ColorPickerOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), ColorPickerChecker)
                             end
                         end)
                     end
@@ -4560,12 +4575,12 @@ do -- Library
                 --
                 local StartingY = ColorPickerOutline_1.AbsolutePosition.Y
                 local MainUIStartingY = Options.MainUI.AbsolutePosition.Y
-                local StartingCanvasPosition = Options.Parent.Parent.CanvasPosition
+                local StartingCanvasPosition = gsCanvasOf(Options.Parent)
                 --
                 Library:Connection(ColorPickerOutline_1:GetPropertyChangedSignal("AbsolutePosition"), function()
                     local CurrentY = ColorPickerOutline_1.AbsolutePosition.Y
                     local MainUICurrentY = Options.MainUI.AbsolutePosition.Y
-                    local CurrentCanvasPosition = Options.Parent.Parent.CanvasPosition
+                    local CurrentCanvasPosition = gsCanvasOf(Options.Parent)
                     --
                     if MainUICurrentY ~= MainUIStartingY then
                         MainUIStartingY = MainUICurrentY
@@ -4594,18 +4609,18 @@ do -- Library
                 --
                 Library:Connection(Options.MainUI:GetPropertyChangedSignal("AbsoluteSize"), function()
                     if ColorPicker.ActiveFrame then
-                        KeybindModePickerOutline.Visible = Library:ScrollingCheck(Options.Parent.Parent, ColorPickerChecker)
+                        KeybindModePickerOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), ColorPickerChecker)
                     end
                     --
                     ColorPicker:UpdateSize()
                 end)
                 --
-                if Options.Parent.Parent:IsA("ScrollingFrame") then
-                    Library:Connection(Options.Parent.Parent:GetPropertyChangedSignal("CanvasPosition"), function()
+                if gsFindScroller(Options.Parent) then
+                    Library:Connection(gsFindScroller(Options.Parent):GetPropertyChangedSignal("CanvasPosition"), function()
                         ColorPicker:UpdateSize()
                         --
                         if ColorPicker.ActiveFrame then
-                            KeybindModePickerOutline.Visible = Library:ScrollingCheck(Options.Parent.Parent, ColorPickerChecker)
+                            KeybindModePickerOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), ColorPickerChecker)
                         end
                     end)
                 end
@@ -5043,12 +5058,12 @@ do -- Library
                 --
                 local StartingY = KeybindObject.AbsolutePosition.Y
                 local MainUIStartingY = Options.MainUI.AbsolutePosition.Y
-                local StartingCanvasPosition = Options.Parent.Parent.CanvasPosition
+                local StartingCanvasPosition = gsCanvasOf(Options.Parent)
                 --
                 Library:Connection(KeybindObject:GetPropertyChangedSignal("AbsolutePosition"), function()
                     local CurrentY = KeybindObject.AbsolutePosition.Y
                     local MainUICurrentY = Options.MainUI.AbsolutePosition.Y
-                    local CurrentCanvasPosition = Options.Parent.Parent.CanvasPosition
+                    local CurrentCanvasPosition = gsCanvasOf(Options.Parent)
                     --
                     if MainUICurrentY ~= MainUIStartingY then
                         MainUIStartingY = MainUICurrentY
@@ -5077,7 +5092,7 @@ do -- Library
                 --
                 Library:Connection(Options.MainUI:GetPropertyChangedSignal("AbsoluteSize"), function()
                     if Keybind.ActiveFrame then
-                        KeybindModePickerOutline.Visible = Library:ScrollingCheck(Options.Parent.Parent, KeybindChecker)
+                        KeybindModePickerOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), KeybindChecker)
                     end
                     --
                     Keybind:UpdateSize()
@@ -5087,12 +5102,12 @@ do -- Library
                     Keybind:UpdateSize()
                 end)
                 --
-                if Options.Parent.Parent:IsA("ScrollingFrame") then
-                    Library:Connection(Options.Parent.Parent:GetPropertyChangedSignal("CanvasPosition"), function()
+                if gsFindScroller(Options.Parent) then
+                    Library:Connection(gsFindScroller(Options.Parent):GetPropertyChangedSignal("CanvasPosition"), function()
                         Keybind:UpdateSize()
                         --
                         if Keybind.ActiveFrame then
-                            KeybindModePickerOutline.Visible = Library:ScrollingCheck(Options.Parent.Parent, KeybindChecker)
+                            KeybindModePickerOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), KeybindChecker)
                         end
                     end)
                 end
@@ -5754,7 +5769,7 @@ do -- Library
                 MultiBoxMainOutline.Position = UDim2.new(0, MultiBoxOutline_5.AbsolutePosition.X, 0, ((MultiBoxOutline_5.AbsolutePosition.Y + MultiBoxOutline_5.AbsoluteSize.Y) + GuiService:GetGuiInset().Y + 2))
                 --
                 if MultiBox.Open then
-                    MultiBoxMainOutline.Visible = Library:ScrollingCheck(Options.Parent, MultiBoxChecker)
+                    MultiBoxMainOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), MultiBoxChecker)
                 end
             end
             --
@@ -5767,7 +5782,7 @@ do -- Library
             local StartingY = PreviewMultiBox_5.AbsolutePosition.Y
             local MainUIStartingX = Options.MainUI.AbsolutePosition.X
             local MainUIStartingY = Options.MainUI.AbsolutePosition.Y
-            local StartingCanvasPosition = Options.Parent.CanvasPosition
+            local StartingCanvasPosition = gsCanvasOf(Options.Parent)
             --
             Library:Connection(PreviewMultiBox_5:GetPropertyChangedSignal("AbsolutePosition"), function()
                 if not MultiBox.Open then return end
@@ -5776,7 +5791,7 @@ do -- Library
                 local CurrentY = PreviewMultiBox_5.AbsolutePosition.Y
                 local MainUICurrentX = Options.MainUI.AbsolutePosition.X
                 local MainUICurrentY = Options.MainUI.AbsolutePosition.Y
-                local CurrentCanvasPosition = Options.Parent.CanvasPosition
+                local CurrentCanvasPosition = gsCanvasOf(Options.Parent)
                 --
                 if MainUICurrentX ~= MainUIStartingX or MainUICurrentY ~= MainUIStartingY then
                     MainUIStartingX = MainUICurrentX
@@ -5807,8 +5822,8 @@ do -- Library
                 StartingY = CurrentY
             end)
             --
-            if Options.Parent:IsA("ScrollingFrame") then
-                Library:Connection(Options.Parent:GetPropertyChangedSignal("CanvasPosition"), function()
+            if gsFindScroller(Options.Parent) then
+                Library:Connection(gsFindScroller(Options.Parent):GetPropertyChangedSignal("CanvasPosition"), function()
                     MultiBox:Update()
                 end)
             end
@@ -6218,7 +6233,7 @@ do -- Library
                 DropdownMainOutline.Position = UDim2.new(0, DropdownOutline_5.AbsolutePosition.X, 0, ((DropdownOutline_5.AbsolutePosition.Y + DropdownOutline_5.AbsoluteSize.Y) + GuiService:GetGuiInset().Y + 2))
                 --
                 if Dropdown.Open then
-                    DropdownMainOutline.Visible = Library:ScrollingCheck(Options.Parent, DropdownChecker)
+                    DropdownMainOutline.Visible = Library:ScrollingCheck(gsFindScroller(Options.Parent), DropdownChecker)
                 end
             end
             --
@@ -6231,7 +6246,7 @@ do -- Library
             local StartingY = PreviewDropdown_5.AbsolutePosition.Y
             local MainUIStartingX = Options.MainUI.AbsolutePosition.X
             local MainUIStartingY = Options.MainUI.AbsolutePosition.Y
-            local StartingCanvasPosition = Options.Parent.CanvasPosition
+            local StartingCanvasPosition = gsCanvasOf(Options.Parent)
             --
             Library:Connection(PreviewDropdown_5:GetPropertyChangedSignal("AbsolutePosition"), function()
                 if not Dropdown.Open then return end
@@ -6240,7 +6255,7 @@ do -- Library
                 local CurrentY = PreviewDropdown_5.AbsolutePosition.Y
                 local MainUICurrentX = Options.MainUI.AbsolutePosition.X
                 local MainUICurrentY = Options.MainUI.AbsolutePosition.Y
-                local CurrentCanvasPosition = Options.Parent.CanvasPosition
+                local CurrentCanvasPosition = gsCanvasOf(Options.Parent)
                 --
                 if MainUICurrentX ~= MainUIStartingX or MainUICurrentY ~= MainUIStartingY then
                     MainUIStartingX = MainUICurrentX
@@ -6271,8 +6286,8 @@ do -- Library
                 StartingY = CurrentY
             end)
             --
-            if Options.Parent:IsA("ScrollingFrame") then
-                Library:Connection(Options.Parent:GetPropertyChangedSignal("CanvasPosition"), function()
+            if gsFindScroller(Options.Parent) then
+                Library:Connection(gsFindScroller(Options.Parent):GetPropertyChangedSignal("CanvasPosition"), function()
                     Dropdown:Update()
                 end)
             end
