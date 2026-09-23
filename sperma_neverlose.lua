@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: GAMESENSE GUI build4 (fix: dropdown CanvasPosition)")
+print("[SpermaHub] сборка: GAMESENSE GUI build5 (fix: stale windows cleanup)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -87,6 +87,27 @@ pcall(function()
         getgenv().SpermaHubNLGui:Destroy()
         getgenv().SpermaHubNLGui = nil
     end
+end)
+
+-- уничтожить прошлые gamesense-окна (после старого краша недостроенное окно остаётся висеть
+-- и прячет новое полное меню — теперь при каждом запуске всё подчищается)
+pcall(function()
+    local function sweep(parent)
+        if not parent then return end
+        for _, g in ipairs(parent:GetChildren()) do
+            if g:IsA("ScreenGui") and (g.Name:find("^gamesense") or g.Name == "SpermaHubGs") then
+                g:Destroy()
+            end
+        end
+    end
+    local cg = game:GetService("CoreGui")
+    pcall(sweep, cg)
+    pcall(function() sweep(cg:FindFirstChild("RobloxGui")) end)
+    pcall(function() sweep(LP and LP:FindFirstChild("PlayerGui")) end)
+    pcall(function() if gethui then sweep(gethui()) end end)
+    pcall(function()
+        if getgenv and getgenv().Library and getgenv().Library.Unload then getgenv().Library:Unload() end
+    end)
 end)
 pcall(function()
     local old = workspace:FindFirstChild("SpermaJesus")
