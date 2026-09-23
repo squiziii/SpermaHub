@@ -12,7 +12,7 @@
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: GAMESENSE GUI build5 (fix: stale windows cleanup)")
+print("[SpermaHub] сборка: GAMESENSE GUI build6 (fix: tab icons hug title)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -8267,8 +8267,8 @@ do -- Library
         local TabBar = Library:CreateObject("Frame", {
             Name = "TabBar1",
             BackgroundTransparency = 1,
-            Position = UDim2.new(0, 110, 0, 2),
-            Size = UDim2.new(1, -120, 0, 24),
+            Position = UDim2.new(0, 80, 0, 2),
+            Size = UDim2.new(1, -90, 0, 24),
             ZIndex = 2,
             Parent = MainFrame,
         })
