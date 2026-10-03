@@ -16,372 +16,885 @@ if getgenv then getgenv().SpermaHubRunning = true end
 --   Server:        Bypass (Anti-Cheat Bypass) | Server (Rejoin/Hop/Copy ID)
 --   Miscellaneous: Configs | Script | Key Binds (клавиши/мышь/колёсико) + Target HUD
 -- Управление: RightShift = скрыть/показать меню
--- KEY SYSTEM: ключи «sperma» (основной) и «eniloveslo» (резерв), живут 24 часа
+-- KEY SYSTEM v2.0: админ-пароль «1337» (админка: генератор ключей), базовые ключи «sperma»/«eniloveslo» вечные
 
 --// ============================================================
---// SPERMAHUB KEY SYSTEM v1.0
---// Два ключа: основной + запасной
+--// SPERMAHUB KEY SYSTEM v2.0
+--// Админ-панель + генератор временных ключей
+--// (встроена; фиксы: клики «Час»/«День» — сдвиг индексов GetChildren;
+--//  math.huge в JSON (ключи «Навсегда» не сохранялись); CoreGui через GetService)
 --// ============================================================
-local LocalPlayer = game:GetService("Players").LocalPlayer
 
 local KeySystem = {
-    ValidKeys = {
-        ["sperma"] = true,      -- Основной ключ (твой)
-        ["eniloveslo"] = true,  -- Резервный (придуманный)
+    --// Конфигурация
+    Config = {
+        AdminPassword = "1337",        -- Пароль от админки
+        MaxAttempts = 3,               -- Попыток до кика
+        SaveKeys = true,               -- Сохранять ключи в файл
+        KeysFile = "sperma_keys.json", -- Файл с ключами
+        Debug = false,
     },
-    Settings = {
-        MaxAttempts = 3,           -- Максимум попыток до кика
-        KeyExpireHours = 24,       -- Ключ живёт сутки после ввода
-        SaveKey = true,            -- Сохранять ключ между сессиями
-        FileName = "sperma_key.cfg", -- Файл для сохранения
-        Debug = false,             -- Принты в консоль
+
+    --// Типы ключей
+    KeyTypes = {
+        {Name = "Навсегда", Duration = math.huge, Color = Color3.fromRGB(255, 215, 0)},
+        {Name = "Неделя", Duration = 7 * 24 * 3600, Color = Color3.fromRGB(147, 112, 219)},
+        {Name = "День", Duration = 24 * 3600, Color = Color3.fromRGB(100, 149, 237)},
+        {Name = "Час", Duration = 3600, Color = Color3.fromRGB(255, 165, 0)},
     },
+
+    --// Состояние
     State = {
         Attempts = 0,
         Authenticated = false,
-        KeyInput = "",
-        ExpireTime = 0,
-        KeyUsed = nil,
+        IsAdmin = false,
+        CurrentKey = nil,
+        KeysDB = {}, -- {key = {type, created, expires, used}}
     }
 }
 
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
+local CoreGuiSvc = game:GetService("CoreGui")
+pcall(function() math.randomseed(tick() % 1 * 1e6 + os.clock() * 1e3) end)
+
 --// Хелперы
 local function ksPrint(msg)
-    if KeySystem.Settings.Debug then
+    if KeySystem.Config.Debug then
         print("[SpermaHub Key] " .. msg)
     end
 end
 
 local function ksNotify(title, msg, duration)
-    print(("[SpermaHub] %s: %s"):format(title, msg))
+    if toastImpl then
+        pcall(toastImpl, title, msg)
+    else
+        print(("[SpermaHub] %s: %s"):format(title, msg))
+    end
+end
+
+--// Генерация случайного ключа
+local function GenerateKeyString(length)
+    length = length or 16
+    local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    local result = {}
+    for i = 1, length do
+        local rand = math.random(1, #chars)
+        table.insert(result, chars:sub(rand, rand))
+    end
+    return table.concat(result)
+end
+
+--// Сохранение/загрузка ключей
+--  фикс: math.huge не сериализуется в JSON → в файле храним как -1
+function KeySystem:SaveKeys()
+    if not self.Config.SaveKeys or not writefile then return end
+
+    pcall(function()
+        local safe = {}
+        for k, d in pairs(self.State.KeysDB) do
+            local c = {}
+            for f, v in pairs(d) do
+                c[f] = (v == math.huge and -1) or v
+            end
+            safe[k] = c
+        end
+        writefile(self.Config.KeysFile, HttpService:JSONEncode(safe))
+    end)
+end
+
+function KeySystem:LoadKeys()
+    if not self.Config.SaveKeys or not readfile then return end
+
+    local ok, data = pcall(function()
+        return readfile(self.Config.KeysFile)
+    end)
+
+    if ok and data then
+        local decoded = nil
+        pcall(function() decoded = HttpService:JSONDecode(data) end)
+        if type(decoded) == "table" then
+            for _, d in pairs(decoded) do
+                if d.expires == -1 then d.expires = math.huge end
+            end
+            self.State.KeysDB = decoded
+            ksPrint("Loaded " .. self:GetKeyCount() .. " keys")
+        end
+    end
+end
+
+function KeySystem:GetKeyCount()
+    local count = 0
+    for _ in pairs(self.State.KeysDB) do count = count + 1 end
+    return count
+end
+
+--// Генерация нового ключа
+function KeySystem:GenerateKey(keyTypeIndex)
+    local keyType = self.KeyTypes[keyTypeIndex]
+    if not keyType then return nil end
+
+    local newKey = GenerateKeyString(16)
+    local now = tick()
+
+    self.State.KeysDB[newKey] = {
+        type = keyType.Name,
+        typeIndex = keyTypeIndex,
+        created = now,
+        expires = keyType.Duration == math.huge and math.huge or (now + keyType.Duration),
+        used = false,
+        generatedBy = "admin"
+    }
+
+    self:SaveKeys()
+    ksPrint("Generated " .. keyType.Name .. " key: " .. newKey)
+
+    return newKey, keyType
 end
 
 --// Проверка ключа
 function KeySystem:ValidateKey(key)
-    key = string.lower(string.gsub(tostring(key), "%s+", "")) -- Чистим пробелы, lower
-    if self.ValidKeys[key] then
+    key = string.gsub(tostring(key), "%s+", "") -- Чистим пробелы
+
+    --// Админ-пароль
+    if key == self.Config.AdminPassword then
+        self.State.IsAdmin = true
         self.State.Authenticated = true
-        self.State.KeyUsed = key
-        self.State.ExpireTime = tick() + (self.Settings.KeyExpireHours * 3600)
-        if self.Settings.SaveKey and writefile then
-            pcall(function()
-                writefile(self.Settings.FileName, key .. "|" .. tostring(self.State.ExpireTime))
-            end)
+        ksPrint("Admin access granted")
+        return true, "admin"
+    end
+
+    --// Проверка в базе
+    local keyData = self.State.KeysDB[key]
+    if keyData then
+        local now = tick()
+
+        -- Проверка срока
+        if now > keyData.expires then
+            ksNotify("Key System", "Ключ истёк!", 3)
+            return false, "expired"
         end
-        ksPrint("Key accepted: " .. key)
-        return true
-    end
-    self.State.Attempts = self.State.Attempts + 1
-    ksPrint("Invalid key, attempt " .. self.State.Attempts)
-    if self.State.Attempts >= self.Settings.MaxAttempts then
-        ksNotify("Key System", "Слишком много попыток. Кик.", 5)
-        task.wait(1)
-        pcall(function() LocalPlayer:Kick("SpermaHub: Invalid key attempts exceeded") end)
-    end
-    return false
-end
 
---// Проверка сохранённого ключа
-function KeySystem:LoadSavedKey()
-    if not self.Settings.SaveKey or not readfile then return false end
-    if isfile and not isfile(self.Settings.FileName) then
-        ksPrint("нет файла ключа, показываю GUI")
-        return false
-    end
-    local ok, data = pcall(function()
-        return readfile(self.Settings.FileName)
-    end)
-    if not ok or not data then return false end
-    local key, expire = string.match(data, "([^|]+)|(.+)")
-    if not key or not expire then return false end
-    expire = tonumber(expire)
-    if not expire or tick() > expire then
-        ksPrint("Saved key expired")
-        return false
-    end
-    if self.ValidKeys[key] then
+        -- Помечаем использованным (одноразовый)
+        if not keyData.used then
+            keyData.used = true
+            self:SaveKeys()
+        end
+
         self.State.Authenticated = true
-        self.State.KeyUsed = key
-        self.State.ExpireTime = expire
-        ksPrint("Loaded saved key")
+        self.State.CurrentKey = key
+        self.State.KeyType = keyData.type
+        ksPrint("Key accepted: " .. keyData.type)
+        return true, keyData.type
+    end
+
+    --// Неверный ключ
+    self.State.Attempts = self.State.Attempts + 1
+
+    if self.State.Attempts >= self.Config.MaxAttempts then
+        ksNotify("Key System", "Слишком много попыток!", 3)
+        task.wait(1)
+        LocalPlayer:Kick("SpermaHub: Invalid key attempts exceeded")
+    end
+
+    return false, "invalid"
+end
+
+--// Удаление ключа
+function KeySystem:RevokeKey(key)
+    if self.State.KeysDB[key] then
+        self.State.KeysDB[key] = nil
+        self:SaveKeys()
         return true
     end
     return false
 end
 
---// GUI для ввода ключа (стиль WindUI: macOS-топбар, тёмная карточка, градиент-кнопка)
-function KeySystem:CreateGUI()
-    local guiParent = nil
-    pcall(function() if gethui then guiParent = gethui() end end)
-    if not guiParent then
-        local okCg, cg = pcall(function() return game.CoreGui end)
-        if okCg and cg then guiParent = cg end
+--// Очистка истёкших ключей
+function KeySystem:CleanExpired()
+    local now = tick()
+    local removed = 0
+    for key, data in pairs(self.State.KeysDB) do
+        if now > data.expires then
+            self.State.KeysDB[key] = nil
+            removed = removed + 1
+        end
     end
-    if not guiParent then guiParent = LocalPlayer:WaitForChild("PlayerGui") end
-    ksPrint("GUI parent = " .. tostring(guiParent))
+    if removed > 0 then
+        self:SaveKeys()
+    end
+    return removed
+end
 
-    local oldGui = guiParent:FindFirstChild("SpermaKeySystem")
-    if oldGui then oldGui:Destroy() end
+--// ============================================================
+--// GUI - ПОЛЬЗОВАТЕЛЬСКАЯ ПАНЕЛЬ
+--// ============================================================
 
-    -- палитра близка к теме WindUI Dark
-    local C_BG      = Color3.fromRGB(16, 16, 21)
-    local C_CARD    = Color3.fromRGB(22, 22, 29)
-    local C_TOP     = Color3.fromRGB(25, 25, 32)
-    local C_LINE    = Color3.fromRGB(45, 45, 58)
-    local C_ACCENT1 = Color3.fromRGB(84, 95, 246)
-    local C_ACCENT2 = Color3.fromRGB(157, 92, 246)
-    local C_TEXT    = Color3.fromRGB(240, 240, 245)
-    local C_DIM     = Color3.fromRGB(150, 150, 165)
-    local C_RED     = Color3.fromRGB(236, 95, 88)
-    local C_YEL     = Color3.fromRGB(245, 191, 79)
-    local C_GRN     = Color3.fromRGB(80, 200, 120)
-    local C_OK      = Color3.fromRGB(100, 220, 140)
-    local C_ERR     = Color3.fromRGB(255, 95, 95)
+function KeySystem:CreateUserGUI()
+    if CoreGuiSvc:FindFirstChild("SpermaKeySystem") then
+        CoreGuiSvc.SpermaKeySystem:Destroy()
+    end
 
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "SpermaKeySystem"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ScreenGui.DisplayOrder = 999
-    ScreenGui.Parent = guiParent
+    ScreenGui.Parent = CoreGuiSvc
 
-    --// Карточка
+    --// Main Frame
     local Main = Instance.new("Frame")
     Main.Name = "Main"
-    Main.Size = UDim2.new(0, 380, 0, 226)
-    Main.Position = UDim2.new(0.5, -190, 0.5, -113)
-    Main.BackgroundColor3 = C_BG
+    Main.Size = UDim2.new(0, 340, 0, 200)
+    Main.Position = UDim2.new(0.5, -170, 0.5, -100)
+    Main.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
     Main.BorderSizePixel = 0
     Main.Active = true
     Main.Draggable = true
     Main.Parent = ScreenGui
-    local MainCorner = Instance.new("UICorner")
-    MainCorner.CornerRadius = UDim.new(0, 12)
-    MainCorner.Parent = Main
-    local MainStroke = Instance.new("UIStroke")
-    MainStroke.Color = C_LINE
-    MainStroke.Transparency = 0.3
-    MainStroke.Thickness = 1
-    MainStroke.Parent = Main
 
-    --// Топбар с macOS-точками
-    local Top = Instance.new("Frame")
-    Top.Name = "Topbar"
-    Top.Size = UDim2.new(1, 0, 0, 40)
-    Top.BackgroundColor3 = C_TOP
-    Top.BorderSizePixel = 0
-    Top.Parent = Main
-    local TopCorner = Instance.new("UICorner")
-    TopCorner.CornerRadius = UDim.new(0, 12)
-    TopCorner.Parent = Top
-    local TopFix = Instance.new("Frame")
-    TopFix.Size = UDim2.new(1, 0, 0, 12)
-    TopFix.Position = UDim2.new(0, 0, 1, -12)
-    TopFix.BackgroundColor3 = C_TOP
-    TopFix.BorderSizePixel = 0
-    TopFix.Parent = Top
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 10)
+    UICorner.Parent = Main
 
-    local function macDot(x, color, isClose)
-        local d = Instance.new("TextButton")
-        d.Size = UDim2.new(0, 12, 0, 12)
-        d.Position = UDim2.new(0, x, 0, 14)
-        d.BackgroundColor3 = color
-        d.BorderSizePixel = 0
-        d.Text = ""
-        d.AutoButtonColor = false
-        d.Parent = Top
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(1, 0)
-        c.Parent = d
-        if isClose then
-            d.MouseButton1Click:Connect(function()
-                pcall(function() ScreenGui:Destroy() end)
-            end)
-        end
-        return d
-    end
-    macDot(14, C_RED, true)
-    macDot(32, C_YEL, false)
-    macDot(50, C_GRN, false)
+    local Shadow = Instance.new("ImageLabel")
+    Shadow.Size = UDim2.new(1, 40, 1, 40)
+    Shadow.Position = UDim2.new(0, -20, 0, -20)
+    Shadow.BackgroundTransparency = 1
+    Shadow.Image = "rbxassetid://5554236805"
+    Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    Shadow.ImageTransparency = 0.4
+    Shadow.ScaleType = Enum.ScaleType.Slice
+    Shadow.SliceCenter = Rect.new(23, 23, 277, 277)
+    Shadow.Parent = Main
+
+    --// Title
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Size = UDim2.new(1, 0, 0, 40)
+    TitleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+    TitleBar.BorderSizePixel = 0
+    TitleBar.Parent = Main
+
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 10)
+    TitleCorner.Parent = TitleBar
+
+    local TitleFix = Instance.new("Frame")
+    TitleFix.Size = UDim2.new(1, 0, 0, 10)
+    TitleFix.Position = UDim2.new(0, 0, 1, -10)
+    TitleFix.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+    TitleFix.BorderSizePixel = 0
+    TitleFix.Parent = TitleBar
 
     local Title = Instance.new("TextLabel")
-    Title.Size = UDim2.new(1, -140, 1, 0)
-    Title.Position = UDim2.new(0, 70, 0, 0)
+    Title.Size = UDim2.new(1, -20, 1, 0)
+    Title.Position = UDim2.new(0, 15, 0, 0)
     Title.BackgroundTransparency = 1
-    Title.Text = "SpermaHub  |  Key System"
-    Title.TextColor3 = C_TEXT
+    Title.Text = "🔑 SPERMAHUB ACCESS"
+    Title.TextColor3 = Color3.fromRGB(255, 100, 100)
     Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 14
+    Title.TextSize = 16
     Title.TextXAlignment = Enum.TextXAlignment.Left
-    Title.Parent = Top
-
-    --// Акцентная полоска под топбар (градиент, как у WindUI)
-    local Accent = Instance.new("Frame")
-    Accent.Size = UDim2.new(1, 0, 0, 2)
-    Accent.Position = UDim2.new(0, 0, 0, 40)
-    Accent.BackgroundColor3 = C_ACCENT1
-    Accent.BorderSizePixel = 0
-    Accent.Parent = Main
-    local AccentG = Instance.new("UIGradient")
-    AccentG.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C_ACCENT1),
-        ColorSequenceKeypoint.new(1, C_ACCENT2),
-    })
-    AccentG.Parent = Accent
+    Title.Parent = TitleBar
 
     --// Status
     local Status = Instance.new("TextLabel")
-    Status.Size = UDim2.new(1, -48, 0, 20)
-    Status.Position = UDim2.new(0, 24, 0, 60)
+    Status.Size = UDim2.new(1, -40, 0, 20)
+    Status.Position = UDim2.new(0, 20, 0, 50)
     Status.BackgroundTransparency = 1
     Status.Text = "Введите ключ доступа:"
-    Status.TextColor3 = C_DIM
+    Status.TextColor3 = Color3.fromRGB(200, 200, 200)
     Status.Font = Enum.Font.Gotham
-    Status.TextSize = 12.5
+    Status.TextSize = 12
     Status.TextXAlignment = Enum.TextXAlignment.Left
     Status.Parent = Main
 
-    --// Input Box
+    --// Input
     local InputOutline = Instance.new("Frame")
-    InputOutline.Size = UDim2.new(1, -48, 0, 40)
-    InputOutline.Position = UDim2.new(0, 24, 0, 86)
-    InputOutline.BackgroundColor3 = C_CARD
+    InputOutline.Size = UDim2.new(1, -40, 0, 40)
+    InputOutline.Position = UDim2.new(0, 20, 0, 75)
+    InputOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     InputOutline.BorderSizePixel = 0
     InputOutline.Parent = Main
+
     local InputCorner = Instance.new("UICorner")
-    InputCorner.CornerRadius = UDim.new(0, 8)
+    InputCorner.CornerRadius = UDim.new(0, 6)
     InputCorner.Parent = InputOutline
-    local InputStroke = Instance.new("UIStroke")
-    InputStroke.Color = C_LINE
-    InputStroke.Transparency = 0.2
-    InputStroke.Thickness = 1
-    InputStroke.Parent = InputOutline
 
     local Input = Instance.new("TextBox")
-    Input.Size = UDim2.new(1, -24, 1, 0)
-    Input.Position = UDim2.new(0, 12, 0, 0)
+    Input.Size = UDim2.new(1, -20, 1, 0)
+    Input.Position = UDim2.new(0, 10, 0, 0)
     Input.BackgroundTransparency = 1
     Input.Text = ""
-    Input.PlaceholderText = "key here..."
-    Input.TextColor3 = C_TEXT
-    Input.PlaceholderColor3 = Color3.fromRGB(90, 90, 105)
+    Input.PlaceholderText = "XXXX-XXXX-XXXX-XXXX"
+    Input.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Input.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
     Input.Font = Enum.Font.GothamBold
     Input.TextSize = 14
-    Input.TextXAlignment = Enum.TextXAlignment.Left
+    Input.TextXAlignment = Enum.TextXAlignment.Center
     Input.ClearTextOnFocus = false
     Input.Parent = InputOutline
 
-    --// Submit (градиент как у WindUI primary)
+    --// Submit Button
     local SubmitBtn = Instance.new("TextButton")
-    SubmitBtn.Size = UDim2.new(1, -48, 0, 40)
-    SubmitBtn.Position = UDim2.new(0, 24, 0, 140)
-    SubmitBtn.BackgroundColor3 = C_ACCENT1
+    SubmitBtn.Size = UDim2.new(1, -40, 0, 40)
+    SubmitBtn.Position = UDim2.new(0, 20, 0, 125)
+    SubmitBtn.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
     SubmitBtn.Text = "UNLOCK"
-    SubmitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SubmitBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
     SubmitBtn.Font = Enum.Font.GothamBold
     SubmitBtn.TextSize = 14
     SubmitBtn.BorderSizePixel = 0
-    SubmitBtn.AutoButtonColor = false
     SubmitBtn.Parent = Main
+
     local SubmitCorner = Instance.new("UICorner")
-    SubmitCorner.CornerRadius = UDim.new(0, 8)
+    SubmitCorner.CornerRadius = UDim.new(0, 6)
     SubmitCorner.Parent = SubmitBtn
-    local SubmitG = Instance.new("UIGradient")
-    SubmitG.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C_ACCENT1),
-        ColorSequenceKeypoint.new(1, C_ACCENT2),
-    })
-    SubmitG.Parent = SubmitBtn
-    SubmitBtn.MouseEnter:Connect(function() SubmitBtn.BackgroundColor3 = Color3.fromRGB(105, 115, 255) end)
-    SubmitBtn.MouseLeave:Connect(function() SubmitBtn.BackgroundColor3 = C_ACCENT1 end)
 
     --// Attempts
     local AttemptsLabel = Instance.new("TextLabel")
-    AttemptsLabel.Size = UDim2.new(1, -48, 0, 15)
-    AttemptsLabel.Position = UDim2.new(0, 24, 0, 192)
+    AttemptsLabel.Size = UDim2.new(1, -40, 0, 15)
+    AttemptsLabel.Position = UDim2.new(0, 20, 0, 172)
     AttemptsLabel.BackgroundTransparency = 1
-    AttemptsLabel.Text = "Attempts: 0/" .. KeySystem.Settings.MaxAttempts
-    AttemptsLabel.TextColor3 = Color3.fromRGB(90, 90, 105)
+    AttemptsLabel.Text = "Попытки: 0/" .. KeySystem.Config.MaxAttempts
+    AttemptsLabel.TextColor3 = Color3.fromRGB(100, 100, 120)
     AttemptsLabel.Font = Enum.Font.Gotham
     AttemptsLabel.TextSize = 10
     AttemptsLabel.TextXAlignment = Enum.TextXAlignment.Left
     AttemptsLabel.Parent = Main
 
-    --// Логика (та же: in —> ValidateKey, аут —> shake + счётчик)
+    --// Логика
     local function TryUnlock()
         local key = Input.Text
         if #key == 0 then return end
-        if KeySystem:ValidateKey(key) then
-            Status.Text = "✓ Access granted!"
-            Status.TextColor3 = C_OK
-            SubmitBtn.Text = "LOADING..."
-            task.wait(0.5)
-            pcall(function() ScreenGui:Destroy() end)
+
+        local success, keyType = KeySystem:ValidateKey(key)
+
+        if success then
+            if keyType == "admin" then
+                Status.Text = "✓ Admin access!"
+                Status.TextColor3 = Color3.fromRGB(100, 255, 100)
+                SubmitBtn.Text = "OPENING ADMIN..."
+                SubmitBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+
+                task.wait(0.5)
+                ScreenGui:Destroy()
+                KeySystem:CreateAdminGUI()
+            else
+                Status.Text = "✓ Access granted! [" .. tostring(keyType) .. "]"
+                Status.TextColor3 = Color3.fromRGB(100, 255, 100)
+                SubmitBtn.Text = "LOADING..."
+                SubmitBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+
+                task.wait(0.5)
+                ScreenGui:Destroy()
+
+                -- Запуск основного скрипта (если оформлен как функция)
+                if _G.SpermaHubMain then
+                    pcall(_G.SpermaHubMain)
+                end
+            end
         else
-            Status.Text = "✗ Invalid key!"
-            Status.TextColor3 = C_ERR
+            Status.Text = "✗ Неверный ключ!"
+            Status.TextColor3 = Color3.fromRGB(255, 80, 80)
             Input.Text = ""
-            AttemptsLabel.Text = "Attempts: " .. KeySystem.State.Attempts .. "/" .. KeySystem.Settings.MaxAttempts
+            AttemptsLabel.Text = "Попытки: " .. KeySystem.State.Attempts .. "/" .. KeySystem.Config.MaxAttempts
+
+            -- Shake
             local originalPos = Main.Position
-            for _ = 1, 5 do
+            for i = 1, 5 do
                 Main.Position = originalPos + UDim2.new(0, math.random(-5, 5), 0, 0)
                 task.wait(0.03)
             end
             Main.Position = originalPos
+
             task.delay(1.5, function()
                 if Status.Parent then
                     Status.Text = "Введите ключ доступа:"
-                    Status.TextColor3 = C_DIM
+                    Status.TextColor3 = Color3.fromRGB(200, 200, 200)
                 end
             end)
         end
     end
 
     SubmitBtn.MouseButton1Click:Connect(function() pcall(TryUnlock) end)
-    Input.FocusLost:Connect(function(enterPressed)
-        if enterPressed then pcall(TryUnlock) end
+    Input.FocusLost:Connect(function(enter) if enter then pcall(TryUnlock) end end)
+
+    task.delay(0.5, function() pcall(function() Input:CaptureFocus() end) end)
+
+    return ScreenGui
+end
+
+--// ============================================================
+--// GUI - АДМИН ПАНЕЛЬ
+--// ============================================================
+
+function KeySystem:CreateAdminGUI()
+    if CoreGuiSvc:FindFirstChild("SpermaAdmin") then
+        CoreGuiSvc.SpermaAdmin:Destroy()
+    end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "SpermaAdmin"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.DisplayOrder = 1000
+    ScreenGui.Parent = CoreGuiSvc
+
+    --// Main Frame
+    local Main = Instance.new("Frame")
+    Main.Name = "Main"
+    Main.Size = UDim2.new(0, 500, 0, 400)
+    Main.Position = UDim2.new(0.5, -250, 0.5, -200)
+    Main.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    Main.BorderSizePixel = 0
+    Main.Active = true
+    Main.Draggable = true
+    Main.Parent = ScreenGui
+
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 10)
+    UICorner.Parent = Main
+
+    local Shadow = Instance.new("ImageLabel")
+    Shadow.Size = UDim2.new(1, 40, 1, 40)
+    Shadow.Position = UDim2.new(0, -20, 0, -20)
+    Shadow.BackgroundTransparency = 1
+    Shadow.Image = "rbxassetid://5554236805"
+    Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    Shadow.ImageTransparency = 0.4
+    Shadow.ScaleType = Enum.ScaleType.Slice
+    Shadow.SliceCenter = Rect.new(23, 23, 277, 277)
+    Shadow.Parent = Main
+
+    --// Title
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Size = UDim2.new(1, 0, 0, 40)
+    TitleBar.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+    TitleBar.BorderSizePixel = 0
+    TitleBar.Parent = Main
+
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 10)
+    TitleCorner.Parent = TitleBar
+
+    local TitleFix = Instance.new("Frame")
+    TitleFix.Size = UDim2.new(1, 0, 0, 10)
+    TitleFix.Position = UDim2.new(0, 0, 1, -10)
+    TitleFix.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+    TitleFix.BorderSizePixel = 0
+    TitleFix.Parent = TitleBar
+
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, -20, 1, 0)
+    Title.Position = UDim2.new(0, 15, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = "👑 SPERMAHUB ADMIN"
+    Title.TextColor3 = Color3.fromRGB(20, 20, 30)
+    Title.Font = Enum.Font.GothamBold
+    Title.TextSize = 16
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Parent = TitleBar
+
+    --// Close
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+    CloseBtn.Position = UDim2.new(1, -35, 0, 5)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    CloseBtn.Text = "×"
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.TextSize = 18
+    CloseBtn.BorderSizePixel = 0
+    CloseBtn.Parent = TitleBar
+
+    local CloseCorner = Instance.new("UICorner")
+    CloseCorner.CornerRadius = UDim.new(0, 6)
+    CloseCorner.Parent = CloseBtn
+
+    --// Content
+    local Content = Instance.new("Frame")
+    Content.Size = UDim2.new(1, -20, 1, -60)
+    Content.Position = UDim2.new(0, 10, 0, 50)
+    Content.BackgroundTransparency = 1
+    Content.Parent = Main
+
+    --// Левая панель - Генератор
+    local LeftPanel = Instance.new("Frame")
+    LeftPanel.Size = UDim2.new(0.45, -5, 1, 0)
+    LeftPanel.Position = UDim2.new(0, 0, 0, 0)
+    LeftPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+    LeftPanel.BorderSizePixel = 0
+    LeftPanel.ClipsDescendants = true
+    LeftPanel.Parent = Content
+
+    local LeftCorner = Instance.new("UICorner")
+    LeftCorner.CornerRadius = UDim.new(0, 8)
+    LeftCorner.Parent = LeftPanel
+
+    local GenTitle = Instance.new("TextLabel")
+    GenTitle.Size = UDim2.new(1, -20, 0, 25)
+    GenTitle.Position = UDim2.new(0, 10, 0, 10)
+    GenTitle.BackgroundTransparency = 1
+    GenTitle.Text = "🔧 ГЕНЕРАТОР КЛЮЧЕЙ"
+    GenTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
+    GenTitle.Font = Enum.Font.GothamBold
+    GenTitle.TextSize = 14
+    GenTitle.TextXAlignment = Enum.TextXAlignment.Left
+    GenTitle.Parent = LeftPanel
+
+    --// Типы ключей
+    local KeyTypeList = Instance.new("Frame")
+    KeyTypeList.Size = UDim2.new(1, -20, 0, 130)
+    KeyTypeList.Position = UDim2.new(0, 10, 0, 40)
+    KeyTypeList.BackgroundTransparency = 1
+    KeyTypeList.Parent = LeftPanel
+
+    local UIList = Instance.new("UIListLayout")
+    UIList.Padding = UDim.new(0, 5)
+    UIList.SortOrder = Enum.SortOrder.LayoutOrder
+    UIList.Parent = KeyTypeList
+
+    local selectedType = 1
+    local typeButtons = {}
+
+    local function paintTypeButtons()
+        for j, b in ipairs(typeButtons) do
+            local isSel = (j == selectedType)
+            b.BackgroundColor3 = isSel and KeySystem.KeyTypes[j].Color or Color3.fromRGB(30, 30, 45)
+            b.TextColor3 = isSel and Color3.fromRGB(20, 20, 30) or Color3.fromRGB(200, 200, 200)
+        end
+    end
+
+    for i, keyType in ipairs(KeySystem.KeyTypes) do
+        local Btn = Instance.new("TextButton")
+        Btn.Size = UDim2.new(1, 0, 0, 25)
+        Btn.BackgroundColor3 = i == 1 and keyType.Color or Color3.fromRGB(30, 30, 45)
+        Btn.Text = "  " .. keyType.Name
+        Btn.TextColor3 = i == 1 and Color3.fromRGB(20, 20, 30) or Color3.fromRGB(200, 200, 200)
+        Btn.Font = Enum.Font.GothamSemibold
+        Btn.TextSize = 12
+        Btn.TextXAlignment = Enum.TextXAlignment.Left
+        Btn.LayoutOrder = i
+        Btn.BorderSizePixel = 0
+        Btn.AutoButtonColor = true
+        Btn.Parent = KeyTypeList
+
+        local BtnCorner = Instance.new("UICorner")
+        BtnCorner.CornerRadius = UDim.new(0, 4)
+        BtnCorner.Parent = Btn
+
+        typeButtons[i] = Btn
+
+        Btn.MouseButton1Click:Connect(function()
+            selectedType = i
+            pcall(paintTypeButtons)
+        end)
+    end
+
+    --// Generate Button
+    local GenBtn = Instance.new("TextButton")
+    GenBtn.Size = UDim2.new(1, -20, 0, 35)
+    GenBtn.Position = UDim2.new(0, 10, 0, 180)
+    GenBtn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+    GenBtn.Text = "СГЕНЕРИРОВАТЬ КЛЮЧ"
+    GenBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    GenBtn.Font = Enum.Font.GothamBold
+    GenBtn.TextSize = 13
+    GenBtn.BorderSizePixel = 0
+    GenBtn.Parent = LeftPanel
+
+    local GenCorner = Instance.new("UICorner")
+    GenCorner.CornerRadius = UDim.new(0, 6)
+    GenCorner.Parent = GenBtn
+
+    --// Result Box
+    local ResultBox = Instance.new("Frame")
+    ResultBox.Size = UDim2.new(1, -20, 0, 35)
+    ResultBox.Position = UDim2.new(0, 10, 0, 225)
+    ResultBox.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    ResultBox.BorderSizePixel = 0
+    ResultBox.Parent = LeftPanel
+
+    local ResultCorner = Instance.new("UICorner")
+    ResultCorner.CornerRadius = UDim.new(0, 6)
+    ResultCorner.Parent = ResultBox
+
+    local ResultText = Instance.new("TextLabel")
+    ResultText.Size = UDim2.new(1, -10, 1, 0)
+    ResultText.Position = UDim2.new(0, 5, 0, 0)
+    ResultText.BackgroundTransparency = 1
+    ResultText.Text = "Нажми Generate..."
+    ResultText.TextColor3 = Color3.fromRGB(150, 150, 170)
+    ResultText.Font = Enum.Font.GothamBold
+    ResultText.TextSize = 12
+    ResultText.TextXAlignment = Enum.TextXAlignment.Center
+    ResultText.Parent = ResultBox
+
+    --// Copy Button
+    local CopyBtn = Instance.new("TextButton")
+    CopyBtn.Size = UDim2.new(1, -20, 0, 30)
+    CopyBtn.Position = UDim2.new(0, 10, 0, 265)
+    CopyBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+    CopyBtn.Text = "📋 КОПИРОВАТЬ"
+    CopyBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    CopyBtn.Font = Enum.Font.GothamBold
+    CopyBtn.TextSize = 12
+    CopyBtn.BorderSizePixel = 0
+    CopyBtn.Visible = false
+    CopyBtn.Parent = LeftPanel
+
+    local CopyCorner = Instance.new("UICorner")
+    CopyCorner.CornerRadius = UDim.new(0, 6)
+    CopyCorner.Parent = CopyBtn
+
+    --// Stats
+    local StatsLabel = Instance.new("TextLabel")
+    StatsLabel.Size = UDim2.new(1, -20, 0, 60)
+    StatsLabel.Position = UDim2.new(0, 10, 1, -70)
+    StatsLabel.BackgroundTransparency = 1
+    StatsLabel.Text = "Всего ключей: 0\nАктивных: 0\nИстёкших: 0"
+    StatsLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
+    StatsLabel.Font = Enum.Font.Gotham
+    StatsLabel.TextSize = 11
+    StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    StatsLabel.TextYAlignment = Enum.TextYAlignment.Top
+    StatsLabel.Parent = LeftPanel
+
+    --// Правая панель - Список ключей
+    local RightPanel = Instance.new("Frame")
+    RightPanel.Size = UDim2.new(0.55, -5, 1, 0)
+    RightPanel.Position = UDim2.new(0.45, 5, 0, 0)
+    RightPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+    RightPanel.BorderSizePixel = 0
+    RightPanel.ClipsDescendants = true
+    RightPanel.Parent = Content
+
+    local RightCorner = Instance.new("UICorner")
+    RightCorner.CornerRadius = UDim.new(0, 8)
+    RightCorner.Parent = RightPanel
+
+    local ListTitle = Instance.new("TextLabel")
+    ListTitle.Size = UDim2.new(1, -20, 0, 25)
+    ListTitle.Position = UDim2.new(0, 10, 0, 10)
+    ListTitle.BackgroundTransparency = 1
+    ListTitle.Text = "📋 АКТИВНЫЕ КЛЮЧИ"
+    ListTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
+    ListTitle.Font = Enum.Font.GothamBold
+    ListTitle.TextSize = 14
+    ListTitle.TextXAlignment = Enum.TextXAlignment.Left
+    ListTitle.Parent = RightPanel
+
+    --// Refresh Button
+    local RefreshBtn = Instance.new("TextButton")
+    RefreshBtn.Size = UDim2.new(0, 80, 0, 25)
+    RefreshBtn.Position = UDim2.new(1, -90, 0, 8)
+    RefreshBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
+    RefreshBtn.Text = "🔄 Обновить"
+    RefreshBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    RefreshBtn.Font = Enum.Font.GothamBold
+    RefreshBtn.TextSize = 11
+    RefreshBtn.BorderSizePixel = 0
+    RefreshBtn.Parent = RightPanel
+
+    local RefreshCorner = Instance.new("UICorner")
+    RefreshCorner.CornerRadius = UDim.new(0, 4)
+    RefreshCorner.Parent = RefreshBtn
+
+    --// Keys List
+    local KeysScroll = Instance.new("ScrollingFrame")
+    KeysScroll.Size = UDim2.new(1, -20, 1, -80)
+    KeysScroll.Position = UDim2.new(0, 10, 0, 40)
+    KeysScroll.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    KeysScroll.BorderSizePixel = 0
+    KeysScroll.ScrollBarThickness = 4
+    KeysScroll.ScrollBarImageColor3 = Color3.fromRGB(255, 215, 0)
+    KeysScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    KeysScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    KeysScroll.Parent = RightPanel
+
+    local KeysList = Instance.new("UIListLayout")
+    KeysList.Padding = UDim.new(0, 5)
+    KeysList.Parent = KeysScroll
+
+    --// Функции
+    local function UpdateStats()
+        local total = KeySystem:GetKeyCount()
+        local active = 0
+        local expired = 0
+        local now = tick()
+
+        for _, data in pairs(KeySystem.State.KeysDB) do
+            if now > data.expires then
+                expired = expired + 1
+            else
+                active = active + 1
+            end
+        end
+
+        StatsLabel.Text = string.format("Всего ключей: %d\nАктивных: %d\nИстёкших: %d", total, active, expired)
+    end
+
+    local function RefreshKeysList()
+        for _, child in ipairs(KeysScroll:GetChildren()) do
+            if child:IsA("Frame") then child:Destroy() end
+        end
+
+        local now = tick()
+
+        for key, data in pairs(KeySystem.State.KeysDB) do
+            local isExpired = now > data.expires
+            local kt = KeySystem.KeyTypes[data.typeIndex]
+            local keyColor = isExpired and Color3.fromRGB(100, 100, 100) or (kt and kt.Color or Color3.fromRGB(255, 215, 0))
+
+            local KeyFrame = Instance.new("Frame")
+            KeyFrame.Size = UDim2.new(1, -10, 0, 50)
+            KeyFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+            KeyFrame.BorderSizePixel = 0
+            KeyFrame.Parent = KeysScroll
+
+            local KF_Corner = Instance.new("UICorner")
+            KF_Corner.CornerRadius = UDim.new(0, 4)
+            KF_Corner.Parent = KeyFrame
+
+            -- Key text
+            local KeyLabel = Instance.new("TextLabel")
+            KeyLabel.Size = UDim2.new(1, -60, 0, 20)
+            KeyLabel.Position = UDim2.new(0, 8, 0, 5)
+            KeyLabel.BackgroundTransparency = 1
+            KeyLabel.Text = key
+            KeyLabel.TextColor3 = keyColor
+            KeyLabel.Font = Enum.Font.GothamBold
+            KeyLabel.TextSize = 11
+            KeyLabel.TextXAlignment = Enum.TextXAlignment.Left
+            KeyLabel.TextTruncate = Enum.TextTruncate.AtEnd
+            KeyLabel.Parent = KeyFrame
+
+            -- Info
+            local InfoLabel = Instance.new("TextLabel")
+            InfoLabel.Size = UDim2.new(1, -60, 0, 15)
+            InfoLabel.Position = UDim2.new(0, 8, 0, 25)
+            InfoLabel.BackgroundTransparency = 1
+
+            local timeLeft = ""
+            if isExpired then
+                timeLeft = "ИСТЁК"
+            elseif data.expires == math.huge then
+                timeLeft = "Навсегда"
+            else
+                local left = data.expires - now
+                if left > 86400 then
+                    timeLeft = string.format("%.1f дн.", left / 86400)
+                elseif left > 3600 then
+                    timeLeft = string.format("%.1f ч.", left / 3600)
+                else
+                    timeLeft = string.format("%.0f мин.", left / 60)
+                end
+            end
+
+            InfoLabel.Text = string.format("%s | %s | %s", tostring(data.type), timeLeft, data.used and "Использован" or "Свежий")
+            InfoLabel.TextColor3 = isExpired and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(180, 180, 200)
+            InfoLabel.Font = Enum.Font.Gotham
+            InfoLabel.TextSize = 10
+            InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+            InfoLabel.Parent = KeyFrame
+
+            -- Delete button
+            local DelBtn = Instance.new("TextButton")
+            DelBtn.Size = UDim2.new(0, 45, 0, 20)
+            DelBtn.Position = UDim2.new(1, -50, 0, 15)
+            DelBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+            DelBtn.Text = "Удалить"
+            DelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            DelBtn.Font = Enum.Font.GothamBold
+            DelBtn.TextSize = 10
+            DelBtn.BorderSizePixel = 0
+            DelBtn.Parent = KeyFrame
+
+            local DelCorner = Instance.new("UICorner")
+            DelCorner.CornerRadius = UDim.new(0, 4)
+            DelCorner.Parent = DelBtn
+
+            DelBtn.MouseButton1Click:Connect(function()
+                KeySystem:RevokeKey(key)
+                RefreshKeysList()
+                UpdateStats()
+            end)
+        end
+
+        UpdateStats()
+    end
+
+    --// Generate logic
+    GenBtn.MouseButton1Click:Connect(function()
+        local newKey, keyType = KeySystem:GenerateKey(selectedType)
+        if newKey then
+            ResultText.Text = newKey
+            ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
+            CopyBtn.Visible = true
+            RefreshKeysList()
+        end
     end)
 
-    task.delay(0.5, function()
-        pcall(function() Input:CaptureFocus() end)
+    CopyBtn.MouseButton1Click:Connect(function()
+        if setclipboard then
+            pcall(setclipboard, ResultText.Text)
+            CopyBtn.Text = "✓ Скопировано!"
+            task.delay(1.5, function()
+                pcall(function() CopyBtn.Text = "📋 КОПИРОВАТЬ" end)
+            end)
+        end
     end)
 
-    ksPrint("GUI создано, жду ключ")
+    RefreshBtn.MouseButton1Click:Connect(function()
+        KeySystem:CleanExpired()
+        RefreshKeysList()
+    end)
+
+    CloseBtn.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
+    end)
+
+    --// Init
+    RefreshKeysList()
+
     return ScreenGui
 end
 
 --// Инициализация
 function KeySystem:Init()
-    if self:LoadSavedKey() then
-        ksNotify("Key System", "Ключ загружен из сохранения", 2)
-        return true
+    self:LoadKeys()
+    self:CleanExpired()
+
+    --// Сиды: вечные базовые ключи, чтобы вход был всегда (если база пустая)
+    if not next(self.State.KeysDB) then
+        self.State.KeysDB["sperma"] = { type = "Навсегда", typeIndex = 1, created = tick(), expires = math.huge, used = false, generatedBy = "seed" }
+        self.State.KeysDB["eniloveslo"] = { type = "Навсегда", typeIndex = 1, created = tick(), expires = math.huge, used = false, generatedBy = "seed" }
+        self:SaveKeys()
     end
-    self:CreateGUI()
-    return false
+
+    self:CreateUserGUI()
 end
 
---// Проверка аутентификации
-function KeySystem:IsAuthenticated()
-    if not self.State.Authenticated then return false end
-    if tick() > self.State.ExpireTime then
-        self.State.Authenticated = false
-        ksNotify("Key System", "Ключ истёк, введите снова", 3)
-        return false
-    end
-    return true
-end
+--// Запуск
+KeySystem:Init()
 
---// Запуск (key-гейт наше, проверенный; показывает key-окно до всего)
-local authSuccess = KeySystem:Init()
-if not authSuccess then
-    repeat task.wait(0.1) until KeySystem:IsAuthenticated()
+--// Ожидание авторизации
+repeat task.wait(0.1) until KeySystem.State.Authenticated
+
+if KeySystem.State.IsAdmin then
+    print("[SpermaHub] Admin mode — админ-панель открыта (пароль 1337), основной скрипт грузится параллельно")
+else
+    print("[SpermaHub] User authenticated with key: " .. tostring(KeySystem.State.KeyType))
 end
 print("[SpermaHub] Key system passed, loading main script...")
 
 
+
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev23 (двумоторный GUI: Rayfield → авто-фолбэк Linoria, оба встроены)")
+print("[SpermaHub] сборка: build18 rev24 (KeySystem v2.0: админка+генератор, фикс кликов Час/День)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -490,7 +1003,7 @@ end)
 do
     -- whitelist: ЭТИ имена трогать нельзя (это ТЕКУЩИЙ скрипт)
     local HUD_OK = {
-        SpermaKeySystem = true, SpermaHubToast = true, SpermaHubBoot = true,
+        SpermaKeySystem = true, SpermaAdmin = true, SpermaHubToast = true, SpermaHubBoot = true,
         SpermaHubESP = true, SpermaHubFov = true, SpermaHubFx = true, SpermaHubSpec = true,
     }
     local heirs = {}
