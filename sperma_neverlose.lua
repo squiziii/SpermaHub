@@ -5,6 +5,47 @@ if getgenv and getgenv().SpermaHubRunning == true then
 end
 if getgenv then getgenv().SpermaHubRunning = true end
 
+-- ЛОВУШКА: фатальные ошибки потоков видны НА ЭКРАНЕ (не только в консоли)
+do
+    local function errToast(msg)
+        pcall(function()
+            local parent = nil
+            pcall(function() if gethui then parent = gethui() end end)
+            if not parent then parent = game:GetService("CoreGui") end
+            local sg = parent:FindFirstChild("SpermaHubErrToast")
+            if not sg then
+                sg = Instance.new("ScreenGui")
+                sg.Name = "SpermaHubErrToast"
+                sg.ResetOnSpawn = false
+                sg.DisplayOrder = 1002
+                sg.Parent = parent
+                local l = Instance.new("TextLabel")
+                l.Name = "L"
+                l.Size = UDim2.new(1, -40, 0, 44)
+                l.Position = UDim2.new(0, 20, 0.12, 0)
+                l.BackgroundColor3 = Color3.fromRGB(120, 20, 20)
+                l.TextColor3 = Color3.new(1, 1, 1)
+                l.Font = Enum.Font.GothamBold
+                l.TextSize = 13
+                l.TextWrapped = true
+                l.ZIndex = 10
+                l.Parent = sg
+                local c = Instance.new("UICorner")
+                c.CornerRadius = UDim.new(0, 8)
+                c.Parent = l
+            end
+            sg.L.Text = "SpermaHub ERROR: " .. tostring(msg):sub(1, 220)
+            task.delay(8, function() pcall(function() sg:Destroy() end) end)
+        end)
+    end
+    pcall(function()
+        game:GetService("ScriptContext").Error:Connect(function(msg)
+            warn("[SpermaHub][FATAL] " .. tostring(msg))
+            errToast(msg)
+        end)
+    end)
+end
+
 -- SpermaHub (единый скрипт: свой Click GUI + весь функционал, внешних UI-библиотек не нужно)
 -- Интерфейс Voidware-стиль: панели-строки модулей, настройки на RightClick/gear,
 -- нотификации свои (right-top стек).
@@ -932,7 +973,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev25 (Linoria первичная; админка не грузит скрипт сразу; ⛔ Закрыть скрипт в админке)")
+print("[SpermaHub] сборка: build18 rev26b (FIX: киллер HUD сносил окно Linoria через 10с после ключа!)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -1041,7 +1082,7 @@ end)
 do
     -- whitelist: ЭТИ имена трогать нельзя (это ТЕКУЩИЙ скрипт)
     local HUD_OK = {
-        SpermaKeySystem = true, SpermaAdmin = true, SpermaHubToast = true, SpermaHubBoot = true,
+        SpermaKeySystem = true, SpermaAdmin = true, SpermaHubToast = true, SpermaHubBoot = true, SpermaHubErrToast = true, SpermaLinoria = true, Rayfield = true, KeyUI = true,
         SpermaHubESP = true, SpermaHubFov = true, SpermaHubFx = true, SpermaHubSpec = true,
     }
     local heirs = {}
@@ -1050,6 +1091,8 @@ do
     pcall(function() table.insert(heirs, game.CoreGui) end)
     local function isOldHud(gui)
         if not gui:IsA("ScreenGui") then return false end
+        local okAttr = pcall(function() return gui:GetAttribute("SpermaCurrent") == true end)
+        if okAttr and gui:GetAttribute("SpermaCurrent") == true then return false end
         local n = string.lower(gui.Name)
         if n:find("windui", 1, true) then return false end
         if HUD_OK[gui.Name] then return false end
@@ -1170,2810 +1213,6 @@ local S = {
     deathFxOn=false, deathFxType="Emitter",
 }
 
--- ============================================================
--- ============ ЛОГИКА (перенесена из sperma.lua) =============
--- ============================================================
-
--- ============ TEAM CHECK / VISIBLE CHECK ============
-local function isTeammate(plr)
-    if not S.teamCheck then return false end
-    if not plr or plr == LP then return false end
-    if not plr.Team or not LP.Team then return false end
-    return plr.Team == LP.Team
-end
-
-local visCheckParams = RaycastParams.new()
-visCheckParams.FilterType = Enum.RaycastFilterType.Exclude
-
--- true, если от камеры до части нет препятствий (wallcheck)
-local function isVisible(part)
-    if not S.visibleCheck then return true end
-    if not part then return false end
-    local cam = workspace.CurrentCamera
-    if not cam then return true end
-    local ch = LP.Character
-    visCheckParams.FilterDescendantsInstances = ch and {ch} or {}
-    local origin = cam.CFrame.Position
-    local ok, result = pcall(function()
-        return workspace:Raycast(origin, part.Position - origin, visCheckParams)
-    end)
-    if not ok or not result then return true end
-    return result.Instance:IsDescendantOf(part.Parent)
-end
-
--- ============ FOV CIRCLE ============
-local FovGui = Instance.new("ScreenGui")
-FovGui.Name = "SpermaHubFov"
-FovGui.ResetOnSpawn = false
-FovGui.IgnoreGuiInset = true
-FovGui.DisplayOrder = 60
-FovGui.Parent = LP:WaitForChild("PlayerGui")
-
-local FovCircle = Instance.new("Frame")
-FovCircle.Name = "FovCircle"
-FovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
-FovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
-FovCircle.Size = UDim2.new(0, 240, 0, 240)
-FovCircle.BackgroundTransparency = 1
-FovCircle.BorderSizePixel = 0
-FovCircle.Visible = false
-FovCircle.ZIndex = 100
-FovCircle.Parent = FovGui
-
-local FovCircleCorner = Instance.new("UICorner")
-FovCircleCorner.CornerRadius = UDim.new(1, 0)
-FovCircleCorner.Parent = FovCircle
-
-local FovCircleStroke = Instance.new("UIStroke")
-FovCircleStroke.Color = Color3.fromRGB(255, 80, 80)
-FovCircleStroke.Thickness = 2
-FovCircleStroke.Transparency = 0.2
-FovCircleStroke.Parent = FovCircle
-
-S.fovCircle = FovCircle
-
--- FOV-круг для Silent Aim
-local SilentFovCircle = Instance.new("Frame")
-SilentFovCircle.Name = "SilentFovCircle"
-SilentFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
-SilentFovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
-SilentFovCircle.Size = UDim2.new(0, 300, 0, 300)
-SilentFovCircle.BackgroundTransparency = 1
-SilentFovCircle.BorderSizePixel = 0
-SilentFovCircle.Visible = false
-SilentFovCircle.ZIndex = 99
-SilentFovCircle.Parent = FovGui
-
-local SilentFovCircleCorner = Instance.new("UICorner")
-SilentFovCircleCorner.CornerRadius = UDim.new(1, 0)
-SilentFovCircleCorner.Parent = SilentFovCircle
-
-local SilentFovCircleStroke = Instance.new("UIStroke")
-SilentFovCircleStroke.Color = Color3.fromRGB(100, 100, 255)
-SilentFovCircleStroke.Thickness = 2
-SilentFovCircleStroke.Transparency = 0.2
-SilentFovCircleStroke.Parent = SilentFovCircle
-
-S.silentAimFovCircle = SilentFovCircle
-
-local function updateFovCircle()
-    if S.fovCircle then
-        local size = S.aimbotFov * 2
-        S.fovCircle.Size = UDim2.new(0, size, 0, size)
-        S.fovCircle.Visible = S.aimbotOn and S.fovVisualize
-    end
-end
-
-local function updateSilentFovCircle()
-    if S.silentAimFovCircle then
-        local size = S.silentAimFov * 2
-        S.silentAimFovCircle.Size = UDim2.new(0, size, 0, size)
-        S.silentAimFovCircle.Visible = S.silentAimOn and S.fovVisualize
-    end
-end
-
--- Временный показ круга при настройке FOV слайдером (аналог открытой панели)
-local fovFlash = {aimbot = 0, silent = 0}
-local function flashFovCircle(kind, circle, isOn)
-    fovFlash[kind] = fovFlash[kind] + 1
-    local token = fovFlash[kind]
-    if not isOn() and S.fovVisualize then circle.Visible = true end
-    task.delay(1.5, function()
-        if fovFlash[kind] == token and not isOn() then
-            circle.Visible = false
-        end
-    end)
-end
-
--- ============ AIMBOT ЛОГИКА ============
-local function aimBonePart(ch)
-    if S.aimBone == "Torso" then
-        return ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
-            or ch:FindFirstChild("HumanoidRootPart")
-    elseif S.aimBone == "Body" then
-        return ch:FindFirstChild("Torso") or ch:FindFirstChild("UpperTorso")
-            or ch:FindFirstChild("HumanoidRootPart")
-    end
-    return ch:FindFirstChild("Head")
-end
-
-local function getClosestTarget()
-    local cam = workspace.CurrentCamera
-    local closest = nil
-    local closestDist = S.aimbotFov
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local ch = plr.Character
-            if ch then
-                local head = aimBonePart(ch)
-                local hum = ch:FindFirstChildOfClass("Humanoid")
-                if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
-                    local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
-                    if onScreen then
-                        local centerX = cam.ViewportSize.X / 2
-                        local centerY = cam.ViewportSize.Y / 2
-                        local dist = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
-                        if dist < closestDist then
-                            closestDist = dist
-                            closest = head
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return closest
-end
-
-local function aimKeyPressed()
-    if S.aimKey == "Always" then return true end
-    if S.aimKey == "Hold E" then
-        return UIS:IsKeyDown(Enum.KeyCode.E)
-    end
-    -- Hold RMB по умолчанию
-    return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-end
-
-local function enableAimbot()
-    S.aimbotOn = true
-    if S.aimbotConn then
-        RunService:UnbindFromRenderStep("SpermaHubAimbot")
-        S.aimbotConn = nil
-    end
-    S.aimbotConn = true
-    -- Нормально: аим пишется ПОСЛЕ игровой камеры (иначе Фортлайн её перезаписывает)
-    RunService:BindToRenderStep("SpermaHubAimbot", Enum.RenderPriority.Camera.Value + 1, function()
-        if not S.aimbotOn then return end
-        if not aimKeyPressed() then return end
-        local target = getClosestTarget()
-        if target then
-            local cam = workspace.CurrentCamera
-            if not cam then return end
-            local targetPos = target.Position
-            local currentCF = cam.CFrame
-            local lookAt = CFrame.new(currentCF.Position, targetPos)
-            local k = S.aimbotSmooth
-            if k >= 0.95 then
-                cam.CFrame = lookAt -- snap
-            else
-                cam.CFrame = currentCF:Lerp(lookAt, k)
-            end
-        end
-    end)
-end
-
-local function disableAimbot()
-    S.aimbotOn = false
-    if S.aimbotConn then
-        RunService:UnbindFromRenderStep("SpermaHubAimbot")
-        S.aimbotConn = nil
-    end
-end
-
--- ============ SILENT AIM ЛОГИКА (Real-compatible) ============
-local function findSilentTarget()
-    local cam = workspace.CurrentCamera
-    local closest = nil
-    local closestDist = S.silentAimFov
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local ch = plr.Character
-            if ch then
-                local head = ch:FindFirstChild("Head")
-                local hum = ch:FindFirstChildOfClass("Humanoid")
-                if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
-                    local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
-                    if onScreen then
-                        local centerX = cam.ViewportSize.X / 2
-                        local centerY = cam.ViewportSize.Y / 2
-                        local dist = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
-                        if dist < closestDist then
-                            closestDist = dist
-                            closest = plr
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return closest
-end
-
-local function checkSilentAimSupport()
-    local hasHook, hasMeta, hasSetReadonly, hasNewcclosure = false, false, false, false
-    pcall(function() hasHook = type(hookfunction) == "function" end)
-    pcall(function() hasMeta = type(getrawmetatable) == "function" end)
-    pcall(function() hasSetReadonly = type(setreadonly) == "function" end)
-    pcall(function() hasNewcclosure = type(newcclosure) == "function" end)
-    return hasHook and hasMeta and hasSetReadonly and hasNewcclosure
-end
-
--- ============ SILENT AIM — режимы Universal / Fortline / Network ============
--- код сервисов как в Fortline-сниппете (cloneref-защита), с фолбэком без cloneref
-local function makeSilentServices()
-    local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
-    return {
-        ReplicatedStorage = cR(game:GetService("ReplicatedStorage")),
-        Workspace = cR(game:GetService("Workspace")),
-        Players = cR(game:GetService("Players")),
-        RunService = cR(game:GetService("RunService")),
-        UserInputService = cR(game:GetService("UserInputService")),
-    }
-end
-
--- FORTLINE STYLE: камера сама лочится на голову цели, пока зажата кнопка огня (ЛКМ/ПКМ).
--- Работает на executor без хуков (Xeno): пули летят по центру камеры.
-local function enableSilentFortline()
-    print("[SpermaHub] Silent Aim: режим Fortline (camera lock while firing)")
-    notify("Silent Aim", "Режим Fortline: камера лочится пока зажат огонь", 3, "info")
-    local svc = makeSilentServices()
-    if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) S.silentAimConn = nil end
-    S.silentAimConn = svc.RunService.RenderStepped:Connect(function()
-        if not S.silentAimOn then return end
-        local uis = svc.UserInputService
-        local firing = uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-            or uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-        if not firing then return end
-        local cam = svc.Workspace.CurrentCamera
-        if not cam then return end
-        local target = findSilentTarget()
-        if not (target and target.Character) then return end
-        local head = target.Character:FindFirstChild("Head")
-            or target.Character:FindFirstChild("UpperTorso")
-            or target.Character:FindFirstChild("Torso")
-        if not head then return end
-        cam.CFrame = CFrame.new(cam.CFrame.Position, head.Position)
-    end)
-end
-
--- NETWORK STYLE: перенаправление FireServer оружейных ремоутов на голову цели
--- (требует метатабличные хуки executor'а; на Xeno недоступно)
-local function enableSilentNetwork()
-    if not checkSilentAimSupport() then
-        warn("[SpermaHub] Silent Aim Network: нет хуков на этом executor")
-        notify("Silent Aim", "Network нуждается в hookfunction/getrawmetatable", 5, "alert-triangle")
-        return
-    end
-    print("[SpermaHub] Silent Aim: режим Network (FireServer redirect)")
-    emitnetok = nil
-    local success, err = pcall(function()
-        local mt = getrawmetatable(game)
-        local oldNamecall = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = (pcall(getnamecallmethod) and getnamecallmethod()) or ""
-            if S.silentAimOn and (method == "FireServer" or method == "InvokeServer")
-                and typeof(self) == "Instance" then
-                local rn = string.lower(tostring(self.Name))
-                -- эвристика оружейного ремоута
-                if rn:find("shoot") or rn:find("hit") or rn:find("damage") or rn:find("fire")
-                    or rn:find("weapon") or rn:find("bullet") or rn:find("attack") or rn:find("gun") then
-                    local target = findSilentTarget()
-                    local head = target and target.Character and (
-                        target.Character:FindFirstChild("Head")
-                        or target.Character:FindFirstChild("UpperTorso")
-                        or target.Character:FindFirstChild("Torso"))
-                    if head then
-                        local args = {...}
-                        local changed = false
-                        for i, a in ipairs(args) do
-                            if typeof(a) == "Vector3" then
-                                args[i] = head.Position changed = true
-                            elseif typeof(a) == "CFrame" then
-                                args[i] = CFrame.new(head.Position) changed = true
-                            end
-                        end
-                        -- дахK: таблицы с полями Position/p/Hit/target тоже в голову
-                        for i, a in ipairs(args) do
-                            if typeof(a) == "table" then
-                                local okT, key = pcall(function()
-                                    local k = next(a)
-                                    return k
-                                end)
-                                if okT and key then
-                                    local copied = false
-                                    local newT = {}
-                                    for k, v in pairs(a) do
-                                        if k == "Position" or k == "p" or k == "Hit"
-                                            or k == "Target" or k == "target"
-                                            or k == "aim" or k == "Aim" then
-                                            if typeof(v) == "Vector3" then
-                                                newT[k] = head.Position copied = true
-                                            elseif typeof(v) == "CFrame" then
-                                                newT[k] = CFrame.new(head.Position) copied = true
-                                            else
-                                                newT[k] = v
-                                            end
-                                        else
-                                            newT[k] = v
-                                        end
-                                    end
-                                    if copied then
-                                        args[i] = newT changed = true
-                                    end
-                                end
-                            end
-                        end
-                        if changed then
-                            return oldNamecall(self, unpack(args))
-                        end
-                    end
-                end
-            end
-            return oldNamecall(self, ...)
-        end)
-        setreadonly(mt, true)
-        S.silentAimConn = {
-            Disconnect = function()
-                pcall(function()
-                    setreadonly(mt, false)
-                    mt.__namecall = oldNamecall
-                    setreadonly(mt, true)
-                end)
-            end,
-        }
-    end)
-    if not success then
-        warn("[SpermaHub] Silent Aim Network ошибка: " .. tostring(err))
-    end
-end
-
-local function enableSilentAim()
-    S.silentAimOn = true
-    if S.silentMode == "Fortline" then
-        enableSilentFortline()
-        return
-    elseif S.silentMode == "Network" then
-        enableSilentNetwork()
-        return
-    end
-    if not checkSilentAimSupport() then
-        warn("[SpermaHub] Silent Aim: executor не поддерживает hookfunction")
-        warn("[SpermaHub] Работает только FOV circle")
-        notify("Silent Aim", "Executor не поддерживает hookfunction. Работает только FOV circle", 5, "alert-triangle")
-        return
-    end
-    if S.silentAimConn then
-        pcall(function() S.silentAimConn:Disconnect() end)
-        S.silentAimConn = nil
-    end
-    local success, err = pcall(function()
-        local mt = getrawmetatable(game)
-        local oldNamecall = mt.__namecall
-        local oldIndex = mt.__index
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if S.silentAimOn and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") then
-                local target = findSilentTarget()
-                if target then
-                    local targetChar = target.Character
-                    if targetChar then
-                        local targetPart = targetChar:FindFirstChild("Head")
-                            or targetChar:FindFirstChild("UpperTorso")
-                            or targetChar:FindFirstChild("Torso")
-                        if targetPart then
-                            local args = {...}
-                            if args[1] and args[1].Origin then
-                                local origin = args[1].Origin
-                                local newDir = (targetPart.Position - origin).Unit * 1000
-                                args[1] = Ray.new(origin, newDir)
-                            end
-                            return oldNamecall(self, unpack(args))
-                        end
-                    end
-                end
-            end
-            return oldNamecall(self, ...)
-        end)
-        mt.__index = newcclosure(function(self, key)
-            local result = oldIndex(self, key)
-            if S.silentAimOn and typeof(self) == "Instance" and self:IsA("Mouse") then
-                if key == "Hit" or key == "Target" then
-                    local target = findSilentTarget()
-                    if target and target.Character then
-                        local targetPart = target.Character:FindFirstChild("Head")
-                            or target.Character:FindFirstChild("UpperTorso")
-                            or target.Character:FindFirstChild("Torso")
-                        if targetPart then
-                            if key == "Hit" then
-                                return CFrame.new(targetPart.Position)
-                            elseif key == "Target" then
-                                return targetPart
-                            end
-                        end
-                    end
-                end
-            end
-            return result
-        end)
-        setreadonly(mt, true)
-        S.silentAimConn = {
-            Disconnect = function()
-                pcall(function()
-                    setreadonly(mt, false)
-                    mt.__namecall = oldNamecall
-                    mt.__index = oldIndex
-                    setreadonly(mt, true)
-                end)
-            end
-        }
-    end)
-    if success then
-        print("[SpermaHub] Silent Aim активирован ✓")
-    else
-        warn("[SpermaHub] Silent Aim ошибка: " .. tostring(err))
-        notify("Silent Aim", "Ошибка: " .. tostring(err), 5, "alert-triangle")
-    end
-end
-
-local function disableSilentAim()
-    S.silentAimOn = false
-    if S.silentAimConn then
-        pcall(function() S.silentAimConn:Disconnect() end)
-        S.silentAimConn = nil
-    end
-end
-
--- ============ FORTLINE SILENT: хук BaseWeapon.fire (по сырцам сайлента) ====
--- WeaponsSystem.Libraries.BaseWeapon — модуль оружейной системы Fortline.
--- fire(p1, p2, p3, p4): p2 = точка выстрела, p3 = направление (Unit).
--- Редиректим p3 -> направление в голову цели из конуса (S.flickHead).
-function enableFortlineSilent()
-    if S.flHookOn then return true end
-    if type(hookfunction) ~= "function" then return false end
-    local ok = pcall(function()
-        local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
-        local RS = cR(game:GetService("ReplicatedStorage"))
-        local ws = RS:FindFirstChild("WeaponsSystem")
-        if not ws then error("WeaponsSystem not found") end
-        local libs = ws:FindFirstChild("Libraries")
-        if not libs then error("Libraries not found") end
-        local bwMod = libs:FindFirstChild("BaseWeapon")
-        if not bwMod then error("BaseWeapon not found") end
-        local BaseWeapon = require(bwMod)
-        if type(BaseWeapon) ~= "table" or type(BaseWeapon.fire) ~= "function" then
-            error("BaseWeapon.fire not a function")
-        end
-        local oldFire
-        oldFire = hookfunction(BaseWeapon.fire, function(p1, p2, p3, p4)
-            if S.asOn and S.asSilentNet and S.flickHead then
-                local okH, headPos = pcall(function() return S.flickHead.Position end)
-                if okH and headPos and typeof(p2) == "Vector3" then
-                    local okN, newDir = pcall(function() return (headPos - p2).Unit end)
-                    if okN and newDir then p3 = newDir end
-                end
-            end
-            return oldFire(p1, p2, p3, p4)
-        end)
-        S.flOldFire = oldFire
-        S.flHookOn = true
-    end)
-    return ok and S.flHookOn
-end
-
-
--- ============ AUTO CLICKER ЛОГИКА ============
--- Клик через VirtualInputManager (резерв, если нет функций executor'а)
-local function vimClick(b) -- b: 0 = ЛКМ, 1 = ПКМ
-    pcall(function()
-        local VIM = game:GetService("VirtualInputManager")
-        local loc = UIS:GetMouseLocation()
-        VIM:SendMouseButtonEvent(loc.X, loc.Y, b, true, false, 1)
-        task.wait(0.01)
-        VIM:SendMouseButtonEvent(loc.X, loc.Y, b, false, false, 1)
-    end)
-end
-
--- button: 1 = ЛКМ, 2 = ПКМ
-local function clickMouse(button)
-    if button == 1 then
-        if type(mouse1click) == "function" then pcall(mouse1click)
-        elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
-            pcall(function() mouse1press() mouse1release() end)
-        else
-            vimClick(0)
-        end
-    else
-        if type(mouse2click) == "function" then pcall(mouse2click)
-        elseif type(mouse2press) == "function" and type(mouse2release) == "function" then
-            pcall(function() mouse2press() mouse2release() end)
-        else
-            vimClick(1)
-        end
-    end
-end
-
--- Клик разрешён только "в игре": не в чате и не когда курсор над любым GUI
-local hudIgnore = {
-    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, SpermaHubBinds=true, SpermaHubTHud=true, -- декоративные элементы скрипта не считаем
-}
-local function canClickInGame()
-    if UIS:GetFocusedTextBox() then return false end -- чат / поле ввода
-    local loc = UIS:GetMouseLocation()
-    local ok, objs = pcall(function()
-        local inset = GuiService:GetGuiInset()
-        return LP.PlayerGui:GetGuiObjectsAtPosition(loc.X - inset.X, loc.Y - inset.Y)
-    end)
-    if ok and objs then
-        for _, o in ipairs(objs) do
-            if o.Visible then
-                local sg = o:FindFirstAncestorOfClass("ScreenGui")
-                if not (sg and hudIgnore[sg.Name]) then
-                    return false
-                end
-            end
-        end
-    end
-    return true
-end
-
-local function enableAutoClicker()
-    S.autoClickOn = false
-    S.autoClickGen = S.autoClickGen + 1 -- останавливаем прошлый цикл
-    S.autoClickOn = true
-    local gen = S.autoClickGen
-    task.spawn(function()
-        while S.autoClickOn and gen == S.autoClickGen do
-            local interval = 1 / math.max(S.autoClickCps, 1)
-            if canClickInGame() then
-                if S.autoClickMode == "ЛКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
-                    clickMouse(1)
-                end
-                if S.autoClickMode == "ПКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
-                    clickMouse(2)
-                end
-            end
-            task.wait(interval)
-        end
-    end)
-end
-
-local function disableAutoClicker()
-    S.autoClickOn = false
-    S.autoClickGen = S.autoClickGen + 1
-end
-
--- ============ HITBOX EXPANDER ЛОГИКА ============
-local hitboxOriginalSizes = {}
-
-local function applyHitbox()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local ch = plr.Character
-            if ch then
-                for _, part in ipairs(ch:GetDescendants()) do
-                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                        if not hitboxOriginalSizes[part] then
-                            hitboxOriginalSizes[part] = part.Size
-                        end
-                        part.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
-                        part.Transparency = 0.7
-                        part.CanCollide = false
-                        part.Massless = true
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function restoreHitbox()
-    for part, size in pairs(hitboxOriginalSizes) do
-        if typeof(part) == "Instance" and part.Parent then
-            pcall(function()
-                part.Size = size
-                part.Transparency = 0
-                part.CanCollide = true
-                part.Massless = false
-            end)
-        end
-    end
-    hitboxOriginalSizes = {}
-end
-
-local function enableHitbox()
-    S.hitboxOn = true
-    applyHitbox()
-    dcc(S.hitboxConn)
-    S.hitboxConn = RunService.Heartbeat:Connect(function()
-        if not S.hitboxOn then return end
-        applyHitbox()
-    end)
-end
-
-local function disableHitbox()
-    S.hitboxOn = false
-    if S.hitboxConn then S.hitboxConn:Disconnect() S.hitboxConn = nil end
-    restoreHitbox()
-end
-
--- ============ KILL PLAYER ЛОГИКА ============
-local function killPlayer(targetPlayer)
-    if not targetPlayer then return end
-    local myChar = LP.Character
-    if not myChar then return end
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
-    local targetChar = targetPlayer.Character
-    if not targetChar then return end
-    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-    if not targetRoot then return end
-
-    myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0.5, 0)
-    myRoot.Velocity = Vector3.zero
-
-    local hum = myChar:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local backpack = LP:FindFirstChild("Backpack")
-    if not backpack then return end
-
-    local tool = nil
-    for _, item in ipairs(backpack:GetChildren()) do
-        if item:IsA("Tool") then tool = item; break end
-    end
-    if not tool then
-        for _, item in ipairs(myChar:GetChildren()) do
-            if item:IsA("Tool") then tool = item; break end
-        end
-    end
-    if not tool then
-        warn("[SpermaHub] Нет оружия для Kill Player")
-        notify("Kill Player", "Нет оружия в инвентаре!", 3, "alert-triangle")
-        return
-    end
-
-    if tool.Parent == backpack then
-        pcall(function() hum:EquipTool(tool) end)
-        task.wait(0.1)
-    end
-
-    task.spawn(function()
-        for i = 1, 30 do
-            if not tool or not tool.Parent then break end
-            if targetRoot and targetRoot.Parent then
-                myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0.5, 0)
-                myRoot.Velocity = Vector3.zero
-            end
-            pcall(function() tool:Activate() end)
-            task.wait(0.03)
-        end
-    end)
-end
-
--- ============ TP PLAYER ЛОГИКА ============
-local function tpToPlayer(targetPlayer)
-    local myChar = LP.Character
-    if not myChar then return end
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
-    local tChar = targetPlayer and targetPlayer.Character
-    if not tChar then return end
-    local tRoot = tChar:FindFirstChild("HumanoidRootPart")
-    if not tRoot then return end
-    myRoot.CFrame = tRoot.CFrame + Vector3.new(0, 1, 0)
-    myRoot.Velocity = Vector3.zero
-    print("[SpermaHub] Телепорт к " .. targetPlayer.Name)
-end
-
--- ============ FLY ============
-local function startFly()
-    local ch = LP.Character
-    if not ch then return end
-    local root = ch:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    S.flying = true
-    S.bv = Instance.new("BodyVelocity")
-    S.bv.MaxForce = Vector3.new(1e5,1e5,1e5)
-    S.bv.Velocity = Vector3.zero
-    S.bv.Parent = root
-    S.bg = Instance.new("BodyGyro")
-    S.bg.MaxTorque = Vector3.new(1e5,1e5,1e5)
-    S.bg.P = 10000
-    S.bg.D = 200
-    S.bg.Parent = root
-    local hum = ch:FindFirstChildOfClass("Humanoid")
-    if hum then hum.PlatformStand = true end
-    dcc(S.flyConn)
-    S.flyConn = RunService.RenderStepped:Connect(function()
-        if not S.flying then return end
-        local cam = workspace.CurrentCamera
-        local d = Vector3.zero
-        if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + cam.CFrame.LookVector end
-        if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - cam.CFrame.LookVector end
-        if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - cam.CFrame.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + cam.CFrame.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.Space) then d = d + Vector3.new(0,1,0) end
-        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then d = d - Vector3.new(0,1,0) end
-        if S.bv then S.bv.Velocity = d.Magnitude > 0 and d.Unit * S.speed or Vector3.zero end
-        if S.bg then S.bg.CFrame = cam.CFrame end
-    end)
-end
-
-local function stopFly()
-    S.flying = false
-    if S.flyConn then S.flyConn:Disconnect() S.flyConn = nil end
-    if S.bv then S.bv:Destroy() S.bv = nil end
-    if S.bg then S.bg:Destroy() S.bg = nil end
-    local ch = LP.Character
-    if ch then
-        local hum = ch:FindFirstChildOfClass("Humanoid")
-        if hum then hum.PlatformStand = false end
-    end
-end
-
--- ============ NOCLIP ============
-local function enableNoclip()
-    S.noclip = true
-    dcc(S.noclipConn)
-    S.noclipConn = RunService.Stepped:Connect(function()
-        if not S.noclip then return end
-        local ch = LP.Character
-        if not ch then return end
-        for _, p in ipairs(ch:GetDescendants()) do
-            if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
-        end
-    end)
-end
-
-local function disableNoclip()
-    S.noclip = false
-    if S.noclipConn then S.noclipConn:Disconnect() S.noclipConn = nil end
-    local ch = LP.Character
-    if ch then
-        for _, p in ipairs(ch:GetDescendants()) do
-            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then p.CanCollide = true end
-        end
-    end
-end
-
--- ============ CLICK TP ============
-local function enableClickTp()
-    S.clickTpOn = true
-    dcc(S.clickTpConn)
-    S.clickTpConn = UIS.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-        if not S.clickTpOn then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local mouse = LP:GetMouse()
-            if mouse and mouse.Target then
-                local ch = LP.Character
-                if not ch then return end
-                local root = ch:FindFirstChild("HumanoidRootPart")
-                if not root then return end
-                local pos = mouse.Hit.Position + Vector3.new(0, S.clickTpHeight, 0)
-                root.CFrame = CFrame.new(pos)
-                root.Velocity = Vector3.zero
-            end
-        end
-    end)
-end
-
-local function disableClickTp()
-    S.clickTpOn = false
-    if S.clickTpConn then S.clickTpConn:Disconnect() S.clickTpConn = nil end
-end
-
--- ============ JESUS (ходьба по воде) ============
-local jesusRayParams = RaycastParams.new()
-jesusRayParams.FilterType = Enum.RaycastFilterType.Exclude
-jesusRayParams.IgnoreWater = false -- чтобы рейкаст "видел" поверхность воды
-
-local function enableJesus()
-    S.jesusOn = true
-    if not S.jesusPlatform or not S.jesusPlatform.Parent then
-        local p = Instance.new("Part")
-        p.Name = "SpermaJesus"
-        p.Anchored = true
-        p.CanCollide = true
-        p.Transparency = 1
-        p.CastShadow = false
-        p.Size = Vector3.new(10, 1, 10)
-        p.Parent = workspace
-        S.jesusPlatform = p
-    end
-    dcc(S.jesusConn)
-    S.jesusConn = RunService.Heartbeat:Connect(function()
-        if not S.jesusOn then return end
-        local ch = LP.Character
-        if not ch then return end
-        local root = ch:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        local plat = S.jesusPlatform
-        if not plat then return end
-        jesusRayParams.FilterDescendantsInstances = {ch, plat}
-        local result = workspace:Raycast(root.Position, Vector3.new(0, -25, 0), jesusRayParams)
-        if result and result.Material == Enum.Material.Water then
-            -- ставим платформу верхней гранью ровно на поверхность воды
-            plat.Position = Vector3.new(root.Position.X, result.Position.Y - plat.Size.Y / 2 + 0.05, root.Position.Z)
-        else
-            -- воды под ногами нет — убираем платформу
-            plat.Position = Vector3.new(0, -1e5, 0)
-        end
-    end)
-end
-
-local function disableJesus()
-    S.jesusOn = false
-    if S.jesusConn then S.jesusConn:Disconnect() S.jesusConn = nil end
-    if S.jesusPlatform then S.jesusPlatform.Position = Vector3.new(0, -1e5, 0) end
-end
-
--- ============ SPIN (вращение персонажа) ============
-local function enableSpin()
-    S.spinOn = true
-    dcc(S.spinConn)
-    S.spinAngle = 0
-    -- стартовый угол берём ИЗ ТЕКУЩЕЙ позы — спин начинается без дёргания
-    S.spinBaseYaw = 0
-    do
-        local ch0 = LP.Character
-        local root0 = ch0 and ch0:FindFirstChild("HumanoidRootPart")
-        if root0 then
-            local _, yy = root0.CFrame:ToEulerAnglesYXZ()
-            S.spinBaseYaw = math.deg(yy)
-        end
-    end
-    S.spinConn = RunService.RenderStepped:Connect(function(dt)
-        if not S.spinOn then return end
-        local ch = LP.Character
-        if not ch then return end
-        local root = ch:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        S.spinAngle = (S.spinAngle + S.spinSpeed * dt) % 360
-        local totalYaw = math.rad(S.spinBaseYaw + S.spinAngle)
-        if S.spinHeadDown then
-            -- ГОЛОВА ВНИЗУ (вертолёт): питч -90° от ТЕКУЩЕЙ позиции root.
-            -- Y НЕ ЗАНИЖАЕМ => пол не пробивается, гравитация не борется.
-            -- PlatformStand гасит самовыпрямление humanoid, иначе оно
-            -- каждый кадр крутит тело обратно вертикально.
-            local hum = ch:FindFirstChildOfClass("Humanoid")
-            if hum then
-                pcall(function()
-                    if not hum.PlatformStand then hum.PlatformStand = true end
-                end)
-            end
-            pcall(function()
-                root.CFrame = CFrame.new(root.Position) * CFrame.Angles(math.rad(-90), totalYaw, 0)
-                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            end)
-        else
-            -- обычный вертикальный спин (как был)
-            root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, totalYaw, 0)
-        end
-    end)
-end
-
-local function disableSpin()
-    S.spinOn = false
-    if S.spinConn then S.spinConn:Disconnect() S.spinConn = nil end
-    -- спина выпрямляется обратно
-    local ch = LP.Character
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    if hum then pcall(function() hum.PlatformStand = false end) end
-end
-
--- ============ GOD MODE (лок HP) ============
-local function enableGod()
-    S.godOn = true
-    dcc(S.godConn)
-    S.godConn = RunService.Heartbeat:Connect(function()
-        if not S.godOn then return end
-        local ch = LP.Character
-        if not ch then return end
-        local hum = ch:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health < hum.MaxHealth then
-            pcall(function() hum.Health = hum.MaxHealth end)
-        end
-    end)
-end
-
-local function disableGod()
-    S.godOn = false
-    if S.godConn then S.godConn:Disconnect() S.godConn = nil end
-end
-
--- ============ FLING ============
-local function flingPlayer(target)
-    local ch = LP.Character
-    if not ch then return end
-    local root = ch:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local tChar = target and target.Character
-    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
-    if not tRoot then return end
-    if S.flingConn then pcall(function() S.flingConn:Disconnect() end) S.flingConn = nil end
-    local oldCF = root.CFrame
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    local t0 = tick()
-    S.flingConn = RunService.Heartbeat:Connect(function()
-        if not root.Parent or not tRoot.Parent then return end
-        if tick() - t0 > 0.8 then return end
-        root.CFrame = tRoot.CFrame + Vector3.new(math.random(-5, 5) / 10, 0, math.random(-5, 5) / 10)
-        bv.Velocity = Vector3.new((math.random() - 0.5) * 900, 350, (math.random() - 0.5) * 900)
-        bv.Parent = root
-    end)
-    task.delay(0.85, function()
-        if S.flingConn then S.flingConn:Disconnect() S.flingConn = nil end
-        pcall(function() bv:Destroy() end)
-        if root.Parent then
-            root.Velocity = Vector3.zero
-            root.CFrame = oldCF
-        end
-    end)
-end
-
--- ============ FLING 2.0 (Stick TP — из твоего сниппета) ============
--- клей: каждый кадр персонаж привязан к цели с Velocity (0, 100000, 0);
--- по таймеру рвём и возвращаемся в исходную точку 50 раз подряд (как в коде).
-local function flingStickyPlayer(target, dur)
-    local ch = LP.Character
-    if not ch then return end
-    local root = ch:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local tChar = target and target.Character
-    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
-    if not tRoot then return end
-    if S.flingConn then pcall(function() S.flingConn:Disconnect() end) S.flingConn = nil end
-    local ogpos = root.CFrame
-    root.CFrame = tRoot.CFrame -- мгновенный прыжок на цель
-    S.flingConn = RunService.RenderStepped:Connect(function()
-        if not root.Parent or not tRoot.Parent then return end
-        root.CFrame = tRoot.CFrame
-        root.Velocity = Vector3.new(0, 100000, 0) -- твой импульс вверх
-    end)
-    task.delay(dur or 5, function()
-        if S.flingConn then S.flingConn:Disconnect() S.flingConn = nil end
-        local p = 0
-        task.spawn(function()
-            repeat
-                if root.Parent then
-                    root.Velocity = Vector3.new(0, 0, 0)
-                    root.CFrame = ogpos
-                    root.Velocity = Vector3.new(0, 0, 0)
-                end
-                task.wait()
-                p = p + 1
-            until p >= 50
-        end)
-    end)
-end
-
--- ============ BULLET TRACERS + HITMARKER ============
-local HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
-
-local FxGui = Instance.new("ScreenGui")
-FxGui.Name = "SpermaHubFx"
-FxGui.ResetOnSpawn = false
-FxGui.IgnoreGuiInset = true
-FxGui.DisplayOrder = 102
-FxGui.Parent = LP:WaitForChild("PlayerGui")
-
-local function drawTracer(from3D, to3D)
-    local cam = workspace.CurrentCamera
-    local v1, on1 = cam:WorldToViewportPoint(from3D)
-    local v2, on2 = cam:WorldToViewportPoint(to3D)
-    if not on1 and not on2 then return end
-    local dx = v2.X - v1.X
-    local dy = v2.Y - v1.Y
-    local length = math.sqrt(dx * dx + dy * dy)
-    if length < 2 then return end
-    local f = Instance.new("Frame")
-    f.AnchorPoint = Vector2.new(0.5, 0.5)
-    f.Position = UDim2.new(0, (v1.X + v2.X) / 2, 0, (v1.Y + v2.Y) / 2)
-    f.Size = UDim2.new(0, length, 0, 2)
-    f.Rotation = math.deg(math.atan2(dy, dx))
-    f.BackgroundColor3 = Color3.fromRGB(255, 220, 130)
-    f.BackgroundTransparency = 0.1
-    f.BorderSizePixel = 0
-    f.ZIndex = 8
-    f.Parent = FxGui
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(1, 0)
-    c.Parent = f
-    local TweenService = game:GetService("TweenService")
-    TweenService:Create(f, TweenInfo.new(0.28), {BackgroundTransparency = 1}):Play()
-    task.delay(0.35, function() pcall(function() f:Destroy() end) end)
-end
-
-local function showHitmarker()
-    for _, ang in ipairs({45, -45}) do
-        local bar = Instance.new("Frame")
-        bar.AnchorPoint = Vector2.new(0.5, 0.5)
-        bar.Position = UDim2.new(0.5, 0, 0.5, 0)
-        bar.Size = UDim2.new(0, 14, 0, 2)
-        bar.Rotation = ang
-        bar.BackgroundColor3 = Color3.fromRGB(255, 90, 90)
-        bar.BackgroundTransparency = 0
-        bar.BorderSizePixel = 0
-        bar.ZIndex = 9
-        bar.Parent = FxGui
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(1, 0)
-        c.Parent = bar
-        local TweenService = game:GetService("TweenService")
-        TweenService:Create(bar, TweenInfo.new(0.18), {BackgroundTransparency = 1}):Play()
-        task.delay(0.25, function() pcall(function() bar:Destroy() end) end)
-    end
-    if HM_SOUND_ID then
-        pcall(function()
-            local s = Instance.new("Sound")
-            s.SoundId = HM_SOUND_ID
-            s.Volume = 0.6
-            s.Parent = workspace
-            s:Play()
-            task.delay(1, function() pcall(function() s:Destroy() end) end)
-        end)
-    end
-end
-
-local function onShotTracer()
-    if not S.tracersOn then return end
-    local ch = LP.Character
-    if not ch then return end
-    local tool = ch:FindFirstChildOfClass("Tool")
-    if not tool then return end
-    local fromPart = tool:FindFirstChild("Handle") or tool.PrimaryPart or ch:FindFirstChild("HumanoidRootPart")
-    if not fromPart then return end
-    local to = nil
-    if S.silentAimOn then
-        local t = findSilentTarget()
-        local head = t and t.Character and t.Character:FindFirstChild("Head")
-        if head then to = head.Position end
-    end
-    if not to then
-        local mouse = LP:GetMouse()
-        if mouse and mouse.Hit then to = mouse.Hit.Position end
-    end
-    if to then drawTracer(fromPart.Position, to) end
-end
-
-local function onShotHitmarker()
-    if not S.hitmarkerOn then return end
-    local hit = false
-    if S.silentAimOn then
-        if findSilentTarget() then hit = true end
-    end
-    if not hit then
-        local mouse = LP:GetMouse()
-        if mouse and mouse.Target then
-            local model = mouse.Target:FindFirstAncestorOfClass("Model")
-            if model then
-                local plr = Players:GetPlayerFromCharacter(model)
-                if plr and plr ~= LP then hit = true end
-            end
-        end
-    end
-    if hit then showHitmarker() end
-end
-
-S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    local ch = LP.Character
-    if not ch or not ch:FindFirstChildOfClass("Tool") then return end
-    pcall(onShotTracer)
-    pcall(onShotHitmarker)
-end)
-
--- ============ ANTI-AIM (НАСТОЯЩИЕ fake angles) ============
--- Фейковый CFrame ставится в Heartbeat (после физики, перед отправкой на сервер)
--- и больше НЕ откатывается — его видят и сервер, и другие игроки.
--- Стабильность:
---  * yaw не влияет на физику (капсула круглая) — ходьба/прыжки как обычно;
---  * pitch: тело опускается к земле и обнуляется угловая скорость,
---    чтобы капсула спокойно лежала, а не отпрыгивала.
--- ============ ANTI-AIM (ENI Suite: Spin / Jitter / Desync / Random + Fake Visualize) ============
-local aaState = {CurrentAngle = 0, LastTick = tick(), FakeCharacter = nil}
-
-local function aaGetRoot()
-    local ch = LP.Character
-    return ch and ch:FindFirstChild("HumanoidRootPart")
-end
-
-local function aaCreateFake()
-    if aaState.FakeCharacter then
-        pcall(function() aaState.FakeCharacter:Destroy() end)
-        aaState.FakeCharacter = nil
-    end
-    if not S.aaVisualize then return end
-    local char = LP.Character
-    if not char then return end
-    local fake = Instance.new("Model")
-    fake.Name = "SpermaAAFake"
-    for _, v in pairs(char:GetChildren()) do
-        if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
-            local okc, clone = pcall(function() return v:Clone() end)
-            if okc and clone then
-                clone.CanCollide = false
-                clone.Anchored = true
-                clone.Transparency = 0.7
-                pcall(function() clone.CanTouch = false clone.CanQuery = false end)
-                clone.Parent = fake
-            end
-        end
-    end
-    fake.Parent = workspace
-    aaState.FakeCharacter = fake
-end
-
-local function aaDestroyFake()
-    if aaState.FakeCharacter then
-        pcall(function() aaState.FakeCharacter:Destroy() end)
-        aaState.FakeCharacter = nil
-    end
-end
-
--- фейковое тело показывает, куда "смотрит" подменённый рут
-local function aaUpdateFake(angle)
-    if not S.aaVisualize then return end
-    local fake = aaState.FakeCharacter
-    if not fake or not fake.Parent then return end
-    local ch = LP.Character
-    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local rot = CFrame.Angles(0, math.rad(angle), 0)
-    local offset = root.CFrame * rot
-    for _, v in pairs(fake:GetChildren()) do
-        if v:IsA("BasePart") then
-            local realPart = ch:FindFirstChild(v.Name)
-            if realPart and realPart:IsA("BasePart") then
-                pcall(function()
-                    v.CFrame = offset * (root.CFrame:Inverse() * realPart.CFrame)
-                end)
-            end
-        end
-    end
-end
-
-local function enableAntiAim()
-    S.aaOn = true
-    dcc(S.aaConn)
-    aaState.LastTick = tick()
-    if S.aaVisualize then aaCreateFake() end
-    S.aaConn = RunService.Heartbeat:Connect(function()
-        if not S.aaOn then return end
-        local root = aaGetRoot()
-        if not root then return end
-        local now = tick()
-        local dt = now - aaState.LastTick
-        aaState.LastTick = now
-
-        -- контроллер движения сам перезаписывает yaw → отрубаем AutoRotate
-        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
-        if hum then
-            pcall(function()
-                if S.aaOrigAutoRotate == nil then S.aaOrigAutoRotate = hum.AutoRotate end
-                if hum.AutoRotate then hum.AutoRotate = false end
-            end)
-        end
-
-        local mode = S.aaMode
-        if mode == "Spin" then
-            aaState.CurrentAngle = (aaState.CurrentAngle + S.aaSpeed * dt * 10) % 360
-            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(S.aaSpeed * dt * 10), 0)
-        elseif mode == "Jitter" then
-            aaState.CurrentAngle = aaState.CurrentAngle == 0 and S.aaJitterAngle or 0
-            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(aaState.CurrentAngle), 0)
-        elseif mode == "Desync" then
-            -- синусовый сдвиг ±2 стада (без накопления — через текущий root.CFrame)
-            local offset = math.sin(now * S.aaDesyncOffset * 10) * 2
-            root.CFrame = root.CFrame + Vector3.new(offset, 0, 0)
-        else -- "Random"
-            local range = math.max(tonumber(S.aaRandomRange) or 360, 1)
-            aaState.CurrentAngle = math.random(-range / 2, range / 2)
-            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(aaState.CurrentAngle), 0)
-        end
-
-        -- Pitch manipulation
-        local pitch = S.aaPitch
-        if pitch == "Up" then
-            root.CFrame = root.CFrame * CFrame.Angles(math.rad(-89), 0, 0)
-        elseif pitch == "Down" then
-            root.CFrame = root.CFrame * CFrame.Angles(math.rad(89), 0, 0)
-        elseif pitch == "Random" then
-            local r = math.random()
-            if r < 1 / 3 then
-                root.CFrame = root.CFrame * CFrame.Angles(math.rad(-89), 0, 0)
-            elseif r < 2 / 3 then
-                root.CFrame = root.CFrame * CFrame.Angles(math.rad(89), 0, 0)
-            end
-        end -- "Zero"/"None": не трогаем ориентацию по X
-
-        aaUpdateFake(aaState.CurrentAngle)
-    end)
-end
-
-local function disableAntiAim()
-    S.aaOn = false
-    dcc(S.aaConn)
-    S.aaConn = nil
-    aaDestroyFake()
-    local ch = LP.Character
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    if hum and S.aaOrigAutoRotate ~= nil then
-        pcall(function() hum.AutoRotate = S.aaOrigAutoRotate end)
-        S.aaOrigAutoRotate = nil
-    end
-end
-
--- пересоздание фейка при респавне
-LP.CharacterAdded:Connect(function()
-    task.wait(1)
-    if S.aaOn and S.aaVisualize then aaCreateFake() end
-end)
-
--- ============ BHOP (авто-прыжки) ============
-local function enableBhop()
-    S.bhopOn = true
-    dcc(S.bhopConn)
-    S.bhopConn = RunService.Heartbeat:Connect(function()
-        if not S.bhopOn then return end
-        local ch = LP.Character
-        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        if not hum or not root then return end
-        if S.bhopMode == "Hold Space" and not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
-        if hum:GetState() == Enum.HumanoidStateType.Seated then return end
-        if hum.FloorMaterial ~= Enum.Material.Air then
-            if S.bhopMethod == "Velocity" then
-                -- напрямую задаём вертикальную скорость: работает даже при JumpPower = 0
-                local vel = root.AssemblyLinearVelocity
-                local jp = math.max(hum.JumpPower or 0, 50)
-                root.AssemblyLinearVelocity = Vector3.new(vel.X, jp, vel.Z)
-            else
-                hum.Jump = true
-            end
-        end
-    end)
-end
-
-local function disableBhop()
-    S.bhopOn = false
-    if S.bhopConn then S.bhopConn:Disconnect() S.bhopConn = nil end
-end
-
--- ============ ANTI FLING (защита от флинга) ============
-local function enableAntiFling()
-    S.afOn = true
-    dcc(S.afConn)
-    S.afConn = RunService.Stepped:Connect(function()
-        if not S.afOn then return end
-        if S.flying then return end -- Fly сам управляет скоростью
-        if S.flingConn then return end -- свой флинг не трогаем
-        local ch = LP.Character
-        if not ch then return end
-        for _, p in ipairs(ch:GetDescendants()) do
-            if p:IsA("BasePart") then
-                local v = p.AssemblyLinearVelocity
-                if v.Magnitude > S.afMax then
-                    p.AssemblyLinearVelocity = v.Unit * S.afMax
-                end
-                local av = p.AssemblyAngularVelocity
-                if av.Magnitude > S.afMax then
-                    p.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end
-            end
-        end
-    end)
-end
-
-local function disableAntiFling()
-    S.afOn = false
-    if S.afConn then S.afConn:Disconnect() S.afConn = nil end
-end
-
--- ============ AUTO STRAFE (усиление bhop) ============
-local function enableStrafe()
-    S.strafeOn = true
-    dcc(S.strafeConn)
-    S.strafeConn = RunService.Heartbeat:Connect(function()
-        if not S.strafeOn then return end
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-        if not root or not hum then return end
-        if hum.FloorMaterial ~= Enum.Material.Air then return end -- только в воздухе
-        local vel = root.AssemblyLinearVelocity
-        local horiz = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
-        if horiz < 2 then return end
-        local cam = workspace.CurrentCamera
-        local lv = cam.CFrame.LookVector
-        local dir = Vector3.new(lv.X, 0, lv.Z)
-        if dir.Magnitude < 0.05 then return end
-        dir = dir.Unit
-        -- подворачиваем горизонтальную скорость за камерой + лёгкий разгон до капы
-        local newSpeed = math.min(horiz + 0.35, S.strafeSpeed)
-        root.AssemblyLinearVelocity = Vector3.new(dir.X * newSpeed, vel.Y, dir.Z * newSpeed)
-    end)
-end
-
-local function disableStrafe()
-    S.strafeOn = false
-    if S.strafeConn then S.strafeConn:Disconnect() S.strafeConn = nil end
-end
-
--- ============ SPECTATE (с мини-окном) ============
-local SpecGui = Instance.new("ScreenGui")
-SpecGui.Name = "SpermaHubSpec"
-SpecGui.ResetOnSpawn = false
-SpecGui.IgnoreGuiInset = true
-SpecGui.DisplayOrder = 90
-SpecGui.Parent = LP:WaitForChild("PlayerGui")
-
-local SpecWin = Instance.new("Frame")
-SpecWin.Size = UDim2.new(0, 220, 0, 78)
-SpecWin.Position = UDim2.new(0.5, -110, 1, -120)
-SpecWin.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
-SpecWin.BackgroundTransparency = 0.1
-SpecWin.BorderSizePixel = 0
-SpecWin.Active = true
-SpecWin.Draggable = true
-SpecWin.Visible = false
-SpecWin.Parent = SpecGui
-do
-    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = SpecWin
-    local s = Instance.new("UIStroke") s.Color = Color3.fromRGB(120, 60, 200) s.Thickness = 1 s.Transparency = 0.3 s.Parent = SpecWin
-end
-
-local SpecTitle = Instance.new("TextLabel")
-SpecTitle.Size = UDim2.new(1, -70, 0, 26)
-SpecTitle.Position = UDim2.new(0, 10, 0, 4)
-SpecTitle.BackgroundTransparency = 1
-SpecTitle.Text = "👁 Spectate"
-SpecTitle.TextColor3 = Color3.fromRGB(200, 160, 255)
-SpecTitle.Font = Enum.Font.GothamBold
-SpecTitle.TextSize = 13
-SpecTitle.TextXAlignment = Enum.TextXAlignment.Left
-SpecTitle.Parent = SpecWin
-
-local SpecExit = Instance.new("TextButton")
-SpecExit.Size = UDim2.new(0, 62, 0, 20)
-SpecExit.Position = UDim2.new(1, -70, 0, 6)
-SpecExit.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
-SpecExit.Text = "✖ Выйти"
-SpecExit.TextColor3 = Color3.fromRGB(255, 220, 220)
-SpecExit.Font = Enum.Font.GothamBold
-SpecExit.TextSize = 11
-SpecExit.BorderSizePixel = 0
-SpecExit.AutoButtonColor = true
-SpecExit.Parent = SpecWin
-do
-    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = SpecExit
-end
-
-local SpecInfo = Instance.new("TextLabel")
-SpecInfo.Size = UDim2.new(1, -20, 0, 34)
-SpecInfo.Position = UDim2.new(0, 10, 0, 36)
-SpecInfo.BackgroundTransparency = 1
-SpecInfo.Text = "--"
-SpecInfo.TextColor3 = Color3.fromRGB(230, 230, 240)
-SpecInfo.Font = Enum.Font.GothamBold
-SpecInfo.TextSize = 13
-SpecInfo.TextXAlignment = Enum.TextXAlignment.Left
-SpecInfo.TextYAlignment = Enum.TextYAlignment.Top
-SpecInfo.Parent = SpecWin
-
-local function exitSpectate()
-    if not S.specOn then
-        SpecWin.Visible = false
-        return
-    end
-    S.specOn = false
-    S.specTarget = nil
-    if S.specConn then S.specConn:Disconnect() S.specConn = nil end
-    SpecWin.Visible = false
-    local cam = workspace.CurrentCamera
-    local ch = LP.Character
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    if hum then cam.CameraSubject = hum end
-    cam.CameraType = Enum.CameraType.Custom
-end
-
-SpecExit.MouseButton1Click:Connect(exitSpectate)
-
-local function startSpectate(plr)
-    local tch = plr and plr.Character
-    local thum = tch and tch:FindFirstChildOfClass("Humanoid")
-    if not thum then
-        toastImpl("Spectate", "У цели нет персонажа!")
-        return
-    end
-    dcc(S.specConn)
-    S.specOn = true
-    S.specTarget = plr
-    local cam = workspace.CurrentCamera
-    cam.CameraSubject = thum
-    SpecTitle.Text = "👁 Spectating"
-    SpecWin.Visible = true
-    toastImpl("Spectate", "Слежу за " .. plr.Name)
-    S.specConn = RunService.RenderStepped:Connect(function()
-        if not S.specOn then return end
-        local t = S.specTarget
-        local tch2 = t and t.Character
-        local thum2 = tch2 and tch2:FindFirstChildOfClass("Humanoid")
-        if not t or not t.Parent or not thum2 or thum2.Health <= 0 then
-            toastImpl("Spectate", "Цель умерла или вышла")
-            exitSpectate()
-            return
-        end
-        cam.CameraSubject = thum2
-        SpecInfo.Text = string.format("%s\n%.0f / %.0f HP", t.Name, thum2.Health, thum2.MaxHealth)
-        local r = thum2.Health / thum2.MaxHealth
-        SpecInfo.TextColor3 = Color3.fromRGB(math.floor(255 * (1 - r) + 80 * r), math.floor(255 * r), 120)
-    end)
-end
-
--- ============ ANTI-CHEAT BYPASS (честный) ============
--- Клиентские античиты живут в LocalScript/ModuleScript игрока — их можно убить.
--- Серверный античит клиентом не обходится в принципе (ни один чит не умеет).
-local AC_PATTERNS = {
-    "adonis", "anticheat", "anti-cheat", "anti cheat", "antihack", "anti-hack",
-    "anticheatclient", "exploitdetector", "cheatdetector", "watchdog", "banhammer",
-}
-
-local function neuterAntiCheatScripts(dryRun)
-    local killed = 0
-    local roots = {
-        LP:FindFirstChild("PlayerGui"),
-        LP:FindFirstChild("PlayerScripts"),
-        game:GetService("ReplicatedFirst"),
-    }
-    for _, root in ipairs(roots) do
-        if root then
-            for _, obj in ipairs(root:GetDescendants()) do
-                if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
-                    local n = string.lower(obj.Name)
-                    for _, pat in ipairs(AC_PATTERNS) do
-                        if string.find(n, pat, 1, true) then
-                            killed = killed + 1
-                            if not dryRun then
-                                pcall(function() if obj:IsA("LocalScript") then obj.Disabled = true end end)
-                                pcall(function() obj:Destroy() end)
-                            end
-                            break
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return killed
-end
-
-local function acHooksSupported()
-    return type(getrawmetatable) == "function"
-        and type(newcclosure) == "function"
-        and type(setreadonly) == "function"
-        and type(getnamecallmethod) == "function"
-end
-
--- Anti Kick: перехват Namecall Kick (если экзекьютор умеет хуки)
-local function enableAntiKick()
-    if S.akOn then return true end
-    if not acHooksSupported() then
-        notify("Bypass", "Anti Kick недоступен: у экзекьютора нет хуков (на Xeno не работает)")
-        return false
-    end
-    local ok, err = pcall(function()
-        local mt = getrawmetatable(game)
-        local old = mt.__namecall
-        setreadonly(mt, false)
-        S.akOriginal = old
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if S.akOn and method and (method == "Kick" or method == "kick") then
-                return nil -- кик молча проглочен
-            end
-            return old(self, ...)
-        end)
-        setreadonly(mt, true)
-    end)
-    if ok then
-        S.akOn = true
-        notify("Bypass", "Anti Kick включён")
-    else
-        notify("Bypass", "Не удалось поставить Anti Kick: " .. tostring(err))
-    end
-    return ok
-end
-
-local function disableAntiKick()
-    if not S.akOn then return end
-    pcall(function()
-        local mt = getrawmetatable(game)
-        setreadonly(mt, false)
-        mt.__namecall = S.akOriginal
-        setreadonly(mt, true)
-    end)
-    S.akOn = false
-    S.akOriginal = nil
-end
-
-local function applyBypassMode(mode)
-    local prev = S.bypassMode
-    S.bypassMode = mode
-    if mode == "Off" then
-        disableAntiKick()
-        return
-    end
-    -- scripts killer (разово + авто)
-    if mode == "Scripts Killer" or mode == "Full" then
-        local k = neuterAntiCheatScripts(false)
-        if mode ~= prev then
-            toastImpl("Bypass", "Scripts Killer: отключено " .. tostring(k) .. " шт., авто-скан каждые 20 сек")
-        end
-    end
-    -- anti kick
-    if mode == "Anti Kick" or mode == "Full" then
-        enableAntiKick()
-    end
-end
-
--- фоновый рескан клиентских античитов
-task.spawn(function()
-    while true do
-        if S and S.guiAlive and (S.bypassMode == "Scripts Killer" or S.bypassMode == "Full") then
-            pcall(neuterAntiCheatScripts, false)
-        end
-        task.wait(20)
-    end
-end)
-
-local TeleportService = game:GetService("TeleportService")
-
--- ============ SMOOTH CAMERA (плавное движение камеры) ============
--- кастомный камера-контроллер: CameraType=Scriptable, yaw/pitch сглаживаются
--- экспоненциальным фильтром; камера орбитирует вокруг головы персонажа.
-scYaw = 0 scPitch = 0 scTgtYaw = 0 scTgtPitch = 0
-
-function enableSmoothCam()
-    local cam = workspace.CurrentCamera
-    if not cam then
-        notify("Smooth Camera", "Нет камеры")
-        return
-    end
-    S.scOn = true
-    S.scPrevType = cam.CameraType
-    cam.CameraType = Enum.CameraType.Scriptable
-    -- стартовые углы из текущего вида камеры
-    local x, y = cam.CFrame:ToEulerAnglesYXZ()
-    scPitch = x
-    scYaw = y
-    scTgtPitch = x
-    scTgtYaw = y
-    dcc(S.scConn)
-    S.scConn = RunService.RenderStepped:Connect(function(dt)
-        if not S.scOn then return end
-        local cam2 = workspace.CurrentCamera
-        if not cam2 then return end
-        -- цель вращения — по дельте мыши (без мгновенного скачка)
-        local md = UIS:GetMouseDelta()
-        local sens = 0.0035 * S.scSens
-        scTgtYaw = scTgtYaw - md.X * sens
-        scTgtPitch = math.clamp(scTgtPitch - md.Y * sens, -1.45, 1.45)
-        -- сглаживание (экспоненциальный фильтр, не зависит от FPS)
-        local k = 1 - math.exp(-dt * S.scSpeed)
-        scYaw = scYaw + (scTgtYaw - scYaw) * k
-        scPitch = scPitch + (scTgtPitch - scPitch) * k
-        -- орбита вокруг головы
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        if root then
-            local headPos = root.Position + Vector3.new(0, 1.5, 0)
-            local look = CFrame.Angles(0, scYaw, 0) * CFrame.Angles(scPitch, 0, 0)
-            local camPos = headPos - look.LookVector * S.scDist
-            cam2.CFrame = CFrame.new(camPos, headPos)
-        end
-    end)
-end
-
-function disableSmoothCam()
-    S.scOn = false
-    if S.scConn then S.scConn:Disconnect() S.scConn = nil end
-    local cam = workspace.CurrentCamera
-    if cam then
-        cam.CameraType = S.scPrevType or Enum.CameraType.Custom
-    end
-end
-
--- ============ SPIDER (лазание по стенам) ============
-spiderRayParams = RaycastParams.new()
-spiderRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-function enableSpider()
-    S.spiderOn = true
-    dcc(S.spiderConn)
-    S.spiderConn = RunService.Heartbeat:Connect(function()
-        if not S.spiderOn then return end
-        local ch = LP.Character
-        if not ch then return end
-        local root = ch:FindFirstChild("HumanoidRootPart")
-        local hum = ch:FindFirstChildOfClass("Humanoid")
-        if not root or not hum then return end
-        if hum.MoveDirection.Magnitude < 0.1 then return end -- стоишь — не лезешь
-        spiderRayParams.FilterDescendantsInstances = {ch}
-        local hit = workspace:Raycast(root.Position, hum.MoveDirection.Unit * 3, spiderRayParams)
-        if hit then
-            -- перед нами стена: ставим вертикальную скорость подъёма
-            root.Velocity = Vector3.new(root.Velocity.X, S.spiderSpeed, root.Velocity.Z)
-        end
-    end)
-end
-
-function disableSpider()
-    S.spiderOn = false
-    if S.spiderConn then S.spiderConn:Disconnect() S.spiderConn = nil end
-end
-
--- ============ AIRSTACK (ходьба по воздуху на платформе / заморозка в маленьком кубе) ============
-function enableAirStack()
-    S.airstackOn = true
-    local ch = LP.Character
-    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    local freeze = (S.airstackMode == "Freeze")
-    -- высота платформы фиксируется в момент включения
-    S.airstackY = root and (root.Position.Y - 3.2) or 60
-    S.airstackFrozenCF = (freeze and root) and root.CFrame or nil
-    if freeze and hum then
-        -- сохранить скорости и ЗАМОРОЗИТЬ: персонаж не может ступить/прыгнуть вообще
-        S.airstackSavedWS = hum.WalkSpeed
-        S.airstackSavedJP = hum.JumpPower
-        S.airstackSavedJH = hum.JumpHeight
-        pcall(function()
-            hum.WalkSpeed = 0
-            hum.JumpPower = 0
-            hum.JumpHeight = 0
-            hum.PlatformStand = false
-        end)
-    end
-    if not S.airstackPlatform or not S.airstackPlatform.Parent then
-        local p = Instance.new("Part")
-        p.Name = "SpermaAirStack"
-        p.Anchored = true
-        p.CanCollide = true
-        p.Transparency = 1
-        p.CastShadow = false
-        p.Size = Vector3.new(12, 1, 12)
-        p.Parent = workspace
-        S.airstackPlatform = p
-    end
-    S.airstackPlatform.Size = freeze and Vector3.new(3, 1, 3) or Vector3.new(12, 1, 12)
-    dcc(S.airstackConn)
-    S.airstackConn = RunService.Heartbeat:Connect(function()
-        if not S.airstackOn then return end
-        local ch2 = LP.Character
-        if not ch2 then return end
-        local root2 = ch2:FindFirstChild("HumanoidRootPart")
-        local plat = S.airstackPlatform
-        if not root2 or not plat then return end
-        if S.airstackMode == "Freeze" and S.airstackFrozenCF then
-            -- ПОЛНАЯ заморозка: нет ни шага, ни прыжка, ни дрейфа, ни кручения
-            pcall(function()
-                local hum2 = ch2:FindFirstChildOfClass("Humanoid")
-                if hum2 then
-                    if hum2.WalkSpeed ~= 0 then hum2.WalkSpeed = 0 end
-                    if hum2.JumpPower ~= 0 then hum2.JumpPower = 0 end
-                    if hum2.JumpHeight ~= 0 then hum2.JumpHeight = 0 end
-                    local st = hum2:GetState()
-                    if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
-                        hum2:ChangeState(Enum.HumanoidStateType.Running)
-                    end
-                end
-                root2.CFrame = S.airstackFrozenCF
-                root2.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                root2.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                plat.CFrame = S.airstackFrozenCF * CFrame.new(0, -3.27, 0)
-            end)
-        else
-            -- платформа следует за игроком по X/Z на зафиксированной высоте
-            plat.Position = Vector3.new(root2.Position.X,
-                (S.airstackY or 60) - plat.Size.Y / 2 + 0.05,
-                root2.Position.Z)
-        end
-    end)
-end
-
-function disableAirStack()
-    S.airstackOn = false
-    S.airstackFrozenCF = nil
-    -- вернуть персонажу движение
-    pcall(function()
-        local ch = LP.Character
-        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.WalkSpeed = S.airstackSavedWS or 16
-            hum.JumpPower = S.airstackSavedJP or 50
-            hum.JumpHeight = S.airstackSavedJH or 7.2
-        end
-    end)
-    if S.airstackConn then S.airstackConn:Disconnect() S.airstackConn = nil end
-    if S.airstackPlatform and S.airstackPlatform.Parent then
-        S.airstackPlatform.Position = Vector3.new(0, -1e5, 0) -- прячем платформу далеко вниз
-    end
-end
-
--- ============ AUTO SHOT (тригер-бот: не наводится, но попадает) ============
--- камера НЕ трогается: как только вражья голова попадает в конус у прицела —
--- сам жмёт ЛКМ (инжект) + активирует оружие. Снаряд летит по центру => хит.
-function asTargetInCone()
-    local cam = workspace.CurrentCamera
-    if not cam then return nil end
-    local cx = cam.ViewportSize.X / 2
-    local cy = cam.ViewportSize.Y / 2
-    local best, bd = nil, S.asFovPx
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP and not isTeammate(plr) then
-            local ch2 = plr.Character
-            local head = ch2 and ch2:FindFirstChild("Head")
-            local hum = ch2 and ch2:FindFirstChildOfClass("Humanoid")
-            if head and hum and hum.Health > 0 and isVisible(head) then
-                local sp, on = cam:WorldToViewportPoint(head.Position)
-                if on then
-                    local dx = sp.X - cx
-                    local dy = sp.Y - cy
-                    local d = math.sqrt(dx * dx + dy * dy)
-                    if d < bd then
-                        bd = d
-                        best = head
-                    end
-                end
-            end
-        end
-    end
-    return best
-end
-
--- оружие + клинок (фолбэки для кастомных мечей)
-function asGetWeapon()
-    local ch = LP.Character
-    local tool = ch and ch:FindFirstChildOfClass("Tool")
-    local handle = nil
-    if tool then
-        handle = tool:FindFirstChild("Handle")
-        if not (handle and handle:IsA("BasePart")) then
-            handle = tool:FindFirstChildWhichIsA("BasePart", true)
-        end
-    end
-    return tool, handle
-end
-
-function enableAutoShot()
-    S.asOn = true
-    dcc(S.asConn)
-    local acc = 0
-    -- Stepped (до физики): сервер застаёт клинок во враге => попадание гарантировано,
-    -- КАМЕРА НЕ ДВИЖЕТСЯ ВООБЩЕ
-    S.asConn = RunService.Stepped:Connect(function(dt)
-        if not S.asOn then return end
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        local tool, handle = asGetWeapon()
-
-        -- INSTANT FLICK обрабатывается рендер-биндом ПОСЛЕ камеры игры (см. ниже).
-        -- Обходим Stepped ТОЛЬКО в пушечном режиме (когда Silent Hit и TP Kill ВЫКЛЮЧЕНЫ),
-        -- чтобы мечи/TP Kill из Stepped не ломались
-        if S.asFlick and not S.asSilentHit and not S.asTp then return end
-
-        -- ЦЕЛЬ (без camera-turn):
-        local targetModel, targetRoot = nil, nil
-        if S.asSilentHit then
-            -- silent hit: ближайший живой враг в радиусе удара (в TP-режиме — в радиусе TP Дальности)
-            local bd = S.asTp and S.asTpRange or S.asRange
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= LP and not isTeammate(plr) then
-                    local tch = plr.Character
-                    local thr = tch and tch:FindFirstChild("HumanoidRootPart")
-                    local thum = tch and tch:FindFirstChildOfClass("Humanoid")
-                    if thr and thum and thum.Health > 0 then
-                        local d = (thr.Position - root.Position).Magnitude
-                        if d < bd then
-                            bd = d
-                            targetModel = tch
-                            targetRoot = thr
-                        end
-                    end
-                end
-            end
-        else
-            -- классический/фортлайн режим: цель в конусе прицела (сам огонь)
-            local head = asTargetInCone()
-            if head then
-                targetModel = head.Parent
-                targetRoot = head
-                -- FORTLINE-асист: пушки стреляют ПО КАМЕРЕ, поэтому плавно
-                -- подтягиваем камеру к голове (Assist=0 — камера не двигается)
-                if S.asAssist and S.asAssist > 0 then
-                    local camA = workspace.CurrentCamera
-                    if camA then
-                        camA.CFrame = camA.CFrame:Lerp(
-                            CFrame.new(camA.CFrame.Position, head.Position),
-                            S.asAssist)
-                    end
-                end
-            end
-        end
-        if not targetModel then return end
-
-        -- САЙЛЕНТ ХИТ (рабочий голяк без хуков):
-        --  1) REACH: клинок раздуваем до куба Reach Size — Handle.Touched
-        --     сервер регистрирует по всем врагам внутри куба;
-        --  2) дубль: firetouchinterest по партам ближайшей цели (если executor даёт);
-        --  3) НИЧТО не двигается: ни камера, ни персонаж, ни рука.
-        if S.asSilentHit and handle then
-            if not S.asOrigSize then
-                S.asOrigSize = handle.Size
-            end
-            pcall(function()
-                handle.CanCollide = false
-                handle.Size = Vector3.new(S.asRange, S.asRange, S.asRange)
-            end)
-            if saHasTouch and targetModel then
-                for _, part in ipairs(targetModel:GetChildren()) do
-                    if part:IsA("BasePart") then
-                        saTouch(handle, part)
-                    end
-                end
-            end
-        end
-
-        -- TP KILL (старый стиль): телепорт за спину цели -> удар -> назад
-        if S.asTp and targetRoot then
-            local nowT = os.clock()
-            local tpPeriod = math.max(0.22, 2 / math.max(S.asCps, 1))
-            if S.asBackCF then
-                -- возврат на исходную позицию
-                pcall(function() root.CFrame = S.asBackCF end)
-                S.asBackCF = nil
-            elseif nowT - (S.asLastSwing or 0) >= tpPeriod then
-                S.asLastSwing = nowT
-                S.asBackCF = root.CFrame
-                local behind = targetRoot.Position - targetRoot.CFrame.LookVector * S.asTpDist
-                pcall(function()
-                    root.CFrame = CFrame.lookAt(behind, targetRoot.Position)
-                end)
-                -- мгновенный удар с места атаки
-                pcall(function()
-                    if tool then tool:Activate() end
-                end)
-                if saHasTouch and handle then
-                    for _, part in ipairs(targetModel:GetChildren()) do
-                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                            saTouch(handle, part)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- авто-огонь по CPS
-        acc = acc + dt
-        if acc >= 1 / math.max(S.asCps, 1) then
-            acc = 0
-            kaClick()
-            pcall(function()
-                if tool then tool:Activate() end
-            end)
-        end
-    end)
-
-    -- УДЕРЖАНИЕ ЛКМ: Fortline стреляет пока кнопка ЗАЖАТА (как из сниппета silent aim),
-    -- поэтому авто-шот сам зажимает ЛКМ, пока есть цель (tap-клики не работают)
-    local function asHoldLMB()
-        if S.flickHold then return end
-        S.flickHold = true
-        if type(mouse1press) == "function" then
-            pcall(mouse1press)
-            return
-        end
-        pcall(function()
-            local cam2 = workspace.CurrentCamera
-            if cam2 then
-                local vx = math.floor(cam2.ViewportSize.X / 2)
-                local vy = math.floor(cam2.ViewportSize.Y / 2)
-                VIMService:SendMouseButtonEvent(vx, vy, 0, true, game, 1)
-            end
-        end)
-    end
-    local function asReleaseLMB()
-        if not S.flickHold then return end
-        S.flickHold = false
-        if type(mouse1release) == "function" then
-            pcall(mouse1release)
-            return
-        end
-        pcall(function()
-            local cam2 = workspace.CurrentCamera
-            if cam2 then
-                local vx = math.floor(cam2.ViewportSize.X / 2)
-                local vy = math.floor(cam2.ViewportSize.Y / 2)
-                VIMService:SendMouseButtonEvent(vx, vy, 0, false, game, 1)
-            end
-        end)
-    end
-
-    -- НОРМАЛЬНЫЙ САЙЛЕНТ (Network): если executor с хуками — собственно
-    -- перенаправляем FireServer оружия В ГОЛОВУ цели. Камеру двигать НЕ НАДО,
-    -- пули летят куда надо сами. Мы только держим ЛКМ пока цель в конусе.
-    if S.asSilentNet then
-        pcall(function()
-            if checkSilentAimSupport() then
-                -- Fortline: точный хук BaseWeapon.fire (там настоящая пушечная система),
-                -- иначе — универсальный метатабличный редирект FireServer
-                if not enableFortlineSilent() then
-                    enableSilentNetwork()
-                end
-                S.asNetByAuto = true
-                S.silentAimOn = true
-            else
-                S.asSilentNet = false
-                notify("Auto Shot", "Silent Redirect: нет хуков на этом executor — выкл", 4, "alert-triangle")
-            end
-        end)
-    end
-
-    -- Рендер-бинд ПОСЛЕ игровой камеры: flick-снап (если включён) и
-    -- автозажим ЛКМ, когда цель в конусе
-    S.asFlickB = true
-    RunService:BindToRenderStep("SpermaHubFlickStep", Enum.RenderPriority.Camera.Value + 1, function()
-        if not S.asOn or S.asSilentHit or S.asTp then
-            -- SilentHit/TP Kill — пусть работает Stepped-механика, бинд отдыхает
-            S.flickHead = nil
-            asReleaseLMB()
-            return
-        end
-        if not S.asFlick and not S.asSilentNet then
-            S.flickHead = nil
-            asReleaseLMB()
-            return
-        end
-        local camF = workspace.CurrentCamera
-        if not camF then return end
-        local head = asTargetInCone()
-        S.flickHead = head
-        if not head then
-            S.asLastTarget = nil
-            asReleaseLMB()
-            return
-        end
-        -- автонаведение камеры на цель ПОКА СТРЕЛЯЕМ:
-        --  flick → МГНОВЕННЫЙ снап; сайлент без flick → плавный трек (камера сама догоняет)
-        if not S.asSilentNet and S.asFlick then
-            local okS = pcall(function()
-                camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
-            end)
-            if not okS then return end
-        else
-            pcall(function()
-                camF.CFrame = camF.CFrame:Lerp(
-                    CFrame.new(camF.CFrame.Position, head.Position), 0.55)
-            end)
-        end
-        -- человеческий ритм: пауза-реакция на новую цель, дальше разброс интервалов
-        local targetModelF = head.Parent
-        local nowF = os.clock()
-        if S.asLastTarget ~= targetModelF then
-            S.asLastTarget = targetModelF
-            S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
-        end
-        -- TRIGGER FIRE (skeet): как только прицел РЕАЛЬНО на цели (<=30 px) — мгновенный выстрел
-        if S.asTrigger then
-            local spT, onT = camF:WorldToViewportPoint(head.Position)
-            if onT then
-                local cxT = camF.ViewportSize.X / 2
-                local cyT = camF.ViewportSize.Y / 2
-                local dpxT = math.sqrt((spT.X - cxT) ^ 2 + (spT.Y - cyT) ^ 2)
-                if dpxT <= 30 then
-                    local nowT = os.clock()
-                    if nowT - (S.asLastTrig or 0)
-                        >= (S.asTrigDelay or 0.08) + math.random() * 0.03 then
-                        S.asLastTrig = nowT
-                        kaClick()
-                    end
-                end
-            end
-        end
-        if nowF >= (S.asNextFire or 0) then
-            -- реакция вышла: жмём ЛКМ УДЕРЖИВАЕМО (автоматный огонь по темпу пушки)
-            asHoldLMB()
-            local toolF = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
-            if toolF then
-                pcall(function() toolF:Activate() end)
-            end
-            -- доп. тап: для полуавтоматик, где hold не канает
-            kaClick()
-            local base = 1 / math.max(S.asCps, 1)
-            S.asNextFire = nowF + base * (0.8 + math.random() * 0.5)
-        end
-    end)
-end
-
-function disableAutoShot()
-    if S.asFlickB then
-        RunService:UnbindFromRenderStep("SpermaHubFlickStep")
-        S.asFlickB = false
-    end
-    S.flickHead = nil
-    -- если сайлент включали мы (Auto Shot) — аккуратно снять
-    if S.asNetByAuto then
-        S.asNetByAuto = false
-        pcall(function()
-            if S.silentAimOn and disableSilentAim then disableSilentAim() end
-        end)
-    end
-    -- отпустить автозажатую ЛКМ
-    if S.flickHold then
-        S.flickHold = false
-        if type(mouse1release) == "function" then
-            pcall(mouse1release)
-        else
-            pcall(function()
-                local cam2 = workspace.CurrentCamera
-                if cam2 then
-                    VIMService:SendMouseButtonEvent(
-                        math.floor(cam2.ViewportSize.X / 2),
-                        math.floor(cam2.ViewportSize.Y / 2),
-                        0, false, game, 1)
-                end
-            end)
-        end
-    end
-    S.asOn = false
-    if S.asConn then S.asConn:Disconnect() S.asConn = nil end
-    -- восстановить позицию, если отключили во время TP Kill
-    if S.asBackCF then
-        local ch0 = LP.Character
-        local root0 = ch0 and ch0:FindFirstChild("HumanoidRootPart")
-        if root0 then pcall(function() root0.CFrame = S.asBackCF end) end
-        S.asBackCF = nil
-    end
-    -- вернуть размер клинка
-    local ch2 = LP.Character
-    local tool2 = ch2 and ch2:FindFirstChildOfClass("Tool")
-    local handle2 = tool2 and (tool2:FindFirstChild("Handle") or tool2:FindFirstChildWhichIsA("BasePart", true))
-    if handle2 and S.asOrigSize then
-        pcall(function()
-            handle2.Size = S.asOrigSize
-        end)
-    end
-    S.asOrigSize = nil
-    S.asWeld = nil
-    S.asWeldParent = nil
-end
-
--- ============ KILL AURA (закликивает врага) ============
-VIMService = game:GetService("VirtualInputManager")
-
-function kaNearestTarget()
-    local ch = LP.Character
-    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    if not root then return nil end
-    local best, bd = nil, S.kaRange
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP and not isTeammate(plr) then
-            local tch = plr.Character
-            local thr = tch and tch:FindFirstChild("HumanoidRootPart")
-            local thum = tch and tch:FindFirstChildOfClass("Humanoid")
-            if thr and thum and thum.Health > 0 then
-                local d = (thr.Position - root.Position).Magnitude
-                if d < bd then
-                    bd = d
-                    best = plr
-                end
-            end
-        end
-    end
-    return best
-end
-
-function kaClick()
-    -- инжект реального клика ЛКМ (как делает живой игрок)
-    if type(mouse1press) == "function" then
-        pcall(mouse1press)
-        task.delay(0.03, function()
-            pcall(function()
-                if type(mouse1release) == "function" then mouse1release() end
-            end)
-        end)
-        return
-    end
-    -- fallback: VirtualInputManager, клик СТРОГО В ЦЕНТР ЭКРАНА (не (0,0) — некоторые
-    -- игры/меню ловят клики в углу и гасят стрельбу)
-    local vx, vy = 0, 0
-    pcall(function()
-        local cam2 = workspace.CurrentCamera
-        if cam2 then
-            vx = math.floor(cam2.ViewportSize.X / 2)
-            vy = math.floor(cam2.ViewportSize.Y / 2)
-        end
-    end)
-    pcall(function()
-        VIMService:SendMouseButtonEvent(vx, vy, 0, true, game, 1)
-    end)
-    task.delay(0.03, function()
-        pcall(function()
-            VIMService:SendMouseButtonEvent(vx, vy, 0, false, game, 1)
-        end)
-    end)
-end
-
-function enableKillAura()
-    S.kaOn = true
-    dcc(S.kaConn)
-    local acc = 0
-    S.kaConn = RunService.Heartbeat:Connect(function(dt)
-        if not S.kaOn then return end
-        acc = acc + dt
-        if acc < 1 / math.max(S.kaCps, 1) then return end
-        acc = 0
-        local target = kaNearestTarget()
-        if not target then
-            S.kaTarget = nil
-            return
-        end
-        S.kaTarget = target
-        local root2 = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-        local thr2 = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        if root2 and thr2 and S.kaFace then
-            -- поворачиваем персонажа к цели, чтобы свинг ловил хитбокс
-            root2.CFrame = CFrame.new(root2.Position,
-                Vector3.new(thr2.Position.X, root2.Position.Y, thr2.Position.Z))
-        end
-        kaClick() -- обычный инжект-клик
-        pcall(function()
-            local ch2 = LP.Character
-            local tool = ch2 and ch2:FindFirstChildOfClass("Tool")
-            if tool then tool:Activate() end -- классическая активация оружия
-        end)
-    end)
-end
-
-function disableKillAura()
-    S.kaOn = false
-    S.kaTarget = nil
-    if S.kaConn then S.kaConn:Disconnect() S.kaConn = nil end
-end
-
--- ============ SILENT AURA (1.8 Arena: клинок телепортируется во врага) ============
--- сорцы: универсальные sword silent aura (scriptblox/reddit). Сервер валидирует урон
--- по Handle.Touched => кладём сам Handle во врага каждый Stepped-тик (до физики),
--- сервер видит РЕАЛЬНОЕ касание. firetouchinterest используем как дублирующий лейер.
-saHasTouch = (type(firetouchinterest) == "function")
-
-function saTouch(handle, part)
-    pcall(function()
-        firetouchinterest(handle, part, 0)
-    end)
-    pcall(function()
-        firetouchinterest(handle, part, 1)
-    end)
-end
-
-function enableSilentAura()
-    S.saOn = true
-    dcc(S.saConn)
-    if not saHasTouch then
-        notify("Silent Aura", "firetouchinterest нет — работаем на телепорте клинка (основной режим)")
-    end
-    local acc = 0
-    -- Stepped: тикаем ДО физики, чтобы сервер застал клинок во враге
-    S.saConn = RunService.Stepped:Connect(function(dt)
-        if not S.saOn then return end
-        local ch = LP.Character
-        if not ch then return end
-        local root = ch:FindFirstChild("HumanoidRootPart")
-        local tool = ch:FindFirstChildOfClass("Tool")
-        -- ручка клинка: Handle, либо первый BasePart внутри тулса (фолбэк)
-        local handle = nil
-        if tool then
-            handle = tool:FindFirstChild("Handle")
-            if not (handle and handle:IsA("BasePart")) then
-                handle = tool:FindFirstChildWhichIsA("BasePart", true)
-            end
-        end
-        if not root or not handle then
-            S.saTarget = nil
-            return
-        end
-        -- ближайший живой враг в досягаемости
-        local targetModel, targetRoot, bd = nil, nil, S.saRange
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LP and not isTeammate(plr) then
-                local tch = plr.Character
-                local thr = tch and tch:FindFirstChild("HumanoidRootPart")
-                local thum = tch and tch:FindFirstChildOfClass("Humanoid")
-                if thr and thum and thum.Health > 0 then
-                    local d = (thr.Position - root.Position).Magnitude
-                    if d < bd then
-                        bd = d
-                        targetModel = tch
-                        targetRoot = thr
-                    end
-                end
-            end
-        end
-        S.saTarget = targetModel
-        if not targetRoot then return end
-
-        -- 1) REACH: клинок раздувается в куб Reach — Handle.Touched считается
-        --    по всем врагам внутри. НИЧТО не телепортируется (ни рука, ни персонаж).
-        if handle then
-            if not S.saOrigSize then
-                S.saOrigSize = handle.Size
-            end
-            pcall(function()
-                handle.CanCollide = false
-                handle.Size = Vector3.new(S.saRange, S.saRange, S.saRange)
-            end)
-        end
-
-        -- 2) firetouchinterest (если executor даёт): дублируем касание по всем партам
-        if saHasTouch then
-            for _, part in ipairs(targetModel:GetChildren()) do
-                if part:IsA("BasePart") then
-                    saTouch(handle, part)
-                end
-            end
-        end
-
-        -- 3) свинг с задержкой: сервер должен видеть "атаку", Delay быстрее 0.25 = бан
-        acc = acc + dt
-        if acc >= S.saDelay then
-            acc = 0
-            pcall(function()
-                tool:Activate()
-            end)
-        end
-    end)
-end
-
-function disableSilentAura()
-    S.saOn = false
-    S.saTarget = nil
-    if S.saConn then S.saConn:Disconnect() S.saConn = nil end
-    -- вернуть размер клинка
-    local ch3 = LP.Character
-    local tool3 = ch3 and ch3:FindFirstChildOfClass("Tool")
-    local handle3 = tool3 and (tool3:FindFirstChild("Handle") or tool3:FindFirstChildWhichIsA("BasePart", true))
-    if handle3 and S.saOrigSize then
-        pcall(function()
-            handle3.Size = S.saOrigSize
-        end)
-    end
-    S.saOrigSize = nil
-end
-
--- ============ NO KNOCKBACK (удар не отталкивает) ============
-noKbZero = Vector3.new(0, 0, 0)
-
-function enableNoKb()
-    S.noKbOn = true
-    dcc(S.noKbConn)
-    S.noKbConn = RunService.Heartbeat:Connect(function()
-        if not S.noKbOn then return end
-        local ch = LP.Character
-        if not ch then return end
-        local root = ch:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        if S.flying then S.noKbLast = nil return end -- во время флая свою скорость не трогаем
-        local vel = root.Velocity
-        -- горизонтальная скорость выше порога = нас ударило/толкнуло
-        if (vel - Vector3.new(0, vel.Y, 0)).Magnitude > S.noKbMax then
-            -- возвращаем доударные X/Z (движение как ни в чём не бывало)
-            local lv = S.noKbLast or noKbZero
-            local keepY = vel.Y
-            if S.noKbFull then keepY = 0 end -- 1.8-режим: обнуляем и подскок вверх от удара
-            root.Velocity = Vector3.new(lv.X, keepY, lv.Z)
-        else
-            -- обычная скорость (ходьба/бег) — запоминаем как эталон
-            S.noKbLast = Vector3.new(vel.X, 0, vel.Z)
-        end
-    end)
-end
-
-function disableNoKb()
-    S.noKbOn = false
-    if S.noKbConn then S.noKbConn:Disconnect() S.noKbConn = nil end
-    S.noKbLast = nil
-end
-
--- ============ INVISIBLE (оффсет персонажа под карту) ============
-function setInvisible(state)
-    S.invisOn = state
-    if state then
-        dcc(S.invisConn)
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        S.invisY = root and root.Position.Y or 60
-        S.invisConn = RunService.Heartbeat:Connect(function()
-            if not S.invisOn then return end
-            local ch2 = LP.Character
-            if not ch2 then return end
-            local root2 = ch2:FindFirstChild("HumanoidRootPart")
-            local hum2 = ch2:FindFirstChildOfClass("Humanoid")
-            if root2 and hum2 then
-                -- персонаж физически провален под карту: другие его не видят, а падения нет (Y зафиксирован)
-                local p = root2.Position
-                root2.Velocity = Vector3.new(0, 0, 0)
-                root2.CFrame = CFrame.new(p.X, (S.invisY or p.Y) - S.invisOffset, p.Z)
-                -- камеру держим на нормальной высоте — ты видишь всё как обычно
-                hum2.CameraOffset = Vector3.new(0, S.invisOffset, 0)
-            end
-        end)
-    else
-        if S.invisConn then S.invisConn:Disconnect() S.invisConn = nil end
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-        if hum then hum.CameraOffset = Vector3.new(0, 0, 0) end
-        if root then
-            local p = root.Position
-            root.CFrame = CFrame.new(p.X, (S.invisY or p.Y), p.Z) -- возврат наверх
-            root.Velocity = Vector3.new(0, 0, 0)
-        end
-    end
-end
-
--- ============ WALK SPEED (CFrame-доводка, античит не флагит WalkSpeed) ============
-local function applyWalkSpeed()
-    local ch = LP.Character
-    if not ch then return end
-    local hum = ch:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum.WalkSpeed = 16
-    end
-end
-
-S.wsConn = RunService.Heartbeat:Connect(function(dt)
-    if not S.walkSpeedOn then return end
-    local ch = LP.Character
-    if not ch then return end
-    local hum = ch:FindFirstChildOfClass("Humanoid")
-    local root = ch:FindFirstChild("HumanoidRootPart")
-    if not (hum and root) then return end
-    local md = hum.MoveDirection
-    if md.Magnitude < 0.01 then return end
-    local extra = (S.walkSpeed or 16) - 16
-    if extra <= 0 then return end
-    pcall(function()
-        local step = md * (extra * dt)
-        root.CFrame = root.CFrame + Vector3.new(step.X, 0, step.Z)
-    end)
-end)
-
--- ============ ANTI RAGDOLL (не падаешь, двигаешься) ============
-local AR_STATES = {
-    [Enum.HumanoidStateType.FallingDown] = true,
-    [Enum.HumanoidStateType.Ragdoll] = true,
-    [Enum.HumanoidStateType.Physics] = true,
-}
-S.arConn = RunService.Heartbeat:Connect(function()
-    if not S.antiRagdoll then return end
-    local ch = LP.Character
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local st = hum:GetState()
-    if AR_STATES[st] then
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    end
-end)
-
-bootStep("логика OK")
-
--- ============ ESP ============
-local ESPGui = Instance.new("ScreenGui")
-ESPGui.Name = "SpermaHubESP"
-ESPGui.ResetOnSpawn = false
-ESPGui.IgnoreGuiInset = true
-ESPGui.DisplayOrder = 50
-ESPGui.Parent = LP:WaitForChild("PlayerGui")
-
-local espObjects = {}
-local skeletonFrames = {}
-
--- неоновые стили подсветки (как на скриншотах)
-local CHAM_STYLES = {
-    Purple = {fill = Color3.fromRGB(170, 0, 255),  outline = Color3.fromRGB(225, 110, 255)},
-    Pink   = {fill = Color3.fromRGB(255, 0, 200),  outline = Color3.fromRGB(255, 120, 240)},
-    Red    = {fill = Color3.fromRGB(255, 40, 40),  outline = Color3.fromRGB(255, 150, 80)},
-    Green  = {fill = Color3.fromRGB(40, 255, 130), outline = Color3.fromRGB(190, 255, 190)},
-    Cyan   = {fill = Color3.fromRGB(0, 190, 255),  outline = Color3.fromRGB(150, 235, 255)},
-    Gold   = {fill = Color3.fromRGB(255, 190, 40), outline = Color3.fromRGB(255, 240, 160)},
-}
-local TARGET_STYLES = {
-    Pink   = CHAM_STYLES.Pink,
-    Purple = CHAM_STYLES.Purple,
-    Red    = CHAM_STYLES.Red,
-    Gold   = CHAM_STYLES.Gold,
-}
-
-local function isAlive(plr)
-    local ch = plr.Character
-    if not ch then return false end
-    local hum = ch:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
-    return ch:FindFirstChild("HumanoidRootPart") ~= nil
-end
-
-local function createESP(plr)
-    if plr == LP or isTeammate(plr) then return end
-    if espObjects[plr] then return end
-    local data = {lines = {}, highlight = nil, billboard = nil, boxLines = {}}
-    espObjects[plr] = data
-
-    local ch = plr.Character
-    if ch then
-        local hl = Instance.new("Highlight")
-        hl.FillColor = Color3.fromRGB(170, 0, 255)
-        hl.OutlineColor = Color3.fromRGB(225, 110, 255)
-        hl.FillTransparency = 0.5
-        hl.OutlineTransparency = 0
-        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        hl.Adornee = ch
-        hl.Parent = ESPGui
-        data.highlight = hl
-    end
-
-    for i = 1, 4 do
-        local line = Instance.new("Frame")
-        line.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
-        line.BorderSizePixel = 0
-        line.ZIndex = 6
-        line.Visible = false
-        line.Parent = ESPGui
-        data.boxLines[i] = line
-    end
-
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "ESPName"
-    bb.Size = UDim2.new(0, 220, 0, 70)
-    bb.StudsOffset = Vector3.new(0, 3, 0)
-    bb.AlwaysOnTop = true
-    bb.Parent = ESPGui
-
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1, 0, 0, 20)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Text = plr.Name
-    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.TextSize = 14
-    nameLabel.Parent = bb
-
-    local hpLabel = Instance.new("TextLabel")
-    hpLabel.Size = UDim2.new(1, 0, 0, 16)
-    hpLabel.Position = UDim2.new(0, 0, 0, 20)
-    hpLabel.BackgroundTransparency = 1
-    hpLabel.Text = "100 HP"
-    hpLabel.TextColor3 = Color3.fromRGB(80, 255, 120)
-    hpLabel.TextStrokeTransparency = 0
-    hpLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    hpLabel.Font = Enum.Font.GothamBold
-    hpLabel.TextSize = 13
-    hpLabel.Parent = bb
-
-    local hitboxLabel = Instance.new("TextLabel")
-    hitboxLabel.Size = UDim2.new(1, 0, 0, 16)
-    hitboxLabel.Position = UDim2.new(0, 0, 0, 36)
-    hitboxLabel.BackgroundTransparency = 1
-    hitboxLabel.Text = "Hitbox: --"
-    hitboxLabel.TextColor3 = Color3.fromRGB(255, 180, 255)
-    hitboxLabel.TextStrokeTransparency = 0
-    hitboxLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    hitboxLabel.Font = Enum.Font.GothamBold
-    hitboxLabel.TextSize = 12
-    hitboxLabel.Parent = bb
-
-    data.billboard = bb
-    data.nameLabel = nameLabel
-    data.hpLabel = hpLabel
-    data.hitboxLabel = hitboxLabel
-end
-
-local function removeESP(plr)
-    local data = espObjects[plr]
-    if not data then return end
-    if data.highlight then data.highlight:Destroy() end
-    if data.billboard then data.billboard:Destroy() end
-    if data.boxLines then
-        for _, line in ipairs(data.boxLines) do
-            if line then line:Destroy() end
-        end
-    end
-    espObjects[plr] = nil
-end
-
-local function updateESP()
-    local cam = workspace.CurrentCamera
-    for plr, data in pairs(espObjects) do
-        local ch = plr.Character
-        if ch and isAlive(plr) and not isTeammate(plr) then
-            local head = ch:FindFirstChild("Head")
-            local hum = ch:FindFirstChildOfClass("Humanoid")
-            local hrp = ch:FindFirstChild("HumanoidRootPart")
-
-            if data.highlight then
-                local st = CHAM_STYLES[S.chamStyle] or CHAM_STYLES.Purple
-                data.highlight.Adornee = ch
-                data.highlight.FillColor = st.fill
-                data.highlight.OutlineColor = st.outline
-                data.highlight.Enabled = S.espChams
-            end
-            if data.billboard then
-                data.billboard.Enabled = S.espNames
-                if head then data.billboard.Adornee = head end
-            end
-            if data.nameLabel then data.nameLabel.Text = plr.Name end
-            if data.hpLabel and hum then
-                local hp = math.floor(hum.Health)
-                data.hpLabel.Text = hp .. " HP"
-                local ratio = hum.Health / hum.MaxHealth
-                data.hpLabel.TextColor3 = Color3.fromRGB(
-                    math.floor(255 * (1 - ratio)),
-                    math.floor(255 * ratio),
-                    80
-                )
-            end
-
-            if data.hitboxLabel and hrp then
-                local totalSize = 0
-                local count = 0
-                for _, part in ipairs(ch:GetDescendants()) do
-                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                        totalSize = totalSize + part.Size.X
-                        count = count + 1
-                    end
-                end
-                if count > 0 then
-                    local avgSize = totalSize / count
-                    if avgSize > 2.5 then
-                        data.hitboxLabel.Text = string.format("Hitbox: %.1f ⚠", avgSize)
-                        data.hitboxLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-                    else
-                        data.hitboxLabel.Text = string.format("Hitbox: %.1f", avgSize)
-                        data.hitboxLabel.TextColor3 = Color3.fromRGB(255, 180, 255)
-                    end
-                end
-            end
-
-            if hrp and data.boxLines and #data.boxLines >= 4 then
-                local headPos = head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0))
-                local footPos = hrp.Position - Vector3.new(0, 3, 0)
-                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
-                local botV, botOn = cam:WorldToViewportPoint(footPos)
-                if topOn and botOn and S.espBox then
-                    local height = math.abs(botV.Y - topV.Y)
-                    local width = height * 0.55
-                    local x = topV.X - width / 2
-                    local y = topV.Y
-                    data.boxLines[1].Size = UDim2.new(0, width, 0, 1)
-                    data.boxLines[1].Position = UDim2.new(0, x, 0, y)
-                    data.boxLines[1].Visible = true
-                    data.boxLines[2].Size = UDim2.new(0, width, 0, 1)
-                    data.boxLines[2].Position = UDim2.new(0, x, 0, y + height)
-                    data.boxLines[2].Visible = true
-                    data.boxLines[3].Size = UDim2.new(0, 1, 0, height)
-                    data.boxLines[3].Position = UDim2.new(0, x, 0, y)
-                    data.boxLines[3].Visible = true
-                    data.boxLines[4].Size = UDim2.new(0, 1, 0, height)
-                    data.boxLines[4].Position = UDim2.new(0, x + width, 0, y)
-                    data.boxLines[4].Visible = true
-                else
-                    for _, line in ipairs(data.boxLines) do
-                        line.Visible = false
-                    end
-                end
-            end
-        else
-            if data.highlight then data.highlight.Adornee = nil end
-            if data.billboard then data.billboard.Adornee = nil end
-            if data.boxLines then
-                for _, line in ipairs(data.boxLines) do
-                    line.Visible = false
-                end
-            end
-        end
-    end
-end
-
-local function drawSkeleton()
-    if not S.espSkeleton then
-        for _, frames in pairs(skeletonFrames) do
-            for _, f in ipairs(frames) do
-                if f then f.Visible = false end
-            end
-        end
-        return
-    end
-    local cam = workspace.CurrentCamera
-    for plr, data in pairs(espObjects) do
-        local ch = plr.Character
-        if ch and isAlive(plr) and not isTeammate(plr) then
-            local parts = {}
-            for _, p in ipairs(ch:GetChildren()) do
-                if p:IsA("BasePart") then parts[p.Name] = p end
-            end
-            local connections
-            if parts["UpperTorso"] then
-                connections = {
-                    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
-                    {"UpperTorso","LeftUpperArm"},{"UpperTorso","RightUpperArm"},
-                    {"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
-                    {"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
-                    {"LowerTorso","LeftUpperLeg"},{"LowerTorso","RightUpperLeg"},
-                    {"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
-                    {"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
-                }
-            else
-                connections = {
-                    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
-                    {"Torso","Left Leg"},{"Torso","Right Leg"},
-                }
-            end
-            if not skeletonFrames[plr] then skeletonFrames[plr] = {} end
-            local frames = skeletonFrames[plr]
-            for i, conn in ipairs(connections) do
-                local p1 = parts[conn[1]]
-                local p2 = parts[conn[2]]
-                if p1 and p2 then
-                    local v1, on1 = cam:WorldToViewportPoint(p1.Position)
-                    local v2, on2 = cam:WorldToViewportPoint(p2.Position)
-                    if on1 and on2 then
-                        if not frames[i] then
-                            local f = Instance.new("Frame")
-                            f.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
-                            f.BorderSizePixel = 0
-                            f.ZIndex = 5
-                            f.Parent = ESPGui
-                            frames[i] = f
-                        end
-                        local f = frames[i]
-                        local dx = v2.X - v1.X
-                        local dy = v2.Y - v1.Y
-                        local length = math.sqrt(dx*dx + dy*dy)
-                        local angle = math.atan2(dy, dx)
-                        f.Size = UDim2.new(0, length, 0, 2)
-                        f.Position = UDim2.new(0, v1.X, 0, v1.Y)
-                        f.Rotation = math.deg(angle)
-                        f.Visible = true
-                    else
-                        if frames[i] then frames[i].Visible = false end
-                    end
-                else
-                    if frames[i] then frames[i].Visible = false end
-                end
-            end
-            for i = #connections + 1, #frames do
-                frames[i].Visible = false
-            end
-        end
-    end
-end
-
-local function enableESP()
-    S.esp = true
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then createESP(plr) end
-    end
-    Players.PlayerAdded:Connect(function(plr)
-        if S.esp and plr ~= LP then
-            plr.CharacterAdded:Connect(function()
-                task.wait(0.5)
-                if S.esp then removeESP(plr) createESP(plr) end
-            end)
-        end
-    end)
-    Players.PlayerRemoving:Connect(function(plr)
-        removeESP(plr)
-        skeletonFrames[plr] = nil
-    end)
-    dcc(S.espConn)
-    S.espConn = RunService.RenderStepped:Connect(function()
-        if not S.esp then return end
-        updateESP()
-        drawSkeleton()
-    end)
-end
-
-local function disableESP()
-    S.esp = false
-    if S.espConn then S.espConn:Disconnect() S.espConn = nil end
-    for plr, _ in pairs(espObjects) do removeESP(plr) end
-    espObjects = {}
-    for plr, frames in pairs(skeletonFrames) do
-        for _, f in ipairs(frames) do
-            if f then f:Destroy() end
-        end
-    end
-    skeletonFrames = {}
-end
-
--- ============ TARGET ESP (подсветка текущей цели) ============
-local TargetHL = Instance.new("Highlight")
-TargetHL.FillTransparency = 0.35
-TargetHL.OutlineTransparency = 0
-TargetHL.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-TargetHL.Enabled = false
-TargetHL.Parent = ESPGui
-
-local function currentEspTarget()
-    if S.silentAimOn then
-        local p = findSilentTarget()
-        if p then return p end
-    end
-    if S.aimbotOn then
-        local part = getClosestTarget()
-        if part then
-            local p = Players:GetPlayerFromCharacter(part.Parent)
-            if p then return p end
-        end
-    end
-    return nil
-end
-
-local function enableTargetESP()
-    S.targetEspOn = true
-    dcc(S.targetEspConn)
-    S.targetEspConn = RunService.RenderStepped:Connect(function()
-        if not S.targetEspOn then return end
-        local p = currentEspTarget()
-        if p and p ~= LP and isAlive(p) and not isTeammate(p) and p.Character then
-            local st = TARGET_STYLES[S.targetStyle] or TARGET_STYLES.Pink
-            TargetHL.FillColor = st.fill
-            TargetHL.OutlineColor = st.outline
-            TargetHL.FillTransparency = 0.35 + 0.15 * math.sin(tick() * 6) -- пульсация
-            TargetHL.Adornee = p.Character
-            TargetHL.Enabled = true
-        else
-            TargetHL.Enabled = false
-            TargetHL.Adornee = nil
-        end
-    end)
-end
-
-local function disableTargetESP()
-    S.targetEspOn = false
-    if S.targetEspConn then S.targetEspConn:Disconnect() S.targetEspConn = nil end
-    TargetHL.Enabled = false
-    TargetHL.Adornee = nil
-end
-
-bootStep("ESP OK")
-
-bootStep("Watermark OK")
-
-local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
-
--- ============================================================
--- ============ GUI MODE: Voidware (дефолт) или WindUI ========
--- ============================================================
 -- =====================================================================
 -- ВСТРОЕННЫЙ Rayfield (Beta 8, открытый код: jensonhirst/Rayfield/source)
 -- 113 KB, сеть НЕ нужна; сетевые зеркала — только фолбэк. WindUI уничтожен.
@@ -6495,6 +3734,7 @@ local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
 
 local ScreenGui = Instance.new('ScreenGui');
 ScreenGui.Name = 'SpermaLinoria';
+pcall(function() ScreenGui:SetAttribute('SpermaCurrent', true) end);
 ProtectGui(ScreenGui);
 
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global;
@@ -10250,6 +7490,2811 @@ S.rsToggleConn = UIS.InputBegan:Connect(function(input, gpe)
     end
 end)
 
+
+-- ============================================================
+-- ============ ЛОГИКА (перенесена из sperma.lua) =============
+-- ============================================================
+
+-- ============ TEAM CHECK / VISIBLE CHECK ============
+local function isTeammate(plr)
+    if not S.teamCheck then return false end
+    if not plr or plr == LP then return false end
+    if not plr.Team or not LP.Team then return false end
+    return plr.Team == LP.Team
+end
+
+local visCheckParams = RaycastParams.new()
+visCheckParams.FilterType = Enum.RaycastFilterType.Exclude
+
+-- true, если от камеры до части нет препятствий (wallcheck)
+local function isVisible(part)
+    if not S.visibleCheck then return true end
+    if not part then return false end
+    local cam = workspace.CurrentCamera
+    if not cam then return true end
+    local ch = LP.Character
+    visCheckParams.FilterDescendantsInstances = ch and {ch} or {}
+    local origin = cam.CFrame.Position
+    local ok, result = pcall(function()
+        return workspace:Raycast(origin, part.Position - origin, visCheckParams)
+    end)
+    if not ok or not result then return true end
+    return result.Instance:IsDescendantOf(part.Parent)
+end
+
+-- ============ FOV CIRCLE ============
+local FovGui = Instance.new("ScreenGui")
+FovGui.Name = "SpermaHubFov"
+FovGui.ResetOnSpawn = false
+FovGui.IgnoreGuiInset = true
+FovGui.DisplayOrder = 60
+FovGui.Parent = LP:WaitForChild("PlayerGui")
+
+local FovCircle = Instance.new("Frame")
+FovCircle.Name = "FovCircle"
+FovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+FovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+FovCircle.Size = UDim2.new(0, 240, 0, 240)
+FovCircle.BackgroundTransparency = 1
+FovCircle.BorderSizePixel = 0
+FovCircle.Visible = false
+FovCircle.ZIndex = 100
+FovCircle.Parent = FovGui
+
+local FovCircleCorner = Instance.new("UICorner")
+FovCircleCorner.CornerRadius = UDim.new(1, 0)
+FovCircleCorner.Parent = FovCircle
+
+local FovCircleStroke = Instance.new("UIStroke")
+FovCircleStroke.Color = Color3.fromRGB(255, 80, 80)
+FovCircleStroke.Thickness = 2
+FovCircleStroke.Transparency = 0.2
+FovCircleStroke.Parent = FovCircle
+
+S.fovCircle = FovCircle
+
+-- FOV-круг для Silent Aim
+local SilentFovCircle = Instance.new("Frame")
+SilentFovCircle.Name = "SilentFovCircle"
+SilentFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+SilentFovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+SilentFovCircle.Size = UDim2.new(0, 300, 0, 300)
+SilentFovCircle.BackgroundTransparency = 1
+SilentFovCircle.BorderSizePixel = 0
+SilentFovCircle.Visible = false
+SilentFovCircle.ZIndex = 99
+SilentFovCircle.Parent = FovGui
+
+local SilentFovCircleCorner = Instance.new("UICorner")
+SilentFovCircleCorner.CornerRadius = UDim.new(1, 0)
+SilentFovCircleCorner.Parent = SilentFovCircle
+
+local SilentFovCircleStroke = Instance.new("UIStroke")
+SilentFovCircleStroke.Color = Color3.fromRGB(100, 100, 255)
+SilentFovCircleStroke.Thickness = 2
+SilentFovCircleStroke.Transparency = 0.2
+SilentFovCircleStroke.Parent = SilentFovCircle
+
+S.silentAimFovCircle = SilentFovCircle
+
+local function updateFovCircle()
+    if S.fovCircle then
+        local size = S.aimbotFov * 2
+        S.fovCircle.Size = UDim2.new(0, size, 0, size)
+        S.fovCircle.Visible = S.aimbotOn and S.fovVisualize
+    end
+end
+
+local function updateSilentFovCircle()
+    if S.silentAimFovCircle then
+        local size = S.silentAimFov * 2
+        S.silentAimFovCircle.Size = UDim2.new(0, size, 0, size)
+        S.silentAimFovCircle.Visible = S.silentAimOn and S.fovVisualize
+    end
+end
+
+-- Временный показ круга при настройке FOV слайдером (аналог открытой панели)
+local fovFlash = {aimbot = 0, silent = 0}
+local function flashFovCircle(kind, circle, isOn)
+    fovFlash[kind] = fovFlash[kind] + 1
+    local token = fovFlash[kind]
+    if not isOn() and S.fovVisualize then circle.Visible = true end
+    task.delay(1.5, function()
+        if fovFlash[kind] == token and not isOn() then
+            circle.Visible = false
+        end
+    end)
+end
+
+-- ============ AIMBOT ЛОГИКА ============
+local function aimBonePart(ch)
+    if S.aimBone == "Torso" then
+        return ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
+            or ch:FindFirstChild("HumanoidRootPart")
+    elseif S.aimBone == "Body" then
+        return ch:FindFirstChild("Torso") or ch:FindFirstChild("UpperTorso")
+            or ch:FindFirstChild("HumanoidRootPart")
+    end
+    return ch:FindFirstChild("Head")
+end
+
+local function getClosestTarget()
+    local cam = workspace.CurrentCamera
+    local closest = nil
+    local closestDist = S.aimbotFov
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local ch = plr.Character
+            if ch then
+                local head = aimBonePart(ch)
+                local hum = ch:FindFirstChildOfClass("Humanoid")
+                if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
+                    local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        local centerX = cam.ViewportSize.X / 2
+                        local centerY = cam.ViewportSize.Y / 2
+                        local dist = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
+                        if dist < closestDist then
+                            closestDist = dist
+                            closest = head
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function aimKeyPressed()
+    if S.aimKey == "Always" then return true end
+    if S.aimKey == "Hold E" then
+        return UIS:IsKeyDown(Enum.KeyCode.E)
+    end
+    -- Hold RMB по умолчанию
+    return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+end
+
+local function enableAimbot()
+    S.aimbotOn = true
+    if S.aimbotConn then
+        RunService:UnbindFromRenderStep("SpermaHubAimbot")
+        S.aimbotConn = nil
+    end
+    S.aimbotConn = true
+    -- Нормально: аим пишется ПОСЛЕ игровой камеры (иначе Фортлайн её перезаписывает)
+    RunService:BindToRenderStep("SpermaHubAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+        if not S.aimbotOn then return end
+        if not aimKeyPressed() then return end
+        local target = getClosestTarget()
+        if target then
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            local targetPos = target.Position
+            local currentCF = cam.CFrame
+            local lookAt = CFrame.new(currentCF.Position, targetPos)
+            local k = S.aimbotSmooth
+            if k >= 0.95 then
+                cam.CFrame = lookAt -- snap
+            else
+                cam.CFrame = currentCF:Lerp(lookAt, k)
+            end
+        end
+    end)
+end
+
+local function disableAimbot()
+    S.aimbotOn = false
+    if S.aimbotConn then
+        RunService:UnbindFromRenderStep("SpermaHubAimbot")
+        S.aimbotConn = nil
+    end
+end
+
+-- ============ SILENT AIM ЛОГИКА (Real-compatible) ============
+local function findSilentTarget()
+    local cam = workspace.CurrentCamera
+    local closest = nil
+    local closestDist = S.silentAimFov
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local ch = plr.Character
+            if ch then
+                local head = ch:FindFirstChild("Head")
+                local hum = ch:FindFirstChildOfClass("Humanoid")
+                if head and hum and hum.Health > 0 and not isTeammate(plr) and isVisible(head) then
+                    local screenPos, onScreen = cam:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        local centerX = cam.ViewportSize.X / 2
+                        local centerY = cam.ViewportSize.Y / 2
+                        local dist = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
+                        if dist < closestDist then
+                            closestDist = dist
+                            closest = plr
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function checkSilentAimSupport()
+    local hasHook, hasMeta, hasSetReadonly, hasNewcclosure = false, false, false, false
+    pcall(function() hasHook = type(hookfunction) == "function" end)
+    pcall(function() hasMeta = type(getrawmetatable) == "function" end)
+    pcall(function() hasSetReadonly = type(setreadonly) == "function" end)
+    pcall(function() hasNewcclosure = type(newcclosure) == "function" end)
+    return hasHook and hasMeta and hasSetReadonly and hasNewcclosure
+end
+
+-- ============ SILENT AIM — режимы Universal / Fortline / Network ============
+-- код сервисов как в Fortline-сниппете (cloneref-защита), с фолбэком без cloneref
+local function makeSilentServices()
+    local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
+    return {
+        ReplicatedStorage = cR(game:GetService("ReplicatedStorage")),
+        Workspace = cR(game:GetService("Workspace")),
+        Players = cR(game:GetService("Players")),
+        RunService = cR(game:GetService("RunService")),
+        UserInputService = cR(game:GetService("UserInputService")),
+    }
+end
+
+-- FORTLINE STYLE: камера сама лочится на голову цели, пока зажата кнопка огня (ЛКМ/ПКМ).
+-- Работает на executor без хуков (Xeno): пули летят по центру камеры.
+local function enableSilentFortline()
+    print("[SpermaHub] Silent Aim: режим Fortline (camera lock while firing)")
+    notify("Silent Aim", "Режим Fortline: камера лочится пока зажат огонь", 3, "info")
+    local svc = makeSilentServices()
+    if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) S.silentAimConn = nil end
+    S.silentAimConn = svc.RunService.RenderStepped:Connect(function()
+        if not S.silentAimOn then return end
+        local uis = svc.UserInputService
+        local firing = uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+            or uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+        if not firing then return end
+        local cam = svc.Workspace.CurrentCamera
+        if not cam then return end
+        local target = findSilentTarget()
+        if not (target and target.Character) then return end
+        local head = target.Character:FindFirstChild("Head")
+            or target.Character:FindFirstChild("UpperTorso")
+            or target.Character:FindFirstChild("Torso")
+        if not head then return end
+        cam.CFrame = CFrame.new(cam.CFrame.Position, head.Position)
+    end)
+end
+
+-- NETWORK STYLE: перенаправление FireServer оружейных ремоутов на голову цели
+-- (требует метатабличные хуки executor'а; на Xeno недоступно)
+local function enableSilentNetwork()
+    if not checkSilentAimSupport() then
+        warn("[SpermaHub] Silent Aim Network: нет хуков на этом executor")
+        notify("Silent Aim", "Network нуждается в hookfunction/getrawmetatable", 5, "alert-triangle")
+        return
+    end
+    print("[SpermaHub] Silent Aim: режим Network (FireServer redirect)")
+    emitnetok = nil
+    local success, err = pcall(function()
+        local mt = getrawmetatable(game)
+        local oldNamecall = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = (pcall(getnamecallmethod) and getnamecallmethod()) or ""
+            if S.silentAimOn and (method == "FireServer" or method == "InvokeServer")
+                and typeof(self) == "Instance" then
+                local rn = string.lower(tostring(self.Name))
+                -- эвристика оружейного ремоута
+                if rn:find("shoot") or rn:find("hit") or rn:find("damage") or rn:find("fire")
+                    or rn:find("weapon") or rn:find("bullet") or rn:find("attack") or rn:find("gun") then
+                    local target = findSilentTarget()
+                    local head = target and target.Character and (
+                        target.Character:FindFirstChild("Head")
+                        or target.Character:FindFirstChild("UpperTorso")
+                        or target.Character:FindFirstChild("Torso"))
+                    if head then
+                        local args = {...}
+                        local changed = false
+                        for i, a in ipairs(args) do
+                            if typeof(a) == "Vector3" then
+                                args[i] = head.Position changed = true
+                            elseif typeof(a) == "CFrame" then
+                                args[i] = CFrame.new(head.Position) changed = true
+                            end
+                        end
+                        -- дахK: таблицы с полями Position/p/Hit/target тоже в голову
+                        for i, a in ipairs(args) do
+                            if typeof(a) == "table" then
+                                local okT, key = pcall(function()
+                                    local k = next(a)
+                                    return k
+                                end)
+                                if okT and key then
+                                    local copied = false
+                                    local newT = {}
+                                    for k, v in pairs(a) do
+                                        if k == "Position" or k == "p" or k == "Hit"
+                                            or k == "Target" or k == "target"
+                                            or k == "aim" or k == "Aim" then
+                                            if typeof(v) == "Vector3" then
+                                                newT[k] = head.Position copied = true
+                                            elseif typeof(v) == "CFrame" then
+                                                newT[k] = CFrame.new(head.Position) copied = true
+                                            else
+                                                newT[k] = v
+                                            end
+                                        else
+                                            newT[k] = v
+                                        end
+                                    end
+                                    if copied then
+                                        args[i] = newT changed = true
+                                    end
+                                end
+                            end
+                        end
+                        if changed then
+                            return oldNamecall(self, unpack(args))
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+        setreadonly(mt, true)
+        S.silentAimConn = {
+            Disconnect = function()
+                pcall(function()
+                    setreadonly(mt, false)
+                    mt.__namecall = oldNamecall
+                    setreadonly(mt, true)
+                end)
+            end,
+        }
+    end)
+    if not success then
+        warn("[SpermaHub] Silent Aim Network ошибка: " .. tostring(err))
+    end
+end
+
+local function enableSilentAim()
+    S.silentAimOn = true
+    if S.silentMode == "Fortline" then
+        enableSilentFortline()
+        return
+    elseif S.silentMode == "Network" then
+        enableSilentNetwork()
+        return
+    end
+    if not checkSilentAimSupport() then
+        warn("[SpermaHub] Silent Aim: executor не поддерживает hookfunction")
+        warn("[SpermaHub] Работает только FOV circle")
+        notify("Silent Aim", "Executor не поддерживает hookfunction. Работает только FOV circle", 5, "alert-triangle")
+        return
+    end
+    if S.silentAimConn then
+        pcall(function() S.silentAimConn:Disconnect() end)
+        S.silentAimConn = nil
+    end
+    local success, err = pcall(function()
+        local mt = getrawmetatable(game)
+        local oldNamecall = mt.__namecall
+        local oldIndex = mt.__index
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if S.silentAimOn and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") then
+                local target = findSilentTarget()
+                if target then
+                    local targetChar = target.Character
+                    if targetChar then
+                        local targetPart = targetChar:FindFirstChild("Head")
+                            or targetChar:FindFirstChild("UpperTorso")
+                            or targetChar:FindFirstChild("Torso")
+                        if targetPart then
+                            local args = {...}
+                            if args[1] and args[1].Origin then
+                                local origin = args[1].Origin
+                                local newDir = (targetPart.Position - origin).Unit * 1000
+                                args[1] = Ray.new(origin, newDir)
+                            end
+                            return oldNamecall(self, unpack(args))
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+        mt.__index = newcclosure(function(self, key)
+            local result = oldIndex(self, key)
+            if S.silentAimOn and typeof(self) == "Instance" and self:IsA("Mouse") then
+                if key == "Hit" or key == "Target" then
+                    local target = findSilentTarget()
+                    if target and target.Character then
+                        local targetPart = target.Character:FindFirstChild("Head")
+                            or target.Character:FindFirstChild("UpperTorso")
+                            or target.Character:FindFirstChild("Torso")
+                        if targetPart then
+                            if key == "Hit" then
+                                return CFrame.new(targetPart.Position)
+                            elseif key == "Target" then
+                                return targetPart
+                            end
+                        end
+                    end
+                end
+            end
+            return result
+        end)
+        setreadonly(mt, true)
+        S.silentAimConn = {
+            Disconnect = function()
+                pcall(function()
+                    setreadonly(mt, false)
+                    mt.__namecall = oldNamecall
+                    mt.__index = oldIndex
+                    setreadonly(mt, true)
+                end)
+            end
+        }
+    end)
+    if success then
+        print("[SpermaHub] Silent Aim активирован ✓")
+    else
+        warn("[SpermaHub] Silent Aim ошибка: " .. tostring(err))
+        notify("Silent Aim", "Ошибка: " .. tostring(err), 5, "alert-triangle")
+    end
+end
+
+local function disableSilentAim()
+    S.silentAimOn = false
+    if S.silentAimConn then
+        pcall(function() S.silentAimConn:Disconnect() end)
+        S.silentAimConn = nil
+    end
+end
+
+-- ============ FORTLINE SILENT: хук BaseWeapon.fire (по сырцам сайлента) ====
+-- WeaponsSystem.Libraries.BaseWeapon — модуль оружейной системы Fortline.
+-- fire(p1, p2, p3, p4): p2 = точка выстрела, p3 = направление (Unit).
+-- Редиректим p3 -> направление в голову цели из конуса (S.flickHead).
+function enableFortlineSilent()
+    if S.flHookOn then return true end
+    if type(hookfunction) ~= "function" then return false end
+    local ok = pcall(function()
+        local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
+        local RS = cR(game:GetService("ReplicatedStorage"))
+        local ws = RS:FindFirstChild("WeaponsSystem")
+        if not ws then error("WeaponsSystem not found") end
+        local libs = ws:FindFirstChild("Libraries")
+        if not libs then error("Libraries not found") end
+        local bwMod = libs:FindFirstChild("BaseWeapon")
+        if not bwMod then error("BaseWeapon not found") end
+        local BaseWeapon = require(bwMod)
+        if type(BaseWeapon) ~= "table" or type(BaseWeapon.fire) ~= "function" then
+            error("BaseWeapon.fire not a function")
+        end
+        local oldFire
+        oldFire = hookfunction(BaseWeapon.fire, function(p1, p2, p3, p4)
+            if S.asOn and S.asSilentNet and S.flickHead then
+                local okH, headPos = pcall(function() return S.flickHead.Position end)
+                if okH and headPos and typeof(p2) == "Vector3" then
+                    local okN, newDir = pcall(function() return (headPos - p2).Unit end)
+                    if okN and newDir then p3 = newDir end
+                end
+            end
+            return oldFire(p1, p2, p3, p4)
+        end)
+        S.flOldFire = oldFire
+        S.flHookOn = true
+    end)
+    return ok and S.flHookOn
+end
+
+
+-- ============ AUTO CLICKER ЛОГИКА ============
+-- Клик через VirtualInputManager (резерв, если нет функций executor'а)
+local function vimClick(b) -- b: 0 = ЛКМ, 1 = ПКМ
+    pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        local loc = UIS:GetMouseLocation()
+        VIM:SendMouseButtonEvent(loc.X, loc.Y, b, true, false, 1)
+        task.wait(0.01)
+        VIM:SendMouseButtonEvent(loc.X, loc.Y, b, false, false, 1)
+    end)
+end
+
+-- button: 1 = ЛКМ, 2 = ПКМ
+local function clickMouse(button)
+    if button == 1 then
+        if type(mouse1click) == "function" then pcall(mouse1click)
+        elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
+            pcall(function() mouse1press() mouse1release() end)
+        else
+            vimClick(0)
+        end
+    else
+        if type(mouse2click) == "function" then pcall(mouse2click)
+        elseif type(mouse2press) == "function" and type(mouse2release) == "function" then
+            pcall(function() mouse2press() mouse2release() end)
+        else
+            vimClick(1)
+        end
+    end
+end
+
+-- Клик разрешён только "в игре": не в чате и не когда курсор над любым GUI
+local hudIgnore = {
+    SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, SpermaHubBinds=true, SpermaHubTHud=true, -- декоративные элементы скрипта не считаем
+}
+local function canClickInGame()
+    if UIS:GetFocusedTextBox() then return false end -- чат / поле ввода
+    local loc = UIS:GetMouseLocation()
+    local ok, objs = pcall(function()
+        local inset = GuiService:GetGuiInset()
+        return LP.PlayerGui:GetGuiObjectsAtPosition(loc.X - inset.X, loc.Y - inset.Y)
+    end)
+    if ok and objs then
+        for _, o in ipairs(objs) do
+            if o.Visible then
+                local sg = o:FindFirstAncestorOfClass("ScreenGui")
+                if not (sg and hudIgnore[sg.Name]) then
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
+local function enableAutoClicker()
+    S.autoClickOn = false
+    S.autoClickGen = S.autoClickGen + 1 -- останавливаем прошлый цикл
+    S.autoClickOn = true
+    local gen = S.autoClickGen
+    task.spawn(function()
+        while S.autoClickOn and gen == S.autoClickGen do
+            local interval = 1 / math.max(S.autoClickCps, 1)
+            if canClickInGame() then
+                if S.autoClickMode == "ЛКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
+                    clickMouse(1)
+                end
+                if S.autoClickMode == "ПКМ" or S.autoClickMode == "ЛКМ + ПКМ" then
+                    clickMouse(2)
+                end
+            end
+            task.wait(interval)
+        end
+    end)
+end
+
+local function disableAutoClicker()
+    S.autoClickOn = false
+    S.autoClickGen = S.autoClickGen + 1
+end
+
+-- ============ HITBOX EXPANDER ЛОГИКА ============
+local hitboxOriginalSizes = {}
+
+local function applyHitbox()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local ch = plr.Character
+            if ch then
+                for _, part in ipairs(ch:GetDescendants()) do
+                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                        if not hitboxOriginalSizes[part] then
+                            hitboxOriginalSizes[part] = part.Size
+                        end
+                        part.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
+                        part.Transparency = 0.7
+                        part.CanCollide = false
+                        part.Massless = true
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function restoreHitbox()
+    for part, size in pairs(hitboxOriginalSizes) do
+        if typeof(part) == "Instance" and part.Parent then
+            pcall(function()
+                part.Size = size
+                part.Transparency = 0
+                part.CanCollide = true
+                part.Massless = false
+            end)
+        end
+    end
+    hitboxOriginalSizes = {}
+end
+
+local function enableHitbox()
+    S.hitboxOn = true
+    applyHitbox()
+    dcc(S.hitboxConn)
+    S.hitboxConn = RunService.Heartbeat:Connect(function()
+        if not S.hitboxOn then return end
+        applyHitbox()
+    end)
+end
+
+local function disableHitbox()
+    S.hitboxOn = false
+    if S.hitboxConn then S.hitboxConn:Disconnect() S.hitboxConn = nil end
+    restoreHitbox()
+end
+
+-- ============ KILL PLAYER ЛОГИКА ============
+local function killPlayer(targetPlayer)
+    if not targetPlayer then return end
+    local myChar = LP.Character
+    if not myChar then return end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local targetChar = targetPlayer.Character
+    if not targetChar then return end
+    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return end
+
+    myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0.5, 0)
+    myRoot.Velocity = Vector3.zero
+
+    local hum = myChar:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local backpack = LP:FindFirstChild("Backpack")
+    if not backpack then return end
+
+    local tool = nil
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then tool = item; break end
+    end
+    if not tool then
+        for _, item in ipairs(myChar:GetChildren()) do
+            if item:IsA("Tool") then tool = item; break end
+        end
+    end
+    if not tool then
+        warn("[SpermaHub] Нет оружия для Kill Player")
+        notify("Kill Player", "Нет оружия в инвентаре!", 3, "alert-triangle")
+        return
+    end
+
+    if tool.Parent == backpack then
+        pcall(function() hum:EquipTool(tool) end)
+        task.wait(0.1)
+    end
+
+    task.spawn(function()
+        for i = 1, 30 do
+            if not tool or not tool.Parent then break end
+            if targetRoot and targetRoot.Parent then
+                myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0.5, 0)
+                myRoot.Velocity = Vector3.zero
+            end
+            pcall(function() tool:Activate() end)
+            task.wait(0.03)
+        end
+    end)
+end
+
+-- ============ TP PLAYER ЛОГИКА ============
+local function tpToPlayer(targetPlayer)
+    local myChar = LP.Character
+    if not myChar then return end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local tChar = targetPlayer and targetPlayer.Character
+    if not tChar then return end
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+    myRoot.CFrame = tRoot.CFrame + Vector3.new(0, 1, 0)
+    myRoot.Velocity = Vector3.zero
+    print("[SpermaHub] Телепорт к " .. targetPlayer.Name)
+end
+
+-- ============ FLY ============
+local function startFly()
+    local ch = LP.Character
+    if not ch then return end
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    S.flying = true
+    S.bv = Instance.new("BodyVelocity")
+    S.bv.MaxForce = Vector3.new(1e5,1e5,1e5)
+    S.bv.Velocity = Vector3.zero
+    S.bv.Parent = root
+    S.bg = Instance.new("BodyGyro")
+    S.bg.MaxTorque = Vector3.new(1e5,1e5,1e5)
+    S.bg.P = 10000
+    S.bg.D = 200
+    S.bg.Parent = root
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = true end
+    dcc(S.flyConn)
+    S.flyConn = RunService.RenderStepped:Connect(function()
+        if not S.flying then return end
+        local cam = workspace.CurrentCamera
+        local d = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + cam.CFrame.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - cam.CFrame.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then d = d + Vector3.new(0,1,0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then d = d - Vector3.new(0,1,0) end
+        if S.bv then S.bv.Velocity = d.Magnitude > 0 and d.Unit * S.speed or Vector3.zero end
+        if S.bg then S.bg.CFrame = cam.CFrame end
+    end)
+end
+
+local function stopFly()
+    S.flying = false
+    if S.flyConn then S.flyConn:Disconnect() S.flyConn = nil end
+    if S.bv then S.bv:Destroy() S.bv = nil end
+    if S.bg then S.bg:Destroy() S.bg = nil end
+    local ch = LP.Character
+    if ch then
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = false end
+    end
+end
+
+-- ============ NOCLIP ============
+local function enableNoclip()
+    S.noclip = true
+    dcc(S.noclipConn)
+    S.noclipConn = RunService.Stepped:Connect(function()
+        if not S.noclip then return end
+        local ch = LP.Character
+        if not ch then return end
+        for _, p in ipairs(ch:GetDescendants()) do
+            if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+        end
+    end)
+end
+
+local function disableNoclip()
+    S.noclip = false
+    if S.noclipConn then S.noclipConn:Disconnect() S.noclipConn = nil end
+    local ch = LP.Character
+    if ch then
+        for _, p in ipairs(ch:GetDescendants()) do
+            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then p.CanCollide = true end
+        end
+    end
+end
+
+-- ============ CLICK TP ============
+local function enableClickTp()
+    S.clickTpOn = true
+    dcc(S.clickTpConn)
+    S.clickTpConn = UIS.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if not S.clickTpOn then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local mouse = LP:GetMouse()
+            if mouse and mouse.Target then
+                local ch = LP.Character
+                if not ch then return end
+                local root = ch:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+                local pos = mouse.Hit.Position + Vector3.new(0, S.clickTpHeight, 0)
+                root.CFrame = CFrame.new(pos)
+                root.Velocity = Vector3.zero
+            end
+        end
+    end)
+end
+
+local function disableClickTp()
+    S.clickTpOn = false
+    if S.clickTpConn then S.clickTpConn:Disconnect() S.clickTpConn = nil end
+end
+
+-- ============ JESUS (ходьба по воде) ============
+local jesusRayParams = RaycastParams.new()
+jesusRayParams.FilterType = Enum.RaycastFilterType.Exclude
+jesusRayParams.IgnoreWater = false -- чтобы рейкаст "видел" поверхность воды
+
+local function enableJesus()
+    S.jesusOn = true
+    if not S.jesusPlatform or not S.jesusPlatform.Parent then
+        local p = Instance.new("Part")
+        p.Name = "SpermaJesus"
+        p.Anchored = true
+        p.CanCollide = true
+        p.Transparency = 1
+        p.CastShadow = false
+        p.Size = Vector3.new(10, 1, 10)
+        p.Parent = workspace
+        S.jesusPlatform = p
+    end
+    dcc(S.jesusConn)
+    S.jesusConn = RunService.Heartbeat:Connect(function()
+        if not S.jesusOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local plat = S.jesusPlatform
+        if not plat then return end
+        jesusRayParams.FilterDescendantsInstances = {ch, plat}
+        local result = workspace:Raycast(root.Position, Vector3.new(0, -25, 0), jesusRayParams)
+        if result and result.Material == Enum.Material.Water then
+            -- ставим платформу верхней гранью ровно на поверхность воды
+            plat.Position = Vector3.new(root.Position.X, result.Position.Y - plat.Size.Y / 2 + 0.05, root.Position.Z)
+        else
+            -- воды под ногами нет — убираем платформу
+            plat.Position = Vector3.new(0, -1e5, 0)
+        end
+    end)
+end
+
+local function disableJesus()
+    S.jesusOn = false
+    if S.jesusConn then S.jesusConn:Disconnect() S.jesusConn = nil end
+    if S.jesusPlatform then S.jesusPlatform.Position = Vector3.new(0, -1e5, 0) end
+end
+
+-- ============ SPIN (вращение персонажа) ============
+local function enableSpin()
+    S.spinOn = true
+    dcc(S.spinConn)
+    S.spinAngle = 0
+    -- стартовый угол берём ИЗ ТЕКУЩЕЙ позы — спин начинается без дёргания
+    S.spinBaseYaw = 0
+    do
+        local ch0 = LP.Character
+        local root0 = ch0 and ch0:FindFirstChild("HumanoidRootPart")
+        if root0 then
+            local _, yy = root0.CFrame:ToEulerAnglesYXZ()
+            S.spinBaseYaw = math.deg(yy)
+        end
+    end
+    S.spinConn = RunService.RenderStepped:Connect(function(dt)
+        if not S.spinOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        S.spinAngle = (S.spinAngle + S.spinSpeed * dt) % 360
+        local totalYaw = math.rad(S.spinBaseYaw + S.spinAngle)
+        if S.spinHeadDown then
+            -- ГОЛОВА ВНИЗУ (вертолёт): питч -90° от ТЕКУЩЕЙ позиции root.
+            -- Y НЕ ЗАНИЖАЕМ => пол не пробивается, гравитация не борется.
+            -- PlatformStand гасит самовыпрямление humanoid, иначе оно
+            -- каждый кадр крутит тело обратно вертикально.
+            local hum = ch:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function()
+                    if not hum.PlatformStand then hum.PlatformStand = true end
+                end)
+            end
+            pcall(function()
+                root.CFrame = CFrame.new(root.Position) * CFrame.Angles(math.rad(-90), totalYaw, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end)
+        else
+            -- обычный вертикальный спин (как был)
+            root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, totalYaw, 0)
+        end
+    end)
+end
+
+local function disableSpin()
+    S.spinOn = false
+    if S.spinConn then S.spinConn:Disconnect() S.spinConn = nil end
+    -- спина выпрямляется обратно
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then pcall(function() hum.PlatformStand = false end) end
+end
+
+-- ============ GOD MODE (лок HP) ============
+local function enableGod()
+    S.godOn = true
+    dcc(S.godConn)
+    S.godConn = RunService.Heartbeat:Connect(function()
+        if not S.godOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health < hum.MaxHealth then
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+    end)
+end
+
+local function disableGod()
+    S.godOn = false
+    if S.godConn then S.godConn:Disconnect() S.godConn = nil end
+end
+
+-- ============ FLING ============
+local function flingPlayer(target)
+    local ch = LP.Character
+    if not ch then return end
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local tChar = target and target.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+    if S.flingConn then pcall(function() S.flingConn:Disconnect() end) S.flingConn = nil end
+    local oldCF = root.CFrame
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    local t0 = tick()
+    S.flingConn = RunService.Heartbeat:Connect(function()
+        if not root.Parent or not tRoot.Parent then return end
+        if tick() - t0 > 0.8 then return end
+        root.CFrame = tRoot.CFrame + Vector3.new(math.random(-5, 5) / 10, 0, math.random(-5, 5) / 10)
+        bv.Velocity = Vector3.new((math.random() - 0.5) * 900, 350, (math.random() - 0.5) * 900)
+        bv.Parent = root
+    end)
+    task.delay(0.85, function()
+        if S.flingConn then S.flingConn:Disconnect() S.flingConn = nil end
+        pcall(function() bv:Destroy() end)
+        if root.Parent then
+            root.Velocity = Vector3.zero
+            root.CFrame = oldCF
+        end
+    end)
+end
+
+-- ============ FLING 2.0 (Stick TP — из твоего сниппета) ============
+-- клей: каждый кадр персонаж привязан к цели с Velocity (0, 100000, 0);
+-- по таймеру рвём и возвращаемся в исходную точку 50 раз подряд (как в коде).
+local function flingStickyPlayer(target, dur)
+    local ch = LP.Character
+    if not ch then return end
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local tChar = target and target.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+    if S.flingConn then pcall(function() S.flingConn:Disconnect() end) S.flingConn = nil end
+    local ogpos = root.CFrame
+    root.CFrame = tRoot.CFrame -- мгновенный прыжок на цель
+    S.flingConn = RunService.RenderStepped:Connect(function()
+        if not root.Parent or not tRoot.Parent then return end
+        root.CFrame = tRoot.CFrame
+        root.Velocity = Vector3.new(0, 100000, 0) -- твой импульс вверх
+    end)
+    task.delay(dur or 5, function()
+        if S.flingConn then S.flingConn:Disconnect() S.flingConn = nil end
+        local p = 0
+        task.spawn(function()
+            repeat
+                if root.Parent then
+                    root.Velocity = Vector3.new(0, 0, 0)
+                    root.CFrame = ogpos
+                    root.Velocity = Vector3.new(0, 0, 0)
+                end
+                task.wait()
+                p = p + 1
+            until p >= 50
+        end)
+    end)
+end
+
+-- ============ BULLET TRACERS + HITMARKER ============
+local HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
+
+local FxGui = Instance.new("ScreenGui")
+FxGui.Name = "SpermaHubFx"
+FxGui.ResetOnSpawn = false
+FxGui.IgnoreGuiInset = true
+FxGui.DisplayOrder = 102
+FxGui.Parent = LP:WaitForChild("PlayerGui")
+
+local function drawTracer(from3D, to3D)
+    local cam = workspace.CurrentCamera
+    local v1, on1 = cam:WorldToViewportPoint(from3D)
+    local v2, on2 = cam:WorldToViewportPoint(to3D)
+    if not on1 and not on2 then return end
+    local dx = v2.X - v1.X
+    local dy = v2.Y - v1.Y
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length < 2 then return end
+    local f = Instance.new("Frame")
+    f.AnchorPoint = Vector2.new(0.5, 0.5)
+    f.Position = UDim2.new(0, (v1.X + v2.X) / 2, 0, (v1.Y + v2.Y) / 2)
+    f.Size = UDim2.new(0, length, 0, 2)
+    f.Rotation = math.deg(math.atan2(dy, dx))
+    f.BackgroundColor3 = Color3.fromRGB(255, 220, 130)
+    f.BackgroundTransparency = 0.1
+    f.BorderSizePixel = 0
+    f.ZIndex = 8
+    f.Parent = FxGui
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(1, 0)
+    c.Parent = f
+    local TweenService = game:GetService("TweenService")
+    TweenService:Create(f, TweenInfo.new(0.28), {BackgroundTransparency = 1}):Play()
+    task.delay(0.35, function() pcall(function() f:Destroy() end) end)
+end
+
+local function showHitmarker()
+    for _, ang in ipairs({45, -45}) do
+        local bar = Instance.new("Frame")
+        bar.AnchorPoint = Vector2.new(0.5, 0.5)
+        bar.Position = UDim2.new(0.5, 0, 0.5, 0)
+        bar.Size = UDim2.new(0, 14, 0, 2)
+        bar.Rotation = ang
+        bar.BackgroundColor3 = Color3.fromRGB(255, 90, 90)
+        bar.BackgroundTransparency = 0
+        bar.BorderSizePixel = 0
+        bar.ZIndex = 9
+        bar.Parent = FxGui
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(1, 0)
+        c.Parent = bar
+        local TweenService = game:GetService("TweenService")
+        TweenService:Create(bar, TweenInfo.new(0.18), {BackgroundTransparency = 1}):Play()
+        task.delay(0.25, function() pcall(function() bar:Destroy() end) end)
+    end
+    if HM_SOUND_ID then
+        pcall(function()
+            local s = Instance.new("Sound")
+            s.SoundId = HM_SOUND_ID
+            s.Volume = 0.6
+            s.Parent = workspace
+            s:Play()
+            task.delay(1, function() pcall(function() s:Destroy() end) end)
+        end)
+    end
+end
+
+local function onShotTracer()
+    if not S.tracersOn then return end
+    local ch = LP.Character
+    if not ch then return end
+    local tool = ch:FindFirstChildOfClass("Tool")
+    if not tool then return end
+    local fromPart = tool:FindFirstChild("Handle") or tool.PrimaryPart or ch:FindFirstChild("HumanoidRootPart")
+    if not fromPart then return end
+    local to = nil
+    if S.silentAimOn then
+        local t = findSilentTarget()
+        local head = t and t.Character and t.Character:FindFirstChild("Head")
+        if head then to = head.Position end
+    end
+    if not to then
+        local mouse = LP:GetMouse()
+        if mouse and mouse.Hit then to = mouse.Hit.Position end
+    end
+    if to then drawTracer(fromPart.Position, to) end
+end
+
+local function onShotHitmarker()
+    if not S.hitmarkerOn then return end
+    local hit = false
+    if S.silentAimOn then
+        if findSilentTarget() then hit = true end
+    end
+    if not hit then
+        local mouse = LP:GetMouse()
+        if mouse and mouse.Target then
+            local model = mouse.Target:FindFirstAncestorOfClass("Model")
+            if model then
+                local plr = Players:GetPlayerFromCharacter(model)
+                if plr and plr ~= LP then hit = true end
+            end
+        end
+    end
+    if hit then showHitmarker() end
+end
+
+S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    local ch = LP.Character
+    if not ch or not ch:FindFirstChildOfClass("Tool") then return end
+    pcall(onShotTracer)
+    pcall(onShotHitmarker)
+end)
+
+-- ============ ANTI-AIM (НАСТОЯЩИЕ fake angles) ============
+-- Фейковый CFrame ставится в Heartbeat (после физики, перед отправкой на сервер)
+-- и больше НЕ откатывается — его видят и сервер, и другие игроки.
+-- Стабильность:
+--  * yaw не влияет на физику (капсула круглая) — ходьба/прыжки как обычно;
+--  * pitch: тело опускается к земле и обнуляется угловая скорость,
+--    чтобы капсула спокойно лежала, а не отпрыгивала.
+-- ============ ANTI-AIM (ENI Suite: Spin / Jitter / Desync / Random + Fake Visualize) ============
+local aaState = {CurrentAngle = 0, LastTick = tick(), FakeCharacter = nil}
+
+local function aaGetRoot()
+    local ch = LP.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function aaCreateFake()
+    if aaState.FakeCharacter then
+        pcall(function() aaState.FakeCharacter:Destroy() end)
+        aaState.FakeCharacter = nil
+    end
+    if not S.aaVisualize then return end
+    local char = LP.Character
+    if not char then return end
+    local fake = Instance.new("Model")
+    fake.Name = "SpermaAAFake"
+    for _, v in pairs(char:GetChildren()) do
+        if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
+            local okc, clone = pcall(function() return v:Clone() end)
+            if okc and clone then
+                clone.CanCollide = false
+                clone.Anchored = true
+                clone.Transparency = 0.7
+                pcall(function() clone.CanTouch = false clone.CanQuery = false end)
+                clone.Parent = fake
+            end
+        end
+    end
+    fake.Parent = workspace
+    aaState.FakeCharacter = fake
+end
+
+local function aaDestroyFake()
+    if aaState.FakeCharacter then
+        pcall(function() aaState.FakeCharacter:Destroy() end)
+        aaState.FakeCharacter = nil
+    end
+end
+
+-- фейковое тело показывает, куда "смотрит" подменённый рут
+local function aaUpdateFake(angle)
+    if not S.aaVisualize then return end
+    local fake = aaState.FakeCharacter
+    if not fake or not fake.Parent then return end
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local rot = CFrame.Angles(0, math.rad(angle), 0)
+    local offset = root.CFrame * rot
+    for _, v in pairs(fake:GetChildren()) do
+        if v:IsA("BasePart") then
+            local realPart = ch:FindFirstChild(v.Name)
+            if realPart and realPart:IsA("BasePart") then
+                pcall(function()
+                    v.CFrame = offset * (root.CFrame:Inverse() * realPart.CFrame)
+                end)
+            end
+        end
+    end
+end
+
+local function enableAntiAim()
+    S.aaOn = true
+    dcc(S.aaConn)
+    aaState.LastTick = tick()
+    if S.aaVisualize then aaCreateFake() end
+    S.aaConn = RunService.Heartbeat:Connect(function()
+        if not S.aaOn then return end
+        local root = aaGetRoot()
+        if not root then return end
+        local now = tick()
+        local dt = now - aaState.LastTick
+        aaState.LastTick = now
+
+        -- контроллер движения сам перезаписывает yaw → отрубаем AutoRotate
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function()
+                if S.aaOrigAutoRotate == nil then S.aaOrigAutoRotate = hum.AutoRotate end
+                if hum.AutoRotate then hum.AutoRotate = false end
+            end)
+        end
+
+        local mode = S.aaMode
+        if mode == "Spin" then
+            aaState.CurrentAngle = (aaState.CurrentAngle + S.aaSpeed * dt * 10) % 360
+            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(S.aaSpeed * dt * 10), 0)
+        elseif mode == "Jitter" then
+            aaState.CurrentAngle = aaState.CurrentAngle == 0 and S.aaJitterAngle or 0
+            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(aaState.CurrentAngle), 0)
+        elseif mode == "Desync" then
+            -- синусовый сдвиг ±2 стада (без накопления — через текущий root.CFrame)
+            local offset = math.sin(now * S.aaDesyncOffset * 10) * 2
+            root.CFrame = root.CFrame + Vector3.new(offset, 0, 0)
+        else -- "Random"
+            local range = math.max(tonumber(S.aaRandomRange) or 360, 1)
+            aaState.CurrentAngle = math.random(-range / 2, range / 2)
+            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(aaState.CurrentAngle), 0)
+        end
+
+        -- Pitch manipulation
+        local pitch = S.aaPitch
+        if pitch == "Up" then
+            root.CFrame = root.CFrame * CFrame.Angles(math.rad(-89), 0, 0)
+        elseif pitch == "Down" then
+            root.CFrame = root.CFrame * CFrame.Angles(math.rad(89), 0, 0)
+        elseif pitch == "Random" then
+            local r = math.random()
+            if r < 1 / 3 then
+                root.CFrame = root.CFrame * CFrame.Angles(math.rad(-89), 0, 0)
+            elseif r < 2 / 3 then
+                root.CFrame = root.CFrame * CFrame.Angles(math.rad(89), 0, 0)
+            end
+        end -- "Zero"/"None": не трогаем ориентацию по X
+
+        aaUpdateFake(aaState.CurrentAngle)
+    end)
+end
+
+local function disableAntiAim()
+    S.aaOn = false
+    dcc(S.aaConn)
+    S.aaConn = nil
+    aaDestroyFake()
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum and S.aaOrigAutoRotate ~= nil then
+        pcall(function() hum.AutoRotate = S.aaOrigAutoRotate end)
+        S.aaOrigAutoRotate = nil
+    end
+end
+
+-- пересоздание фейка при респавне
+LP.CharacterAdded:Connect(function()
+    task.wait(1)
+    if S.aaOn and S.aaVisualize then aaCreateFake() end
+end)
+
+-- ============ BHOP (авто-прыжки) ============
+local function enableBhop()
+    S.bhopOn = true
+    dcc(S.bhopConn)
+    S.bhopConn = RunService.Heartbeat:Connect(function()
+        if not S.bhopOn then return end
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not hum or not root then return end
+        if S.bhopMode == "Hold Space" and not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
+        if hum:GetState() == Enum.HumanoidStateType.Seated then return end
+        if hum.FloorMaterial ~= Enum.Material.Air then
+            if S.bhopMethod == "Velocity" then
+                -- напрямую задаём вертикальную скорость: работает даже при JumpPower = 0
+                local vel = root.AssemblyLinearVelocity
+                local jp = math.max(hum.JumpPower or 0, 50)
+                root.AssemblyLinearVelocity = Vector3.new(vel.X, jp, vel.Z)
+            else
+                hum.Jump = true
+            end
+        end
+    end)
+end
+
+local function disableBhop()
+    S.bhopOn = false
+    if S.bhopConn then S.bhopConn:Disconnect() S.bhopConn = nil end
+end
+
+-- ============ ANTI FLING (защита от флинга) ============
+local function enableAntiFling()
+    S.afOn = true
+    dcc(S.afConn)
+    S.afConn = RunService.Stepped:Connect(function()
+        if not S.afOn then return end
+        if S.flying then return end -- Fly сам управляет скоростью
+        if S.flingConn then return end -- свой флинг не трогаем
+        local ch = LP.Character
+        if not ch then return end
+        for _, p in ipairs(ch:GetDescendants()) do
+            if p:IsA("BasePart") then
+                local v = p.AssemblyLinearVelocity
+                if v.Magnitude > S.afMax then
+                    p.AssemblyLinearVelocity = v.Unit * S.afMax
+                end
+                local av = p.AssemblyAngularVelocity
+                if av.Magnitude > S.afMax then
+                    p.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+        end
+    end)
+end
+
+local function disableAntiFling()
+    S.afOn = false
+    if S.afConn then S.afConn:Disconnect() S.afConn = nil end
+end
+
+-- ============ AUTO STRAFE (усиление bhop) ============
+local function enableStrafe()
+    S.strafeOn = true
+    dcc(S.strafeConn)
+    S.strafeConn = RunService.Heartbeat:Connect(function()
+        if not S.strafeOn then return end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+        if hum.FloorMaterial ~= Enum.Material.Air then return end -- только в воздухе
+        local vel = root.AssemblyLinearVelocity
+        local horiz = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+        if horiz < 2 then return end
+        local cam = workspace.CurrentCamera
+        local lv = cam.CFrame.LookVector
+        local dir = Vector3.new(lv.X, 0, lv.Z)
+        if dir.Magnitude < 0.05 then return end
+        dir = dir.Unit
+        -- подворачиваем горизонтальную скорость за камерой + лёгкий разгон до капы
+        local newSpeed = math.min(horiz + 0.35, S.strafeSpeed)
+        root.AssemblyLinearVelocity = Vector3.new(dir.X * newSpeed, vel.Y, dir.Z * newSpeed)
+    end)
+end
+
+local function disableStrafe()
+    S.strafeOn = false
+    if S.strafeConn then S.strafeConn:Disconnect() S.strafeConn = nil end
+end
+
+-- ============ SPECTATE (с мини-окном) ============
+local SpecGui = Instance.new("ScreenGui")
+SpecGui.Name = "SpermaHubSpec"
+SpecGui.ResetOnSpawn = false
+SpecGui.IgnoreGuiInset = true
+SpecGui.DisplayOrder = 90
+SpecGui.Parent = LP:WaitForChild("PlayerGui")
+
+local SpecWin = Instance.new("Frame")
+SpecWin.Size = UDim2.new(0, 220, 0, 78)
+SpecWin.Position = UDim2.new(0.5, -110, 1, -120)
+SpecWin.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+SpecWin.BackgroundTransparency = 0.1
+SpecWin.BorderSizePixel = 0
+SpecWin.Active = true
+SpecWin.Draggable = true
+SpecWin.Visible = false
+SpecWin.Parent = SpecGui
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = SpecWin
+    local s = Instance.new("UIStroke") s.Color = Color3.fromRGB(120, 60, 200) s.Thickness = 1 s.Transparency = 0.3 s.Parent = SpecWin
+end
+
+local SpecTitle = Instance.new("TextLabel")
+SpecTitle.Size = UDim2.new(1, -70, 0, 26)
+SpecTitle.Position = UDim2.new(0, 10, 0, 4)
+SpecTitle.BackgroundTransparency = 1
+SpecTitle.Text = "👁 Spectate"
+SpecTitle.TextColor3 = Color3.fromRGB(200, 160, 255)
+SpecTitle.Font = Enum.Font.GothamBold
+SpecTitle.TextSize = 13
+SpecTitle.TextXAlignment = Enum.TextXAlignment.Left
+SpecTitle.Parent = SpecWin
+
+local SpecExit = Instance.new("TextButton")
+SpecExit.Size = UDim2.new(0, 62, 0, 20)
+SpecExit.Position = UDim2.new(1, -70, 0, 6)
+SpecExit.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+SpecExit.Text = "✖ Выйти"
+SpecExit.TextColor3 = Color3.fromRGB(255, 220, 220)
+SpecExit.Font = Enum.Font.GothamBold
+SpecExit.TextSize = 11
+SpecExit.BorderSizePixel = 0
+SpecExit.AutoButtonColor = true
+SpecExit.Parent = SpecWin
+do
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = SpecExit
+end
+
+local SpecInfo = Instance.new("TextLabel")
+SpecInfo.Size = UDim2.new(1, -20, 0, 34)
+SpecInfo.Position = UDim2.new(0, 10, 0, 36)
+SpecInfo.BackgroundTransparency = 1
+SpecInfo.Text = "--"
+SpecInfo.TextColor3 = Color3.fromRGB(230, 230, 240)
+SpecInfo.Font = Enum.Font.GothamBold
+SpecInfo.TextSize = 13
+SpecInfo.TextXAlignment = Enum.TextXAlignment.Left
+SpecInfo.TextYAlignment = Enum.TextYAlignment.Top
+SpecInfo.Parent = SpecWin
+
+local function exitSpectate()
+    if not S.specOn then
+        SpecWin.Visible = false
+        return
+    end
+    S.specOn = false
+    S.specTarget = nil
+    if S.specConn then S.specConn:Disconnect() S.specConn = nil end
+    SpecWin.Visible = false
+    local cam = workspace.CurrentCamera
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then cam.CameraSubject = hum end
+    cam.CameraType = Enum.CameraType.Custom
+end
+
+SpecExit.MouseButton1Click:Connect(exitSpectate)
+
+local function startSpectate(plr)
+    local tch = plr and plr.Character
+    local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+    if not thum then
+        toastImpl("Spectate", "У цели нет персонажа!")
+        return
+    end
+    dcc(S.specConn)
+    S.specOn = true
+    S.specTarget = plr
+    local cam = workspace.CurrentCamera
+    cam.CameraSubject = thum
+    SpecTitle.Text = "👁 Spectating"
+    SpecWin.Visible = true
+    toastImpl("Spectate", "Слежу за " .. plr.Name)
+    S.specConn = RunService.RenderStepped:Connect(function()
+        if not S.specOn then return end
+        local t = S.specTarget
+        local tch2 = t and t.Character
+        local thum2 = tch2 and tch2:FindFirstChildOfClass("Humanoid")
+        if not t or not t.Parent or not thum2 or thum2.Health <= 0 then
+            toastImpl("Spectate", "Цель умерла или вышла")
+            exitSpectate()
+            return
+        end
+        cam.CameraSubject = thum2
+        SpecInfo.Text = string.format("%s\n%.0f / %.0f HP", t.Name, thum2.Health, thum2.MaxHealth)
+        local r = thum2.Health / thum2.MaxHealth
+        SpecInfo.TextColor3 = Color3.fromRGB(math.floor(255 * (1 - r) + 80 * r), math.floor(255 * r), 120)
+    end)
+end
+
+-- ============ ANTI-CHEAT BYPASS (честный) ============
+-- Клиентские античиты живут в LocalScript/ModuleScript игрока — их можно убить.
+-- Серверный античит клиентом не обходится в принципе (ни один чит не умеет).
+local AC_PATTERNS = {
+    "adonis", "anticheat", "anti-cheat", "anti cheat", "antihack", "anti-hack",
+    "anticheatclient", "exploitdetector", "cheatdetector", "watchdog", "banhammer",
+}
+
+local function neuterAntiCheatScripts(dryRun)
+    local killed = 0
+    local roots = {
+        LP:FindFirstChild("PlayerGui"),
+        LP:FindFirstChild("PlayerScripts"),
+        game:GetService("ReplicatedFirst"),
+    }
+    for _, root in ipairs(roots) do
+        if root then
+            for _, obj in ipairs(root:GetDescendants()) do
+                if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+                    local n = string.lower(obj.Name)
+                    for _, pat in ipairs(AC_PATTERNS) do
+                        if string.find(n, pat, 1, true) then
+                            killed = killed + 1
+                            if not dryRun then
+                                pcall(function() if obj:IsA("LocalScript") then obj.Disabled = true end end)
+                                pcall(function() obj:Destroy() end)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return killed
+end
+
+local function acHooksSupported()
+    return type(getrawmetatable) == "function"
+        and type(newcclosure) == "function"
+        and type(setreadonly) == "function"
+        and type(getnamecallmethod) == "function"
+end
+
+-- Anti Kick: перехват Namecall Kick (если экзекьютор умеет хуки)
+local function enableAntiKick()
+    if S.akOn then return true end
+    if not acHooksSupported() then
+        notify("Bypass", "Anti Kick недоступен: у экзекьютора нет хуков (на Xeno не работает)")
+        return false
+    end
+    local ok, err = pcall(function()
+        local mt = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        S.akOriginal = old
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if S.akOn and method and (method == "Kick" or method == "kick") then
+                return nil -- кик молча проглочен
+            end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+    if ok then
+        S.akOn = true
+        notify("Bypass", "Anti Kick включён")
+    else
+        notify("Bypass", "Не удалось поставить Anti Kick: " .. tostring(err))
+    end
+    return ok
+end
+
+local function disableAntiKick()
+    if not S.akOn then return end
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        mt.__namecall = S.akOriginal
+        setreadonly(mt, true)
+    end)
+    S.akOn = false
+    S.akOriginal = nil
+end
+
+local function applyBypassMode(mode)
+    local prev = S.bypassMode
+    S.bypassMode = mode
+    if mode == "Off" then
+        disableAntiKick()
+        return
+    end
+    -- scripts killer (разово + авто)
+    if mode == "Scripts Killer" or mode == "Full" then
+        local k = neuterAntiCheatScripts(false)
+        if mode ~= prev then
+            toastImpl("Bypass", "Scripts Killer: отключено " .. tostring(k) .. " шт., авто-скан каждые 20 сек")
+        end
+    end
+    -- anti kick
+    if mode == "Anti Kick" or mode == "Full" then
+        enableAntiKick()
+    end
+end
+
+-- фоновый рескан клиентских античитов
+task.spawn(function()
+    while true do
+        if S and S.guiAlive and (S.bypassMode == "Scripts Killer" or S.bypassMode == "Full") then
+            pcall(neuterAntiCheatScripts, false)
+        end
+        task.wait(20)
+    end
+end)
+
+local TeleportService = game:GetService("TeleportService")
+
+-- ============ SMOOTH CAMERA (плавное движение камеры) ============
+-- кастомный камера-контроллер: CameraType=Scriptable, yaw/pitch сглаживаются
+-- экспоненциальным фильтром; камера орбитирует вокруг головы персонажа.
+scYaw = 0 scPitch = 0 scTgtYaw = 0 scTgtPitch = 0
+
+function enableSmoothCam()
+    local cam = workspace.CurrentCamera
+    if not cam then
+        notify("Smooth Camera", "Нет камеры")
+        return
+    end
+    S.scOn = true
+    S.scPrevType = cam.CameraType
+    cam.CameraType = Enum.CameraType.Scriptable
+    -- стартовые углы из текущего вида камеры
+    local x, y = cam.CFrame:ToEulerAnglesYXZ()
+    scPitch = x
+    scYaw = y
+    scTgtPitch = x
+    scTgtYaw = y
+    dcc(S.scConn)
+    S.scConn = RunService.RenderStepped:Connect(function(dt)
+        if not S.scOn then return end
+        local cam2 = workspace.CurrentCamera
+        if not cam2 then return end
+        -- цель вращения — по дельте мыши (без мгновенного скачка)
+        local md = UIS:GetMouseDelta()
+        local sens = 0.0035 * S.scSens
+        scTgtYaw = scTgtYaw - md.X * sens
+        scTgtPitch = math.clamp(scTgtPitch - md.Y * sens, -1.45, 1.45)
+        -- сглаживание (экспоненциальный фильтр, не зависит от FPS)
+        local k = 1 - math.exp(-dt * S.scSpeed)
+        scYaw = scYaw + (scTgtYaw - scYaw) * k
+        scPitch = scPitch + (scTgtPitch - scPitch) * k
+        -- орбита вокруг головы
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if root then
+            local headPos = root.Position + Vector3.new(0, 1.5, 0)
+            local look = CFrame.Angles(0, scYaw, 0) * CFrame.Angles(scPitch, 0, 0)
+            local camPos = headPos - look.LookVector * S.scDist
+            cam2.CFrame = CFrame.new(camPos, headPos)
+        end
+    end)
+end
+
+function disableSmoothCam()
+    S.scOn = false
+    if S.scConn then S.scConn:Disconnect() S.scConn = nil end
+    local cam = workspace.CurrentCamera
+    if cam then
+        cam.CameraType = S.scPrevType or Enum.CameraType.Custom
+    end
+end
+
+-- ============ SPIDER (лазание по стенам) ============
+spiderRayParams = RaycastParams.new()
+spiderRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+function enableSpider()
+    S.spiderOn = true
+    dcc(S.spiderConn)
+    S.spiderConn = RunService.Heartbeat:Connect(function()
+        if not S.spiderOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+        if hum.MoveDirection.Magnitude < 0.1 then return end -- стоишь — не лезешь
+        spiderRayParams.FilterDescendantsInstances = {ch}
+        local hit = workspace:Raycast(root.Position, hum.MoveDirection.Unit * 3, spiderRayParams)
+        if hit then
+            -- перед нами стена: ставим вертикальную скорость подъёма
+            root.Velocity = Vector3.new(root.Velocity.X, S.spiderSpeed, root.Velocity.Z)
+        end
+    end)
+end
+
+function disableSpider()
+    S.spiderOn = false
+    if S.spiderConn then S.spiderConn:Disconnect() S.spiderConn = nil end
+end
+
+-- ============ AIRSTACK (ходьба по воздуху на платформе / заморозка в маленьком кубе) ============
+function enableAirStack()
+    S.airstackOn = true
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    local freeze = (S.airstackMode == "Freeze")
+    -- высота платформы фиксируется в момент включения
+    S.airstackY = root and (root.Position.Y - 3.2) or 60
+    S.airstackFrozenCF = (freeze and root) and root.CFrame or nil
+    if freeze and hum then
+        -- сохранить скорости и ЗАМОРОЗИТЬ: персонаж не может ступить/прыгнуть вообще
+        S.airstackSavedWS = hum.WalkSpeed
+        S.airstackSavedJP = hum.JumpPower
+        S.airstackSavedJH = hum.JumpHeight
+        pcall(function()
+            hum.WalkSpeed = 0
+            hum.JumpPower = 0
+            hum.JumpHeight = 0
+            hum.PlatformStand = false
+        end)
+    end
+    if not S.airstackPlatform or not S.airstackPlatform.Parent then
+        local p = Instance.new("Part")
+        p.Name = "SpermaAirStack"
+        p.Anchored = true
+        p.CanCollide = true
+        p.Transparency = 1
+        p.CastShadow = false
+        p.Size = Vector3.new(12, 1, 12)
+        p.Parent = workspace
+        S.airstackPlatform = p
+    end
+    S.airstackPlatform.Size = freeze and Vector3.new(3, 1, 3) or Vector3.new(12, 1, 12)
+    dcc(S.airstackConn)
+    S.airstackConn = RunService.Heartbeat:Connect(function()
+        if not S.airstackOn then return end
+        local ch2 = LP.Character
+        if not ch2 then return end
+        local root2 = ch2:FindFirstChild("HumanoidRootPart")
+        local plat = S.airstackPlatform
+        if not root2 or not plat then return end
+        if S.airstackMode == "Freeze" and S.airstackFrozenCF then
+            -- ПОЛНАЯ заморозка: нет ни шага, ни прыжка, ни дрейфа, ни кручения
+            pcall(function()
+                local hum2 = ch2:FindFirstChildOfClass("Humanoid")
+                if hum2 then
+                    if hum2.WalkSpeed ~= 0 then hum2.WalkSpeed = 0 end
+                    if hum2.JumpPower ~= 0 then hum2.JumpPower = 0 end
+                    if hum2.JumpHeight ~= 0 then hum2.JumpHeight = 0 end
+                    local st = hum2:GetState()
+                    if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
+                        hum2:ChangeState(Enum.HumanoidStateType.Running)
+                    end
+                end
+                root2.CFrame = S.airstackFrozenCF
+                root2.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                root2.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                plat.CFrame = S.airstackFrozenCF * CFrame.new(0, -3.27, 0)
+            end)
+        else
+            -- платформа следует за игроком по X/Z на зафиксированной высоте
+            plat.Position = Vector3.new(root2.Position.X,
+                (S.airstackY or 60) - plat.Size.Y / 2 + 0.05,
+                root2.Position.Z)
+        end
+    end)
+end
+
+function disableAirStack()
+    S.airstackOn = false
+    S.airstackFrozenCF = nil
+    -- вернуть персонажу движение
+    pcall(function()
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = S.airstackSavedWS or 16
+            hum.JumpPower = S.airstackSavedJP or 50
+            hum.JumpHeight = S.airstackSavedJH or 7.2
+        end
+    end)
+    if S.airstackConn then S.airstackConn:Disconnect() S.airstackConn = nil end
+    if S.airstackPlatform and S.airstackPlatform.Parent then
+        S.airstackPlatform.Position = Vector3.new(0, -1e5, 0) -- прячем платформу далеко вниз
+    end
+end
+
+-- ============ AUTO SHOT (тригер-бот: не наводится, но попадает) ============
+-- камера НЕ трогается: как только вражья голова попадает в конус у прицела —
+-- сам жмёт ЛКМ (инжект) + активирует оружие. Снаряд летит по центру => хит.
+function asTargetInCone()
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local cx = cam.ViewportSize.X / 2
+    local cy = cam.ViewportSize.Y / 2
+    local best, bd = nil, S.asFovPx
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and not isTeammate(plr) then
+            local ch2 = plr.Character
+            local head = ch2 and ch2:FindFirstChild("Head")
+            local hum = ch2 and ch2:FindFirstChildOfClass("Humanoid")
+            if head and hum and hum.Health > 0 and isVisible(head) then
+                local sp, on = cam:WorldToViewportPoint(head.Position)
+                if on then
+                    local dx = sp.X - cx
+                    local dy = sp.Y - cy
+                    local d = math.sqrt(dx * dx + dy * dy)
+                    if d < bd then
+                        bd = d
+                        best = head
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- оружие + клинок (фолбэки для кастомных мечей)
+function asGetWeapon()
+    local ch = LP.Character
+    local tool = ch and ch:FindFirstChildOfClass("Tool")
+    local handle = nil
+    if tool then
+        handle = tool:FindFirstChild("Handle")
+        if not (handle and handle:IsA("BasePart")) then
+            handle = tool:FindFirstChildWhichIsA("BasePart", true)
+        end
+    end
+    return tool, handle
+end
+
+function enableAutoShot()
+    S.asOn = true
+    dcc(S.asConn)
+    local acc = 0
+    -- Stepped (до физики): сервер застаёт клинок во враге => попадание гарантировано,
+    -- КАМЕРА НЕ ДВИЖЕТСЯ ВООБЩЕ
+    S.asConn = RunService.Stepped:Connect(function(dt)
+        if not S.asOn then return end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local tool, handle = asGetWeapon()
+
+        -- INSTANT FLICK обрабатывается рендер-биндом ПОСЛЕ камеры игры (см. ниже).
+        -- Обходим Stepped ТОЛЬКО в пушечном режиме (когда Silent Hit и TP Kill ВЫКЛЮЧЕНЫ),
+        -- чтобы мечи/TP Kill из Stepped не ломались
+        if S.asFlick and not S.asSilentHit and not S.asTp then return end
+
+        -- ЦЕЛЬ (без camera-turn):
+        local targetModel, targetRoot = nil, nil
+        if S.asSilentHit then
+            -- silent hit: ближайший живой враг в радиусе удара (в TP-режиме — в радиусе TP Дальности)
+            local bd = S.asTp and S.asTpRange or S.asRange
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LP and not isTeammate(plr) then
+                    local tch = plr.Character
+                    local thr = tch and tch:FindFirstChild("HumanoidRootPart")
+                    local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+                    if thr and thum and thum.Health > 0 then
+                        local d = (thr.Position - root.Position).Magnitude
+                        if d < bd then
+                            bd = d
+                            targetModel = tch
+                            targetRoot = thr
+                        end
+                    end
+                end
+            end
+        else
+            -- классический/фортлайн режим: цель в конусе прицела (сам огонь)
+            local head = asTargetInCone()
+            if head then
+                targetModel = head.Parent
+                targetRoot = head
+                -- FORTLINE-асист: пушки стреляют ПО КАМЕРЕ, поэтому плавно
+                -- подтягиваем камеру к голове (Assist=0 — камера не двигается)
+                if S.asAssist and S.asAssist > 0 then
+                    local camA = workspace.CurrentCamera
+                    if camA then
+                        camA.CFrame = camA.CFrame:Lerp(
+                            CFrame.new(camA.CFrame.Position, head.Position),
+                            S.asAssist)
+                    end
+                end
+            end
+        end
+        if not targetModel then return end
+
+        -- САЙЛЕНТ ХИТ (рабочий голяк без хуков):
+        --  1) REACH: клинок раздуваем до куба Reach Size — Handle.Touched
+        --     сервер регистрирует по всем врагам внутри куба;
+        --  2) дубль: firetouchinterest по партам ближайшей цели (если executor даёт);
+        --  3) НИЧТО не двигается: ни камера, ни персонаж, ни рука.
+        if S.asSilentHit and handle then
+            if not S.asOrigSize then
+                S.asOrigSize = handle.Size
+            end
+            pcall(function()
+                handle.CanCollide = false
+                handle.Size = Vector3.new(S.asRange, S.asRange, S.asRange)
+            end)
+            if saHasTouch and targetModel then
+                for _, part in ipairs(targetModel:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        saTouch(handle, part)
+                    end
+                end
+            end
+        end
+
+        -- TP KILL (старый стиль): телепорт за спину цели -> удар -> назад
+        if S.asTp and targetRoot then
+            local nowT = os.clock()
+            local tpPeriod = math.max(0.22, 2 / math.max(S.asCps, 1))
+            if S.asBackCF then
+                -- возврат на исходную позицию
+                pcall(function() root.CFrame = S.asBackCF end)
+                S.asBackCF = nil
+            elseif nowT - (S.asLastSwing or 0) >= tpPeriod then
+                S.asLastSwing = nowT
+                S.asBackCF = root.CFrame
+                local behind = targetRoot.Position - targetRoot.CFrame.LookVector * S.asTpDist
+                pcall(function()
+                    root.CFrame = CFrame.lookAt(behind, targetRoot.Position)
+                end)
+                -- мгновенный удар с места атаки
+                pcall(function()
+                    if tool then tool:Activate() end
+                end)
+                if saHasTouch and handle then
+                    for _, part in ipairs(targetModel:GetChildren()) do
+                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                            saTouch(handle, part)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- авто-огонь по CPS
+        acc = acc + dt
+        if acc >= 1 / math.max(S.asCps, 1) then
+            acc = 0
+            kaClick()
+            pcall(function()
+                if tool then tool:Activate() end
+            end)
+        end
+    end)
+
+    -- УДЕРЖАНИЕ ЛКМ: Fortline стреляет пока кнопка ЗАЖАТА (как из сниппета silent aim),
+    -- поэтому авто-шот сам зажимает ЛКМ, пока есть цель (tap-клики не работают)
+    local function asHoldLMB()
+        if S.flickHold then return end
+        S.flickHold = true
+        if type(mouse1press) == "function" then
+            pcall(mouse1press)
+            return
+        end
+        pcall(function()
+            local cam2 = workspace.CurrentCamera
+            if cam2 then
+                local vx = math.floor(cam2.ViewportSize.X / 2)
+                local vy = math.floor(cam2.ViewportSize.Y / 2)
+                VIMService:SendMouseButtonEvent(vx, vy, 0, true, game, 1)
+            end
+        end)
+    end
+    local function asReleaseLMB()
+        if not S.flickHold then return end
+        S.flickHold = false
+        if type(mouse1release) == "function" then
+            pcall(mouse1release)
+            return
+        end
+        pcall(function()
+            local cam2 = workspace.CurrentCamera
+            if cam2 then
+                local vx = math.floor(cam2.ViewportSize.X / 2)
+                local vy = math.floor(cam2.ViewportSize.Y / 2)
+                VIMService:SendMouseButtonEvent(vx, vy, 0, false, game, 1)
+            end
+        end)
+    end
+
+    -- НОРМАЛЬНЫЙ САЙЛЕНТ (Network): если executor с хуками — собственно
+    -- перенаправляем FireServer оружия В ГОЛОВУ цели. Камеру двигать НЕ НАДО,
+    -- пули летят куда надо сами. Мы только держим ЛКМ пока цель в конусе.
+    if S.asSilentNet then
+        pcall(function()
+            if checkSilentAimSupport() then
+                -- Fortline: точный хук BaseWeapon.fire (там настоящая пушечная система),
+                -- иначе — универсальный метатабличный редирект FireServer
+                if not enableFortlineSilent() then
+                    enableSilentNetwork()
+                end
+                S.asNetByAuto = true
+                S.silentAimOn = true
+            else
+                S.asSilentNet = false
+                notify("Auto Shot", "Silent Redirect: нет хуков на этом executor — выкл", 4, "alert-triangle")
+            end
+        end)
+    end
+
+    -- Рендер-бинд ПОСЛЕ игровой камеры: flick-снап (если включён) и
+    -- автозажим ЛКМ, когда цель в конусе
+    S.asFlickB = true
+    RunService:BindToRenderStep("SpermaHubFlickStep", Enum.RenderPriority.Camera.Value + 1, function()
+        if not S.asOn or S.asSilentHit or S.asTp then
+            -- SilentHit/TP Kill — пусть работает Stepped-механика, бинд отдыхает
+            S.flickHead = nil
+            asReleaseLMB()
+            return
+        end
+        if not S.asFlick and not S.asSilentNet then
+            S.flickHead = nil
+            asReleaseLMB()
+            return
+        end
+        local camF = workspace.CurrentCamera
+        if not camF then return end
+        local head = asTargetInCone()
+        S.flickHead = head
+        if not head then
+            S.asLastTarget = nil
+            asReleaseLMB()
+            return
+        end
+        -- автонаведение камеры на цель ПОКА СТРЕЛЯЕМ:
+        --  flick → МГНОВЕННЫЙ снап; сайлент без flick → плавный трек (камера сама догоняет)
+        if not S.asSilentNet and S.asFlick then
+            local okS = pcall(function()
+                camF.CFrame = CFrame.lookAt(camF.CFrame.Position, head.Position)
+            end)
+            if not okS then return end
+        else
+            pcall(function()
+                camF.CFrame = camF.CFrame:Lerp(
+                    CFrame.new(camF.CFrame.Position, head.Position), 0.55)
+            end)
+        end
+        -- человеческий ритм: пауза-реакция на новую цель, дальше разброс интервалов
+        local targetModelF = head.Parent
+        local nowF = os.clock()
+        if S.asLastTarget ~= targetModelF then
+            S.asLastTarget = targetModelF
+            S.asNextFire = nowF + (S.asReaction or 0.12) + math.random() * 0.08
+        end
+        -- TRIGGER FIRE (skeet): как только прицел РЕАЛЬНО на цели (<=30 px) — мгновенный выстрел
+        if S.asTrigger then
+            local spT, onT = camF:WorldToViewportPoint(head.Position)
+            if onT then
+                local cxT = camF.ViewportSize.X / 2
+                local cyT = camF.ViewportSize.Y / 2
+                local dpxT = math.sqrt((spT.X - cxT) ^ 2 + (spT.Y - cyT) ^ 2)
+                if dpxT <= 30 then
+                    local nowT = os.clock()
+                    if nowT - (S.asLastTrig or 0)
+                        >= (S.asTrigDelay or 0.08) + math.random() * 0.03 then
+                        S.asLastTrig = nowT
+                        kaClick()
+                    end
+                end
+            end
+        end
+        if nowF >= (S.asNextFire or 0) then
+            -- реакция вышла: жмём ЛКМ УДЕРЖИВАЕМО (автоматный огонь по темпу пушки)
+            asHoldLMB()
+            local toolF = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+            if toolF then
+                pcall(function() toolF:Activate() end)
+            end
+            -- доп. тап: для полуавтоматик, где hold не канает
+            kaClick()
+            local base = 1 / math.max(S.asCps, 1)
+            S.asNextFire = nowF + base * (0.8 + math.random() * 0.5)
+        end
+    end)
+end
+
+function disableAutoShot()
+    if S.asFlickB then
+        RunService:UnbindFromRenderStep("SpermaHubFlickStep")
+        S.asFlickB = false
+    end
+    S.flickHead = nil
+    -- если сайлент включали мы (Auto Shot) — аккуратно снять
+    if S.asNetByAuto then
+        S.asNetByAuto = false
+        pcall(function()
+            if S.silentAimOn and disableSilentAim then disableSilentAim() end
+        end)
+    end
+    -- отпустить автозажатую ЛКМ
+    if S.flickHold then
+        S.flickHold = false
+        if type(mouse1release) == "function" then
+            pcall(mouse1release)
+        else
+            pcall(function()
+                local cam2 = workspace.CurrentCamera
+                if cam2 then
+                    VIMService:SendMouseButtonEvent(
+                        math.floor(cam2.ViewportSize.X / 2),
+                        math.floor(cam2.ViewportSize.Y / 2),
+                        0, false, game, 1)
+                end
+            end)
+        end
+    end
+    S.asOn = false
+    if S.asConn then S.asConn:Disconnect() S.asConn = nil end
+    -- восстановить позицию, если отключили во время TP Kill
+    if S.asBackCF then
+        local ch0 = LP.Character
+        local root0 = ch0 and ch0:FindFirstChild("HumanoidRootPart")
+        if root0 then pcall(function() root0.CFrame = S.asBackCF end) end
+        S.asBackCF = nil
+    end
+    -- вернуть размер клинка
+    local ch2 = LP.Character
+    local tool2 = ch2 and ch2:FindFirstChildOfClass("Tool")
+    local handle2 = tool2 and (tool2:FindFirstChild("Handle") or tool2:FindFirstChildWhichIsA("BasePart", true))
+    if handle2 and S.asOrigSize then
+        pcall(function()
+            handle2.Size = S.asOrigSize
+        end)
+    end
+    S.asOrigSize = nil
+    S.asWeld = nil
+    S.asWeldParent = nil
+end
+
+-- ============ KILL AURA (закликивает врага) ============
+VIMService = game:GetService("VirtualInputManager")
+
+function kaNearestTarget()
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local best, bd = nil, S.kaRange
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and not isTeammate(plr) then
+            local tch = plr.Character
+            local thr = tch and tch:FindFirstChild("HumanoidRootPart")
+            local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+            if thr and thum and thum.Health > 0 then
+                local d = (thr.Position - root.Position).Magnitude
+                if d < bd then
+                    bd = d
+                    best = plr
+                end
+            end
+        end
+    end
+    return best
+end
+
+function kaClick()
+    -- инжект реального клика ЛКМ (как делает живой игрок)
+    if type(mouse1press) == "function" then
+        pcall(mouse1press)
+        task.delay(0.03, function()
+            pcall(function()
+                if type(mouse1release) == "function" then mouse1release() end
+            end)
+        end)
+        return
+    end
+    -- fallback: VirtualInputManager, клик СТРОГО В ЦЕНТР ЭКРАНА (не (0,0) — некоторые
+    -- игры/меню ловят клики в углу и гасят стрельбу)
+    local vx, vy = 0, 0
+    pcall(function()
+        local cam2 = workspace.CurrentCamera
+        if cam2 then
+            vx = math.floor(cam2.ViewportSize.X / 2)
+            vy = math.floor(cam2.ViewportSize.Y / 2)
+        end
+    end)
+    pcall(function()
+        VIMService:SendMouseButtonEvent(vx, vy, 0, true, game, 1)
+    end)
+    task.delay(0.03, function()
+        pcall(function()
+            VIMService:SendMouseButtonEvent(vx, vy, 0, false, game, 1)
+        end)
+    end)
+end
+
+function enableKillAura()
+    S.kaOn = true
+    dcc(S.kaConn)
+    local acc = 0
+    S.kaConn = RunService.Heartbeat:Connect(function(dt)
+        if not S.kaOn then return end
+        acc = acc + dt
+        if acc < 1 / math.max(S.kaCps, 1) then return end
+        acc = 0
+        local target = kaNearestTarget()
+        if not target then
+            S.kaTarget = nil
+            return
+        end
+        S.kaTarget = target
+        local root2 = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        local thr2 = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if root2 and thr2 and S.kaFace then
+            -- поворачиваем персонажа к цели, чтобы свинг ловил хитбокс
+            root2.CFrame = CFrame.new(root2.Position,
+                Vector3.new(thr2.Position.X, root2.Position.Y, thr2.Position.Z))
+        end
+        kaClick() -- обычный инжект-клик
+        pcall(function()
+            local ch2 = LP.Character
+            local tool = ch2 and ch2:FindFirstChildOfClass("Tool")
+            if tool then tool:Activate() end -- классическая активация оружия
+        end)
+    end)
+end
+
+function disableKillAura()
+    S.kaOn = false
+    S.kaTarget = nil
+    if S.kaConn then S.kaConn:Disconnect() S.kaConn = nil end
+end
+
+-- ============ SILENT AURA (1.8 Arena: клинок телепортируется во врага) ============
+-- сорцы: универсальные sword silent aura (scriptblox/reddit). Сервер валидирует урон
+-- по Handle.Touched => кладём сам Handle во врага каждый Stepped-тик (до физики),
+-- сервер видит РЕАЛЬНОЕ касание. firetouchinterest используем как дублирующий лейер.
+saHasTouch = (type(firetouchinterest) == "function")
+
+function saTouch(handle, part)
+    pcall(function()
+        firetouchinterest(handle, part, 0)
+    end)
+    pcall(function()
+        firetouchinterest(handle, part, 1)
+    end)
+end
+
+function enableSilentAura()
+    S.saOn = true
+    dcc(S.saConn)
+    if not saHasTouch then
+        notify("Silent Aura", "firetouchinterest нет — работаем на телепорте клинка (основной режим)")
+    end
+    local acc = 0
+    -- Stepped: тикаем ДО физики, чтобы сервер застал клинок во враге
+    S.saConn = RunService.Stepped:Connect(function(dt)
+        if not S.saOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        local tool = ch:FindFirstChildOfClass("Tool")
+        -- ручка клинка: Handle, либо первый BasePart внутри тулса (фолбэк)
+        local handle = nil
+        if tool then
+            handle = tool:FindFirstChild("Handle")
+            if not (handle and handle:IsA("BasePart")) then
+                handle = tool:FindFirstChildWhichIsA("BasePart", true)
+            end
+        end
+        if not root or not handle then
+            S.saTarget = nil
+            return
+        end
+        -- ближайший живой враг в досягаемости
+        local targetModel, targetRoot, bd = nil, nil, S.saRange
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP and not isTeammate(plr) then
+                local tch = plr.Character
+                local thr = tch and tch:FindFirstChild("HumanoidRootPart")
+                local thum = tch and tch:FindFirstChildOfClass("Humanoid")
+                if thr and thum and thum.Health > 0 then
+                    local d = (thr.Position - root.Position).Magnitude
+                    if d < bd then
+                        bd = d
+                        targetModel = tch
+                        targetRoot = thr
+                    end
+                end
+            end
+        end
+        S.saTarget = targetModel
+        if not targetRoot then return end
+
+        -- 1) REACH: клинок раздувается в куб Reach — Handle.Touched считается
+        --    по всем врагам внутри. НИЧТО не телепортируется (ни рука, ни персонаж).
+        if handle then
+            if not S.saOrigSize then
+                S.saOrigSize = handle.Size
+            end
+            pcall(function()
+                handle.CanCollide = false
+                handle.Size = Vector3.new(S.saRange, S.saRange, S.saRange)
+            end)
+        end
+
+        -- 2) firetouchinterest (если executor даёт): дублируем касание по всем партам
+        if saHasTouch then
+            for _, part in ipairs(targetModel:GetChildren()) do
+                if part:IsA("BasePart") then
+                    saTouch(handle, part)
+                end
+            end
+        end
+
+        -- 3) свинг с задержкой: сервер должен видеть "атаку", Delay быстрее 0.25 = бан
+        acc = acc + dt
+        if acc >= S.saDelay then
+            acc = 0
+            pcall(function()
+                tool:Activate()
+            end)
+        end
+    end)
+end
+
+function disableSilentAura()
+    S.saOn = false
+    S.saTarget = nil
+    if S.saConn then S.saConn:Disconnect() S.saConn = nil end
+    -- вернуть размер клинка
+    local ch3 = LP.Character
+    local tool3 = ch3 and ch3:FindFirstChildOfClass("Tool")
+    local handle3 = tool3 and (tool3:FindFirstChild("Handle") or tool3:FindFirstChildWhichIsA("BasePart", true))
+    if handle3 and S.saOrigSize then
+        pcall(function()
+            handle3.Size = S.saOrigSize
+        end)
+    end
+    S.saOrigSize = nil
+end
+
+-- ============ NO KNOCKBACK (удар не отталкивает) ============
+noKbZero = Vector3.new(0, 0, 0)
+
+function enableNoKb()
+    S.noKbOn = true
+    dcc(S.noKbConn)
+    S.noKbConn = RunService.Heartbeat:Connect(function()
+        if not S.noKbOn then return end
+        local ch = LP.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        if S.flying then S.noKbLast = nil return end -- во время флая свою скорость не трогаем
+        local vel = root.Velocity
+        -- горизонтальная скорость выше порога = нас ударило/толкнуло
+        if (vel - Vector3.new(0, vel.Y, 0)).Magnitude > S.noKbMax then
+            -- возвращаем доударные X/Z (движение как ни в чём не бывало)
+            local lv = S.noKbLast or noKbZero
+            local keepY = vel.Y
+            if S.noKbFull then keepY = 0 end -- 1.8-режим: обнуляем и подскок вверх от удара
+            root.Velocity = Vector3.new(lv.X, keepY, lv.Z)
+        else
+            -- обычная скорость (ходьба/бег) — запоминаем как эталон
+            S.noKbLast = Vector3.new(vel.X, 0, vel.Z)
+        end
+    end)
+end
+
+function disableNoKb()
+    S.noKbOn = false
+    if S.noKbConn then S.noKbConn:Disconnect() S.noKbConn = nil end
+    S.noKbLast = nil
+end
+
+-- ============ INVISIBLE (оффсет персонажа под карту) ============
+function setInvisible(state)
+    S.invisOn = state
+    if state then
+        dcc(S.invisConn)
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        S.invisY = root and root.Position.Y or 60
+        S.invisConn = RunService.Heartbeat:Connect(function()
+            if not S.invisOn then return end
+            local ch2 = LP.Character
+            if not ch2 then return end
+            local root2 = ch2:FindFirstChild("HumanoidRootPart")
+            local hum2 = ch2:FindFirstChildOfClass("Humanoid")
+            if root2 and hum2 then
+                -- персонаж физически провален под карту: другие его не видят, а падения нет (Y зафиксирован)
+                local p = root2.Position
+                root2.Velocity = Vector3.new(0, 0, 0)
+                root2.CFrame = CFrame.new(p.X, (S.invisY or p.Y) - S.invisOffset, p.Z)
+                -- камеру держим на нормальной высоте — ты видишь всё как обычно
+                hum2.CameraOffset = Vector3.new(0, S.invisOffset, 0)
+            end
+        end)
+    else
+        if S.invisConn then S.invisConn:Disconnect() S.invisConn = nil end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hum then hum.CameraOffset = Vector3.new(0, 0, 0) end
+        if root then
+            local p = root.Position
+            root.CFrame = CFrame.new(p.X, (S.invisY or p.Y), p.Z) -- возврат наверх
+            root.Velocity = Vector3.new(0, 0, 0)
+        end
+    end
+end
+
+-- ============ WALK SPEED (CFrame-доводка, античит не флагит WalkSpeed) ============
+local function applyWalkSpeed()
+    local ch = LP.Character
+    if not ch then return end
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.WalkSpeed = 16
+    end
+end
+
+S.wsConn = RunService.Heartbeat:Connect(function(dt)
+    if not S.walkSpeedOn then return end
+    local ch = LP.Character
+    if not ch then return end
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not (hum and root) then return end
+    local md = hum.MoveDirection
+    if md.Magnitude < 0.01 then return end
+    local extra = (S.walkSpeed or 16) - 16
+    if extra <= 0 then return end
+    pcall(function()
+        local step = md * (extra * dt)
+        root.CFrame = root.CFrame + Vector3.new(step.X, 0, step.Z)
+    end)
+end)
+
+-- ============ ANTI RAGDOLL (не падаешь, двигаешься) ============
+local AR_STATES = {
+    [Enum.HumanoidStateType.FallingDown] = true,
+    [Enum.HumanoidStateType.Ragdoll] = true,
+    [Enum.HumanoidStateType.Physics] = true,
+}
+S.arConn = RunService.Heartbeat:Connect(function()
+    if not S.antiRagdoll then return end
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local st = hum:GetState()
+    if AR_STATES[st] then
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+    end
+end)
+
+bootStep("логика OK")
+
+-- ============ ESP ============
+local ESPGui = Instance.new("ScreenGui")
+ESPGui.Name = "SpermaHubESP"
+ESPGui.ResetOnSpawn = false
+ESPGui.IgnoreGuiInset = true
+ESPGui.DisplayOrder = 50
+ESPGui.Parent = LP:WaitForChild("PlayerGui")
+
+local espObjects = {}
+local skeletonFrames = {}
+
+-- неоновые стили подсветки (как на скриншотах)
+local CHAM_STYLES = {
+    Purple = {fill = Color3.fromRGB(170, 0, 255),  outline = Color3.fromRGB(225, 110, 255)},
+    Pink   = {fill = Color3.fromRGB(255, 0, 200),  outline = Color3.fromRGB(255, 120, 240)},
+    Red    = {fill = Color3.fromRGB(255, 40, 40),  outline = Color3.fromRGB(255, 150, 80)},
+    Green  = {fill = Color3.fromRGB(40, 255, 130), outline = Color3.fromRGB(190, 255, 190)},
+    Cyan   = {fill = Color3.fromRGB(0, 190, 255),  outline = Color3.fromRGB(150, 235, 255)},
+    Gold   = {fill = Color3.fromRGB(255, 190, 40), outline = Color3.fromRGB(255, 240, 160)},
+}
+local TARGET_STYLES = {
+    Pink   = CHAM_STYLES.Pink,
+    Purple = CHAM_STYLES.Purple,
+    Red    = CHAM_STYLES.Red,
+    Gold   = CHAM_STYLES.Gold,
+}
+
+local function isAlive(plr)
+    local ch = plr.Character
+    if not ch then return false end
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return ch:FindFirstChild("HumanoidRootPart") ~= nil
+end
+
+local function createESP(plr)
+    if plr == LP or isTeammate(plr) then return end
+    if espObjects[plr] then return end
+    local data = {lines = {}, highlight = nil, billboard = nil, boxLines = {}}
+    espObjects[plr] = data
+
+    local ch = plr.Character
+    if ch then
+        local hl = Instance.new("Highlight")
+        hl.FillColor = Color3.fromRGB(170, 0, 255)
+        hl.OutlineColor = Color3.fromRGB(225, 110, 255)
+        hl.FillTransparency = 0.5
+        hl.OutlineTransparency = 0
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Adornee = ch
+        hl.Parent = ESPGui
+        data.highlight = hl
+    end
+
+    for i = 1, 4 do
+        local line = Instance.new("Frame")
+        line.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+        line.BorderSizePixel = 0
+        line.ZIndex = 6
+        line.Visible = false
+        line.Parent = ESPGui
+        data.boxLines[i] = line
+    end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "ESPName"
+    bb.Size = UDim2.new(0, 220, 0, 70)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = ESPGui
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, 0, 0, 20)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = plr.Name
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 14
+    nameLabel.Parent = bb
+
+    local hpLabel = Instance.new("TextLabel")
+    hpLabel.Size = UDim2.new(1, 0, 0, 16)
+    hpLabel.Position = UDim2.new(0, 0, 0, 20)
+    hpLabel.BackgroundTransparency = 1
+    hpLabel.Text = "100 HP"
+    hpLabel.TextColor3 = Color3.fromRGB(80, 255, 120)
+    hpLabel.TextStrokeTransparency = 0
+    hpLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    hpLabel.Font = Enum.Font.GothamBold
+    hpLabel.TextSize = 13
+    hpLabel.Parent = bb
+
+    local hitboxLabel = Instance.new("TextLabel")
+    hitboxLabel.Size = UDim2.new(1, 0, 0, 16)
+    hitboxLabel.Position = UDim2.new(0, 0, 0, 36)
+    hitboxLabel.BackgroundTransparency = 1
+    hitboxLabel.Text = "Hitbox: --"
+    hitboxLabel.TextColor3 = Color3.fromRGB(255, 180, 255)
+    hitboxLabel.TextStrokeTransparency = 0
+    hitboxLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    hitboxLabel.Font = Enum.Font.GothamBold
+    hitboxLabel.TextSize = 12
+    hitboxLabel.Parent = bb
+
+    data.billboard = bb
+    data.nameLabel = nameLabel
+    data.hpLabel = hpLabel
+    data.hitboxLabel = hitboxLabel
+end
+
+local function removeESP(plr)
+    local data = espObjects[plr]
+    if not data then return end
+    if data.highlight then data.highlight:Destroy() end
+    if data.billboard then data.billboard:Destroy() end
+    if data.boxLines then
+        for _, line in ipairs(data.boxLines) do
+            if line then line:Destroy() end
+        end
+    end
+    espObjects[plr] = nil
+end
+
+local function updateESP()
+    local cam = workspace.CurrentCamera
+    for plr, data in pairs(espObjects) do
+        local ch = plr.Character
+        if ch and isAlive(plr) and not isTeammate(plr) then
+            local head = ch:FindFirstChild("Head")
+            local hum = ch:FindFirstChildOfClass("Humanoid")
+            local hrp = ch:FindFirstChild("HumanoidRootPart")
+
+            if data.highlight then
+                local st = CHAM_STYLES[S.chamStyle] or CHAM_STYLES.Purple
+                data.highlight.Adornee = ch
+                data.highlight.FillColor = st.fill
+                data.highlight.OutlineColor = st.outline
+                data.highlight.Enabled = S.espChams
+            end
+            if data.billboard then
+                data.billboard.Enabled = S.espNames
+                if head then data.billboard.Adornee = head end
+            end
+            if data.nameLabel then data.nameLabel.Text = plr.Name end
+            if data.hpLabel and hum then
+                local hp = math.floor(hum.Health)
+                data.hpLabel.Text = hp .. " HP"
+                local ratio = hum.Health / hum.MaxHealth
+                data.hpLabel.TextColor3 = Color3.fromRGB(
+                    math.floor(255 * (1 - ratio)),
+                    math.floor(255 * ratio),
+                    80
+                )
+            end
+
+            if data.hitboxLabel and hrp then
+                local totalSize = 0
+                local count = 0
+                for _, part in ipairs(ch:GetDescendants()) do
+                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                        totalSize = totalSize + part.Size.X
+                        count = count + 1
+                    end
+                end
+                if count > 0 then
+                    local avgSize = totalSize / count
+                    if avgSize > 2.5 then
+                        data.hitboxLabel.Text = string.format("Hitbox: %.1f ⚠", avgSize)
+                        data.hitboxLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                    else
+                        data.hitboxLabel.Text = string.format("Hitbox: %.1f", avgSize)
+                        data.hitboxLabel.TextColor3 = Color3.fromRGB(255, 180, 255)
+                    end
+                end
+            end
+
+            if hrp and data.boxLines and #data.boxLines >= 4 then
+                local headPos = head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0))
+                local footPos = hrp.Position - Vector3.new(0, 3, 0)
+                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
+                local botV, botOn = cam:WorldToViewportPoint(footPos)
+                if topOn and botOn and S.espBox then
+                    local height = math.abs(botV.Y - topV.Y)
+                    local width = height * 0.55
+                    local x = topV.X - width / 2
+                    local y = topV.Y
+                    data.boxLines[1].Size = UDim2.new(0, width, 0, 1)
+                    data.boxLines[1].Position = UDim2.new(0, x, 0, y)
+                    data.boxLines[1].Visible = true
+                    data.boxLines[2].Size = UDim2.new(0, width, 0, 1)
+                    data.boxLines[2].Position = UDim2.new(0, x, 0, y + height)
+                    data.boxLines[2].Visible = true
+                    data.boxLines[3].Size = UDim2.new(0, 1, 0, height)
+                    data.boxLines[3].Position = UDim2.new(0, x, 0, y)
+                    data.boxLines[3].Visible = true
+                    data.boxLines[4].Size = UDim2.new(0, 1, 0, height)
+                    data.boxLines[4].Position = UDim2.new(0, x + width, 0, y)
+                    data.boxLines[4].Visible = true
+                else
+                    for _, line in ipairs(data.boxLines) do
+                        line.Visible = false
+                    end
+                end
+            end
+        else
+            if data.highlight then data.highlight.Adornee = nil end
+            if data.billboard then data.billboard.Adornee = nil end
+            if data.boxLines then
+                for _, line in ipairs(data.boxLines) do
+                    line.Visible = false
+                end
+            end
+        end
+    end
+end
+
+local function drawSkeleton()
+    if not S.espSkeleton then
+        for _, frames in pairs(skeletonFrames) do
+            for _, f in ipairs(frames) do
+                if f then f.Visible = false end
+            end
+        end
+        return
+    end
+    local cam = workspace.CurrentCamera
+    for plr, data in pairs(espObjects) do
+        local ch = plr.Character
+        if ch and isAlive(plr) and not isTeammate(plr) then
+            local parts = {}
+            for _, p in ipairs(ch:GetChildren()) do
+                if p:IsA("BasePart") then parts[p.Name] = p end
+            end
+            local connections
+            if parts["UpperTorso"] then
+                connections = {
+                    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+                    {"UpperTorso","LeftUpperArm"},{"UpperTorso","RightUpperArm"},
+                    {"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+                    {"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+                    {"LowerTorso","LeftUpperLeg"},{"LowerTorso","RightUpperLeg"},
+                    {"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+                    {"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+                }
+            else
+                connections = {
+                    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
+                    {"Torso","Left Leg"},{"Torso","Right Leg"},
+                }
+            end
+            if not skeletonFrames[plr] then skeletonFrames[plr] = {} end
+            local frames = skeletonFrames[plr]
+            for i, conn in ipairs(connections) do
+                local p1 = parts[conn[1]]
+                local p2 = parts[conn[2]]
+                if p1 and p2 then
+                    local v1, on1 = cam:WorldToViewportPoint(p1.Position)
+                    local v2, on2 = cam:WorldToViewportPoint(p2.Position)
+                    if on1 and on2 then
+                        if not frames[i] then
+                            local f = Instance.new("Frame")
+                            f.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+                            f.BorderSizePixel = 0
+                            f.ZIndex = 5
+                            f.Parent = ESPGui
+                            frames[i] = f
+                        end
+                        local f = frames[i]
+                        local dx = v2.X - v1.X
+                        local dy = v2.Y - v1.Y
+                        local length = math.sqrt(dx*dx + dy*dy)
+                        local angle = math.atan2(dy, dx)
+                        f.Size = UDim2.new(0, length, 0, 2)
+                        f.Position = UDim2.new(0, v1.X, 0, v1.Y)
+                        f.Rotation = math.deg(angle)
+                        f.Visible = true
+                    else
+                        if frames[i] then frames[i].Visible = false end
+                    end
+                else
+                    if frames[i] then frames[i].Visible = false end
+                end
+            end
+            for i = #connections + 1, #frames do
+                frames[i].Visible = false
+            end
+        end
+    end
+end
+
+local function enableESP()
+    S.esp = true
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then createESP(plr) end
+    end
+    Players.PlayerAdded:Connect(function(plr)
+        if S.esp and plr ~= LP then
+            plr.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if S.esp then removeESP(plr) createESP(plr) end
+            end)
+        end
+    end)
+    Players.PlayerRemoving:Connect(function(plr)
+        removeESP(plr)
+        skeletonFrames[plr] = nil
+    end)
+    dcc(S.espConn)
+    S.espConn = RunService.RenderStepped:Connect(function()
+        if not S.esp then return end
+        updateESP()
+        drawSkeleton()
+    end)
+end
+
+local function disableESP()
+    S.esp = false
+    if S.espConn then S.espConn:Disconnect() S.espConn = nil end
+    for plr, _ in pairs(espObjects) do removeESP(plr) end
+    espObjects = {}
+    for plr, frames in pairs(skeletonFrames) do
+        for _, f in ipairs(frames) do
+            if f then f:Destroy() end
+        end
+    end
+    skeletonFrames = {}
+end
+
+-- ============ TARGET ESP (подсветка текущей цели) ============
+local TargetHL = Instance.new("Highlight")
+TargetHL.FillTransparency = 0.35
+TargetHL.OutlineTransparency = 0
+TargetHL.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+TargetHL.Enabled = false
+TargetHL.Parent = ESPGui
+
+local function currentEspTarget()
+    if S.silentAimOn then
+        local p = findSilentTarget()
+        if p then return p end
+    end
+    if S.aimbotOn then
+        local part = getClosestTarget()
+        if part then
+            local p = Players:GetPlayerFromCharacter(part.Parent)
+            if p then return p end
+        end
+    end
+    return nil
+end
+
+local function enableTargetESP()
+    S.targetEspOn = true
+    dcc(S.targetEspConn)
+    S.targetEspConn = RunService.RenderStepped:Connect(function()
+        if not S.targetEspOn then return end
+        local p = currentEspTarget()
+        if p and p ~= LP and isAlive(p) and not isTeammate(p) and p.Character then
+            local st = TARGET_STYLES[S.targetStyle] or TARGET_STYLES.Pink
+            TargetHL.FillColor = st.fill
+            TargetHL.OutlineColor = st.outline
+            TargetHL.FillTransparency = 0.35 + 0.15 * math.sin(tick() * 6) -- пульсация
+            TargetHL.Adornee = p.Character
+            TargetHL.Enabled = true
+        else
+            TargetHL.Enabled = false
+            TargetHL.Adornee = nil
+        end
+    end)
+end
+
+local function disableTargetESP()
+    S.targetEspOn = false
+    if S.targetEspConn then S.targetEspConn:Disconnect() S.targetEspConn = nil end
+    TargetHL.Enabled = false
+    TargetHL.Adornee = nil
+end
+
+bootStep("ESP OK")
+
+bootStep("Watermark OK")
+
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+
+-- ============================================================
+-- ============ GUI MODE: Voidware (дефолт) или WindUI ========
+-- ============================================================
 -- ---------- ТЕМА (как на референсе) ----------
 local CT = {
     panel   = Color3.fromRGB(16, 16, 28),
@@ -13469,7 +13514,7 @@ function fullCleanupNL()
             "SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL",
             "SpermaHubNLToggle","SpermaHubClickGui","SpermaHubSpec","SpermaHubWatermark",
             "SpermaHubBinds","SpermaHubTHud","SpermaHubToast","SpermaHubBoot",
-            "SpermaKeySystem","SpermaAdmin","Rayfield","SpermaLinoria","KeyUI"
+            "SpermaKeySystem","SpermaAdmin","Rayfield","SpermaLinoria","KeyUI","SpermaHubErrToast"
         }) do
             pcall(function()
                 local g = parent:FindFirstChild(n)
