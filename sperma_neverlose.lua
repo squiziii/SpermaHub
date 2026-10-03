@@ -718,15 +718,16 @@ function KeySystem:CreateAdminGUI()
 
     --// Stats
     local StatsLabel = Instance.new("TextLabel")
-    StatsLabel.Size = UDim2.new(1, -20, 0, 60)
-    StatsLabel.Position = UDim2.new(0, 10, 1, -70)
+    StatsLabel.Size = UDim2.new(1, -20, 0, 16)
+    StatsLabel.Position = UDim2.new(0, 10, 1, -40)
     StatsLabel.BackgroundTransparency = 1
-    StatsLabel.Text = "Всего ключей: 0\nАктивных: 0\nИстёкших: 0"
+    StatsLabel.Text = "Всего: 0 | Актив: 0 | Истёкло: 0"
     StatsLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
     StatsLabel.Font = Enum.Font.Gotham
     StatsLabel.TextSize = 11
     StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
     StatsLabel.TextYAlignment = Enum.TextYAlignment.Top
+    StatsLabel.ClipsDescendants = true
     StatsLabel.Parent = LeftPanel
 
     --// Правая панель - Список ключей
@@ -800,7 +801,7 @@ function KeySystem:CreateAdminGUI()
             end
         end
 
-        StatsLabel.Text = string.format("Всего ключей: %d\nАктивных: %d\nИстёкших: %d", total, active, expired)
+        StatsLabel.Text = string.format("Всего: %d | Актив: %d | Истёкло: %d", total, active, expired)
     end
 
     local function RefreshKeysList()
@@ -973,7 +974,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev26b (FIX: киллер HUD сносил окно Linoria через 10с после ключа!)")
+print("[SpermaHub] сборка: build18 rev27 (админка: статистика сдвинута ниже кнопки Копировать, одной строкой)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
