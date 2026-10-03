@@ -409,6 +409,7 @@ function KeySystem:GenerateKey(keyTypeIndex, customKey, opts)
         maxActivations = nil,
         price = (tonumber(opts.price) and tonumber(opts.price) >= 0) and math.floor(tonumber(opts.price)) or nil, -- 💰 ₽
         playSeconds = 0,     -- 🎮 наиграно
+        tier = opts.tier or "LITE", -- 🏆 тариф (LITE/PRO/PREMIUM)
     }
     if opts.defer then
         rec.pendingStart = true     -- ⏳ срок начнёт тикать с первого входа
@@ -1004,8 +1005,8 @@ function KeySystem:CreateAdminGUI()
     --// Main Frame
     local Main = Instance.new("Frame")
     Main.Name = "Main"
-    Main.Size = UDim2.new(0, 560, 0, 600)
-    Main.Position = UDim2.new(0.5, -280, 0.5, -300)
+    Main.Size = UDim2.new(0, 560, 0, 700)
+    Main.Position = UDim2.new(0.5, -280, 0.5, -350)
     Main.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
     Main.BorderSizePixel = 0
     Main.Active = true
@@ -1178,10 +1179,35 @@ function KeySystem:CreateAdminGUI()
         end)
     end
 
+    --// rev34: тир генератора (тариф)
+    local genTierDefs = {{Name = "LITE", Color = Color3.fromRGB(140, 160, 180)},
+                         {Name = "PRO", Color = Color3.fromRGB(100, 149, 237)},
+                         {Name = "PREMIUM", Color = Color3.fromRGB(255, 215, 0)}}
+    local genTierIdx = 1
+    local TierBtnG = Instance.new("TextButton")
+    TierBtnG.Size = UDim2.new(1, -20, 0, 20)
+    TierBtnG.Position = UDim2.new(0, 10, 0, 158)
+    TierBtnG.BackgroundColor3 = genTierDefs[1].Color
+    TierBtnG.Text = "ТАРИФ: LITE (цикл)"
+    TierBtnG.TextColor3 = Color3.fromRGB(20, 20, 30)
+    TierBtnG.Font = Enum.Font.GothamSemibold
+    TierBtnG.TextSize = 10
+    TierBtnG.BorderSizePixel = 0
+    TierBtnG.Parent = LeftPanel
+    local TierGCorner = Instance.new("UICorner")
+    TierGCorner.CornerRadius = UDim.new(0, 5)
+    TierGCorner.Parent = TierBtnG
+    TierBtnG.MouseButton1Click:Connect(function()
+        genTierIdx = (genTierIdx % #genTierDefs) + 1
+        local t = genTierDefs[genTierIdx]
+        TierBtnG.Text = "ТАРИФ: " .. t.Name .. " (цикл)"
+        TierBtnG.BackgroundColor3 = t.Color
+    end)
+
     --// Поле СВОЕГО ключа (если пусто — случайный)
     local CustomKeyOutline = Instance.new("Frame")
-    CustomKeyOutline.Size = UDim2.new(1, -20, 0, 30)
-    CustomKeyOutline.Position = UDim2.new(0, 10, 0, 162)
+    CustomKeyOutline.Size = UDim2.new(1, -20, 0, 26)
+    CustomKeyOutline.Position = UDim2.new(0, 10, 0, 182)
     CustomKeyOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     CustomKeyOutline.BorderSizePixel = 0
     CustomKeyOutline.Parent = LeftPanel
@@ -1207,7 +1233,7 @@ function KeySystem:CreateAdminGUI()
     --// Generate Button
     local GenBtn = Instance.new("TextButton")
     GenBtn.Size = UDim2.new(1, -20, 0, 32)
-    GenBtn.Position = UDim2.new(0, 10, 0, 198)
+    GenBtn.Position = UDim2.new(0, 10, 0, 214)
     GenBtn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
     GenBtn.Text = "СГЕНЕРИРОВАТЬ КЛЮЧ"
     GenBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
@@ -1223,7 +1249,7 @@ function KeySystem:CreateAdminGUI()
     --// Result Box
     local ResultBox = Instance.new("Frame")
     ResultBox.Size = UDim2.new(1, -20, 0, 32)
-    ResultBox.Position = UDim2.new(0, 10, 0, 236)
+    ResultBox.Position = UDim2.new(0, 10, 0, 248)
     ResultBox.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     ResultBox.BorderSizePixel = 0
     ResultBox.Parent = LeftPanel
@@ -1246,7 +1272,7 @@ function KeySystem:CreateAdminGUI()
     --// Copy Button
     local CopyBtn = Instance.new("TextButton")
     CopyBtn.Size = UDim2.new(1, -20, 0, 28)
-    CopyBtn.Position = UDim2.new(0, 10, 0, 272)
+    CopyBtn.Position = UDim2.new(0, 10, 0, 286)
     CopyBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
     CopyBtn.Text = "📋 КОПИРОВАТЬ"
     CopyBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
@@ -1263,7 +1289,7 @@ function KeySystem:CreateAdminGUI()
     --// Stats
     local StatsLabel = Instance.new("TextLabel")
     StatsLabel.Size = UDim2.new(1, -20, 0, 16)
-    StatsLabel.Position = UDim2.new(0, 10, 1, -40)
+    StatsLabel.Position = UDim2.new(0, 10, 0, 614)
     StatsLabel.BackgroundTransparency = 1
     StatsLabel.Text = "Всего: 0 | Актив: 0 | Истёкло: 0"
     StatsLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
@@ -1276,7 +1302,7 @@ function KeySystem:CreateAdminGUI()
 
     local HwidLabel = Instance.new("TextLabel")
     HwidLabel.Size = UDim2.new(1, -20, 0, 14)
-    HwidLabel.Position = UDim2.new(0, 10, 1, -24)
+    HwidLabel.Position = UDim2.new(0, 10, 0, 628)
     HwidLabel.BackgroundTransparency = 1
     HwidLabel.Text = "Мой HWID: " .. GetHWID():sub(1, 18) .. "…"
     HwidLabel.TextColor3 = Color3.fromRGB(110, 110, 130)
@@ -1328,8 +1354,8 @@ function KeySystem:CreateAdminGUI()
 
     --// Keys List
     local KeysScroll = Instance.new("ScrollingFrame")
-    KeysScroll.Size = UDim2.new(1, -20, 1, -330)
-    KeysScroll.Position = UDim2.new(0, 10, 0, 68)
+    KeysScroll.Size = UDim2.new(1, -20, 1, -378)
+    KeysScroll.Position = UDim2.new(0, 10, 0, 100)
     KeysScroll.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
     KeysScroll.BorderSizePixel = 0
     KeysScroll.ScrollBarThickness = 4
@@ -1383,10 +1409,102 @@ function KeySystem:CreateAdminGUI()
     end
     pcall(paintChips)
 
+    --// rev34 тулбар: 🔎 поиск + ☑ мультиселект пачки
+    local searchText = ""
+    local SearchOutline = Instance.new("Frame")
+    SearchOutline.Size = UDim2.new(0, 92, 0, 24)
+    SearchOutline.Position = UDim2.new(0, 10, 0, 68)
+    SearchOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    SearchOutline.BorderSizePixel = 0
+    SearchOutline.Parent = RightPanel
+    local SOC = Instance.new("UICorner")
+    SOC.CornerRadius = UDim.new(0, 5)
+    SOC.Parent = SearchOutline
+    local SearchBox = Instance.new("TextBox")
+    SearchBox.Size = UDim2.new(1, -10, 1, 0)
+    SearchBox.Position = UDim2.new(0, 5, 0, 0)
+    SearchBox.BackgroundTransparency = 1
+    SearchBox.Text = ""
+    SearchBox.PlaceholderText = "🔎 поиск"
+    SearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SearchBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+    SearchBox.Font = Enum.Font.Gotham
+    SearchBox.TextSize = 11
+    SearchBox.TextXAlignment = Enum.TextXAlignment.Left
+    SearchBox.ClearTextOnFocus = false
+    SearchBox.Parent = SearchOutline
+    SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        searchText = SearchBox.Text:lower()
+        if RefreshKeysList then pcall(RefreshKeysList) end
+    end)
+
+    local function mkToolBtn(txt, xOff, w, color)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, w, 0, 24)
+        b.Position = UDim2.new(0, xOff, 0, 68)
+        b.BackgroundColor3 = color
+        b.Text = txt
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 10
+        b.BorderSizePixel = 0
+        b.Parent = RightPanel
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 5)
+        c.Parent = b
+        return b
+    end
+    local SelAllBtn = mkToolBtn("☑", 106, 28, Color3.fromRGB(70, 130, 80))
+    local MassBanBtn = mkToolBtn("🚫", 138, 28, Color3.fromRGB(170, 60, 60))
+    local MassExtBtn = mkToolBtn("+24", 170, 32, Color3.fromRGB(100, 149, 237))
+    local MassDelBtn = mkToolBtn("🗑", 206, 28, Color3.fromRGB(200, 60, 60))
+    local MassClrBtn = mkToolBtn("✖", 238, 28, Color3.fromRGB(90, 90, 110))
+
+    SelAllBtn.MouseButton1Click:Connect(function()
+        for k in pairs(KeySystem.State.KeysDB) do
+            KeySystem.State.MultiSel[k] = true
+        end
+        if RefreshKeysList then pcall(RefreshKeysList) end
+    end)
+    MassClrBtn.MouseButton1Click:Connect(function()
+        KeySystem.State.MultiSel = {}
+        if RefreshKeysList then pcall(RefreshKeysList) end
+    end)
+    MassBanBtn.MouseButton1Click:Connect(function()
+        local n = 0
+        for k in pairs(KeySystem.State.MultiSel) do
+            local d = KeySystem.State.KeysDB[k]
+            if d then KeySystem:SetBan(k, not d.banned); n = n + 1 end
+        end
+        KeySystem:Audit("mass ban x" .. n)
+        if RefreshKeysList then pcall(RefreshKeysList) end
+        ksNotify("Admin", "Пакетный тогл бана: " .. n, 3)
+    end)
+    MassExtBtn.MouseButton1Click:Connect(function()
+        local n = 0
+        for k in pairs(KeySystem.State.MultiSel) do
+            if KeySystem:ExtendKey(k, 86400) then n = n + 1 end
+        end
+        KeySystem:Audit("mass +24h x" .. n)
+        if RefreshKeysList then pcall(RefreshKeysList) end
+        ksNotify("Admin", "Продлено +24ч: " .. n, 3)
+    end)
+    MassDelBtn.MouseButton1Click:Connect(function()
+        local n = 0
+        for k in pairs(KeySystem.State.MultiSel) do
+            if KeySystem:RevokeKey(k) then n = n + 1 end
+            if KeySystem.State.SelectedKey == k then KeySystem.State.SelectedKey = nil end
+        end
+        KeySystem.State.MultiSel = {}
+        KeySystem:Audit("mass delete x" .. n)
+        if RefreshKeysList then pcall(RefreshKeysList) end
+        ksNotify("Admin", "🗑 Удалено пачкой: " .. n, 3)
+    end)
+
     --// rev31: РЕДАКТОР избранного ключа
     local Editor = Instance.new("Frame")
-    Editor.Size = UDim2.new(1, -20, 0, 120)
-    Editor.Position = UDim2.new(0, 10, 1, -256)
+    Editor.Size = UDim2.new(1, -20, 0, 146)
+    Editor.Position = UDim2.new(0, 10, 1, -272)
     Editor.BackgroundColor3 = Color3.fromRGB(24, 24, 38)
     Editor.BorderSizePixel = 0
     Editor.Parent = RightPanel
@@ -1448,18 +1566,92 @@ function KeySystem:CreateAdminGUI()
     end
 
     local NoteSaveBtn = mkEdBtn("💾 заметка", 0.64, 0, 0.36, -6, 22, Color3.fromRGB(70, 130, 80))
-    local BanBtn  = mkEdBtn("🚫 БАН",  0, 6,   0, 84, 50, Color3.fromRGB(170, 60, 60))
-    local ExtBtn  = mkEdBtn("+24 часа",0, 96,  0, 84, 50, Color3.fromRGB(100, 149, 237))
-    local LimBtn  = mkEdBtn("Лимит: ∞",0, 186, 0, 80, 50, Color3.fromRGB(120, 90, 160))
-    local VipBtn  = mkEdBtn("HWID: —", 0, 6,   0, 84, 78, Color3.fromRGB(90, 90, 110))
-    local TypBtn  = mkEdBtn("Тип:",    0, 96,  0, 84, 78, Color3.fromRGB(90, 90, 110))
-    local BLBtn   = mkEdBtn("BL —",    0, 186, 0, 80, 78, Color3.fromRGB(150, 60, 90))
+    local BanBtn   = mkEdBtn("🚫 БАН",  0,   4, 0, 62, 50, Color3.fromRGB(170, 60, 60))
+    local SilentBtn= mkEdBtn("🤡 тих",  0,  72, 0, 62, 50, Color3.fromRGB(200, 130, 40))
+    local ExtBtn   = mkEdBtn("+24 ч",   0, 140, 0, 62, 50, Color3.fromRGB(100, 149, 237))
+    local LimBtn   = mkEdBtn("Лимит ∞", 0, 208, 0, 62, 50, Color3.fromRGB(120, 90, 160))
+    local VipBtn   = mkEdBtn("HWID: —", 0,   4, 0, 62, 78, Color3.fromRGB(90, 90, 110))
+    local TypBtn   = mkEdBtn("Тип:",    0,  72, 0, 62, 78, Color3.fromRGB(90, 90, 110))
+    local BLBtn    = mkEdBtn("BL —",    0, 140, 0, 62, 78, Color3.fromRGB(150, 60, 90))
+    local KickBtn  = mkEdBtn("⛔ КИК",  0, 208, 0, 62, 78, Color3.fromRGB(200, 60, 60))
+
+    local RNameOutline = Instance.new("Frame")
+    RNameOutline.Size = UDim2.new(0, 96, 0, 24)
+    RNameOutline.Position = UDim2.new(0, 4, 0, 106)
+    RNameOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    RNameOutline.BorderSizePixel = 0
+    RNameOutline.Parent = Editor
+    local RNOC = Instance.new("UICorner")
+    RNOC.CornerRadius = UDim.new(0, 5)
+    RNOC.Parent = RNameOutline
+    local RNameBox = Instance.new("TextBox")
+    RNameBox.Size = UDim2.new(1, -10, 1, 0)
+    RNameBox.Position = UDim2.new(0, 5, 0, 0)
+    RNameBox.BackgroundTransparency = 1
+    RNameBox.Text = ""
+    RNameBox.PlaceholderText = "новое имя ключа"
+    RNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    RNameBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+    RNameBox.Font = Enum.Font.Gotham
+    RNameBox.TextSize = 10
+    RNameBox.ClearTextOnFocus = false
+    RNameBox.Parent = RNameOutline
+
+    local RenameBtn = Instance.new("TextButton")
+    RenameBtn.Size = UDim2.new(0, 30, 0, 24)
+    RenameBtn.Position = UDim2.new(0, 104, 0, 106)
+    RenameBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
+    RenameBtn.Text = "✏"
+    RenameBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    RenameBtn.Font = Enum.Font.GothamBold
+    RenameBtn.TextSize = 12
+    RenameBtn.BorderSizePixel = 0
+    RenameBtn.Parent = Editor
+    local RBCorner = Instance.new("UICorner")
+    RBCorner.CornerRadius = UDim.new(0, 5)
+    RBCorner.Parent = RenameBtn
+
+    local PriceOutline = Instance.new("Frame")
+    PriceOutline.Size = UDim2.new(0, 60, 0, 24)
+    PriceOutline.Position = UDim2.new(0, 140, 0, 106)
+    PriceOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    PriceOutline.BorderSizePixel = 0
+    PriceOutline.Parent = Editor
+    local POC = Instance.new("UICorner")
+    POC.CornerRadius = UDim.new(0, 5)
+    POC.Parent = PriceOutline
+    local PriceBox = Instance.new("TextBox")
+    PriceBox.Size = UDim2.new(1, -10, 1, 0)
+    PriceBox.Position = UDim2.new(0, 5, 0, 0)
+    PriceBox.BackgroundTransparency = 1
+    PriceBox.Text = ""
+    PriceBox.PlaceholderText = "💰"
+    PriceBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PriceBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+    PriceBox.Font = Enum.Font.GothamBold
+    PriceBox.TextSize = 10
+    PriceBox.ClearTextOnFocus = false
+    PriceBox.Parent = PriceOutline
+
+    local PriceBtn = Instance.new("TextButton")
+    PriceBtn.Size = UDim2.new(0, 62, 0, 24)
+    PriceBtn.Position = UDim2.new(0, 204, 0, 106)
+    PriceBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 80)
+    PriceBtn.Text = "💾 цена"
+    PriceBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PriceBtn.Font = Enum.Font.GothamBold
+    PriceBtn.TextSize = 10
+    PriceBtn.BorderSizePixel = 0
+    PriceBtn.Parent = Editor
+    local PBCorner = Instance.new("UICorner")
+    PBCorner.CornerRadius = UDim.new(0, 5)
+    PBCorner.Parent = PriceBtn
 
     local EdHint = Instance.new("TextLabel")
     EdHint.Size = UDim2.new(1, -16, 0, 10)
-    EdHint.Position = UDim2.new(0, 8, 0, 106)
+    EdHint.Position = UDim2.new(0, 8, 0, 134)
     EdHint.BackgroundTransparency = 1
-    EdHint.Text = "Лимит = число входов; Тип↻ меняет срок от сейчас; BL = чёрный список устройства"
+    EdHint.Text = "🤡 = фейк-успех без скрипта; ⛔КИК выкидывает юзера с удалёнки за ~45 сек"
     EdHint.TextColor3 = Color3.fromRGB(110, 110, 130)
     EdHint.Font = Enum.Font.Gotham
     EdHint.TextSize = 9
@@ -1471,23 +1663,25 @@ function KeySystem:CreateAdminGUI()
         local d = k and KeySystem.State.KeysDB[k]
         if not d then
             SelLabel.Text = "Выбран: — (кликни по строке списка)"
-            BanBtn.Text = "🚫 БАН"; LimBtn.Text = "Лимит: ∞"
-            VipBtn.Text = "HWID: —"; TypBtn.Text = "Тип:"; BLBtn.Text = "BL —"
+            BanBtn.Text = "🚫 БАН"; SilentBtn.Text = "🤡 тих"; LimBtn.Text = "Лимит ∞"
+            VipBtn.Text = "HWID: —"; TypBtn.Text = "Тип:"; BLBtn.Text = "BL —"; KickBtn.Text = "⛔ КИК"
             NoteBox.Text = ""
             lastSyncSel = nil
             return
         end
-        SelLabel.Text = "Выбран: " .. k
+        SelLabel.Text = "Выбран: " .. k .. (d.banned and " 🚫" or "") .. (d.silentBan and " 🤡" or "")
         if lastSyncSel ~= k then
             NoteBox.Text = d.note or ""
             lastSyncSel = k
         end
-        BanBtn.Text = d.banned and "✅ РАЗБАН" or "🚫 БАН"
+        BanBtn.Text = d.banned and "✅ разбан" or "🚫 БАН"
+        SilentBtn.Text = d.silentBan and "🤡 ВЫКЛ" or "🤡 тих"
         LimBtn.Text = "Лимит: " .. (d.maxActivations and tostring(d.maxActivations) or "∞")
         VipBtn.Text = d.noHwid and "HWID: ВЫКЛ" or "HWID: ВКЛ"
         TypBtn.Text = "Тип: " .. tostring(d.type)
         local blOk = d.hwid and KeySystem.State.HwidBlacklist[tostring(d.hwid)]
         BLBtn.Text = blOk and "BL ✓ (снять)" or "BL +"
+        KickBtn.Text = KeySystem:ReadKillFlag(k) and "⛔ КИК ✓" or "⛔ КИК"
     end
 
     --// хендлеры редактора (все работают с избранным ключом)
@@ -1564,10 +1758,48 @@ function KeySystem:CreateAdminGUI()
         pcall(SyncEditor)
     end)
 
+    SilentBtn.MouseButton1Click:Connect(function()
+        local k = KeySystem.State.SelectedKey
+        local d = k and KeySystem.State.KeysDB[k]
+        if not d then return end
+        KeySystem:SetSilent(k, not d.silentBan)
+        KeySystem:Audit((d.silentBan and "silent " or "unsilent ") .. k)
+        ksNotify("Admin", d.silentBan and ("🤡 Тихий бан: " .. k) or ("🔊 Снят тихий бан: " .. k), 3)
+        pcall(SyncEditor); pcall(RefreshKeysList)
+    end)
+    KickBtn.MouseButton1Click:Connect(function()
+        local k = KeySystem.State.SelectedKey
+        if not k then return end
+        local was = KeySystem:ReadKillFlag(k)
+        KeySystem:SetKill(k, not was)
+        ksNotify("Admin", was and ("☑ Убрал кик: " .. k) or ("⛔ КИК выдан: " .. k .. " (~45 сек)"), 4)
+        pcall(SyncEditor)
+    end)
+    RenameBtn.MouseButton1Click:Connect(function()
+        local k = KeySystem.State.SelectedKey
+        if not k then return end
+        if KeySystem:RenameKey(k, RNameBox.Text) then
+            ksNotify("Admin", "✏ Ключ переименован в: " .. RNameBox.Text, 3)
+            RNameBox.Text = ""
+            RefreshKeysList()
+        else
+            ksNotify("Admin", "⚠ не получилось (имя занято или <3)", 3)
+        end
+    end)
+    PriceBtn.MouseButton1Click:Connect(function()
+        local k = KeySystem.State.SelectedKey
+        if not k then return end
+        if KeySystem:SetPrice(k, PriceBox.Text) then
+            ksNotify("Admin", "💰 Цена " .. tostring(PriceBox.Text) .. "₽ → " .. k, 3)
+            PriceBox.Text = ""
+            RefreshKeysList()
+        end
+    end)
+
     --// rev31: ЛОГ АКТИВАЦИЙ
     local LogPanel = Instance.new("Frame")
-    LogPanel.Size = UDim2.new(1, -20, 0, 120)
-    LogPanel.Position = UDim2.new(0, 10, 1, -130)
+    LogPanel.Size = UDim2.new(1, -20, 0, 116)
+    LogPanel.Position = UDim2.new(0, 10, 1, -122)
     LogPanel.BackgroundColor3 = Color3.fromRGB(24, 24, 38)
     LogPanel.BorderSizePixel = 0
     LogPanel.Parent = RightPanel
@@ -1644,24 +1876,44 @@ function KeySystem:CreateAdminGUI()
     end)
 
     --// Функции
-    local function UpdateStats()
+local function UpdateStats()
         local total = KeySystem:GetKeyCount()
-        local active = 0
-        local expired = 0
+        local active, expired = 0, 0
         local now = tick()
 
         for _, data in pairs(KeySystem.State.KeysDB) do
-            if now > data.expires then
+            if data.expires and now > data.expires then
                 expired = expired + 1
             else
                 active = active + 1
             end
         end
 
-        StatsLabel.Text = string.format("Всего: %d | Актив: %d | Истёкло: %d", total, active, expired)
+        -- 💰 выручка
+        local revenue, sold = KeySystem:GetRevenue()
+        StatsLabel.Text = string.format("Всего: %d | Актив: %d | Вых: %d₽ (%d)", total, active, revenue, sold)
+
+        -- 📊 мини-дашборд в заголовке: входы за сутки / уник. устройства / онлайн
+        local day = os.time() - 86400
+        local todayIn, uniqHw = 0, {}
+        for _, e in ipairs(KeySystem.State.ActLog) do
+            if e.t and e.t >= day and e.ok and e.r ~= "started" then
+                todayIn = todayIn + 1
+                uniqHw[e.hw] = true
+            end
+        end
+        local hu = 0
+        for _ in pairs(uniqHw) do hu = hu + 1 end
+        local online = 0
+        for k in pairs(KeySystem.State.KeysDB) do
+            if KeySystem:IsOnline(k) then online = online + 1 end
+        end
+        ListTitle.Text = string.format("📋 КЛЮЧИ • сег: %d вход • %d устр. • 🟢 %d",
+            todayIn, hu, online) .. (KeySystem.State.IsModer and " [МОДЕР]" or "")
+        ListTitle.TextSize = 11
     end
 
-    RefreshKeysList = function()
+RefreshKeysList = function()
         for _, child in ipairs(KeysScroll:GetChildren()) do
             if child:IsA("Frame") then child:Destroy() end
         end
@@ -1669,6 +1921,8 @@ function KeySystem:CreateAdminGUI()
         local now = tick()
         KeySystem:ReadHeartbeats()
         local filter = keysFilter or "all"
+        local isModerR = KeySystem.State.IsModer
+        local search = (type(searchText) == "string" and #searchText > 0) and searchText or nil
 
         -- сортировка: онлайн → свежие
         local rows = {}
@@ -1684,23 +1938,31 @@ function KeySystem:CreateAdminGUI()
         for _, row in ipairs(rows) do
             local key = row.key
             local data = row.d
-            local isExpired = now > data.expires
+            local isExpired = data.expires ~= nil and now > data.expires
 
             local show = (filter == "all")
                 or (filter == "active" and not isExpired)
                 or (filter == "expired" and isExpired)
                 or (filter == "free" and data.hwid == nil)
+            if show and search then
+                local hay = (tostring(key) .. "|" .. tostring(data.note or "") .. "|" .. tostring(data.hwid or "")):lower()
+                if not hay:find(search, 1, true) then show = false end
+            end
+
             if show then
                 local online = KeySystem:IsOnline(key)
+                local bannedNow = data.banned or data.silentBan
                 local kt = KeySystem.KeyTypes[data.typeIndex]
                 local keyColor = data.banned and Color3.fromRGB(255, 80, 80)
                     or (isExpired and Color3.fromRGB(100, 100, 100)
                     or (kt and kt.Color or Color3.fromRGB(255, 215, 0)))
                 local isSel = (KeySystem.State.SelectedKey == key)
+                local isMulti = KeySystem.State.MultiSel[key] and true or false
 
                 local KeyFrame = Instance.new("Frame")
                 KeyFrame.Size = UDim2.new(1, -10, 0, 50)
-                KeyFrame.BackgroundColor3 = isSel and Color3.fromRGB(45, 45, 70) or Color3.fromRGB(25, 25, 40)
+                KeyFrame.BackgroundColor3 = isSel and Color3.fromRGB(45, 45, 70)
+                    or (isMulti and Color3.fromRGB(35, 50, 40) or Color3.fromRGB(25, 25, 40))
                 KeyFrame.BorderSizePixel = 0
                 KeyFrame.Parent = KeysScroll
 
@@ -1708,41 +1970,80 @@ function KeySystem:CreateAdminGUI()
                 KF_Corner.CornerRadius = UDim.new(0, 4)
                 KF_Corner.Parent = KeyFrame
 
-                -- невидимая кнопка выбора (левее кнопок удаления)
-                local SelBtn = Instance.new("TextButton")
-                SelBtn.Size = UDim2.new(1, -70, 1, 0)
-                SelBtn.BackgroundTransparency = 1
-                SelBtn.Text = ""
-                SelBtn.AutoButtonColor = false
-                SelBtn.ZIndex = 2
-                SelBtn.Parent = KeyFrame
-                SelBtn.MouseButton1Click:Connect(function()
-                    KeySystem.State.SelectedKey = key
-                    pcall(RefreshKeysList)
-                end)
+                -- ☑ галочка мультивыбора
+                if not isModerR then
+                    local ChkBtn = Instance.new("TextButton")
+                    ChkBtn.Size = UDim2.new(0, 16, 0, 20)
+                    ChkBtn.Position = UDim2.new(0, 4, 0, 15)
+                    ChkBtn.BackgroundColor3 = isMulti and Color3.fromRGB(70, 170, 90) or Color3.fromRGB(40, 40, 58)
+                    ChkBtn.Text = isMulti and "✓" or ""
+                    ChkBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    ChkBtn.Font = Enum.Font.GothamBold
+                    ChkBtn.TextSize = 11
+                    ChkBtn.BorderSizePixel = 0
+                    ChkBtn.ZIndex = 3
+                    ChkBtn.Parent = KeyFrame
+                    local ChkCorner = Instance.new("UICorner")
+                    ChkCorner.CornerRadius = UDim.new(0, 3)
+                    ChkCorner.Parent = ChkBtn
+                    ChkBtn.MouseButton1Click:Connect(function()
+                        if KeySystem.State.MultiSel[key] then
+                            KeySystem.State.MultiSel[key] = nil
+                        else
+                            KeySystem.State.MultiSel[key] = true
+                        end
+                        RefreshKeysList()
+                    end)
+
+                    -- выбор ключа кликом (остальная площадь)
+                    local SelBtn = Instance.new("TextButton")
+                    SelBtn.Size = UDim2.new(1, -70, 1, 0)
+                    SelBtn.BackgroundTransparency = 1
+                    SelBtn.Text = ""
+                    SelBtn.AutoButtonColor = false
+                    SelBtn.ZIndex = 2
+                    SelBtn.Parent = KeyFrame
+                    SelBtn.MouseButton1Click:Connect(function()
+                        KeySystem.State.SelectedKey = key
+                        pcall(RefreshKeysList)
+                    end)
+                end
+
+                -- значки: 🔥 1-раз / 🤡 тихий / ⏳ отсчёт / 🏆 тир / 💰 цена / 🎮
+                local badges = ""
+                if data.oneTime then badges = badges .. "🔥 " end
+                if data.silentBan and not data.banned then badges = badges .. "🤡 " end
+                if data.noHwid then badges = badges .. "VIP " end
+                if data.tier and data.tier ~= "LITE" then badges = badges .. "🏆" .. data.tier .. " " end
+                if data.price then badges = badges .. "💰" .. tostring(data.price) .. "₽ " end
+                if (data.playSeconds or 0) > 0 then badges = badges .. "🎮" .. string.format("%.1fч ", data.playSeconds / 3600) end
 
                 local KeyLabel = Instance.new("TextLabel")
-                KeyLabel.Size = UDim2.new(1, -70, 0, 20)
-                KeyLabel.Position = UDim2.new(0, 8, 0, 5)
+                KeyLabel.Size = UDim2.new(1, -90, 0, 20)
+                KeyLabel.Position = UDim2.new(0, 26, 0, 5)
                 KeyLabel.BackgroundTransparency = 1
-                KeyLabel.Text = (online and "🟢 " or "") .. key .. (data.note and (" — " .. data.note) or "")
+                KeyLabel.Text = (online and "🟢 " or "") .. badges .. key .. (data.note and (" — " .. data.note) or "")
                 KeyLabel.TextColor3 = keyColor
                 KeyLabel.Font = Enum.Font.GothamBold
-                KeyLabel.TextSize = 11
+                KeyLabel.TextSize = 10
                 KeyLabel.TextXAlignment = Enum.TextXAlignment.Left
                 KeyLabel.TextTruncate = Enum.TextTruncate.AtEnd
                 KeyLabel.Parent = KeyFrame
 
                 local InfoLabel = Instance.new("TextLabel")
-                InfoLabel.Size = UDim2.new(1, -70, 0, 15)
-                InfoLabel.Position = UDim2.new(0, 8, 0, 25)
+                InfoLabel.Size = UDim2.new(1, -90, 0, 15)
+                InfoLabel.Position = UDim2.new(0, 26, 0, 25)
                 InfoLabel.BackgroundTransparency = 1
 
                 local timeLeft = ""
-                if isExpired then
+                if data.pendingStart and data.expires == nil then
+                    timeLeft = "⏳ стартует при входе"
+                elseif isExpired then
                     timeLeft = "ИСТЁК"
                 elseif data.expires == math.huge then
                     timeLeft = "Навсегда"
+                elseif data.expires == nil then
+                    timeLeft = "?"
                 else
                     local left = data.expires - now
                     if left > 86400 then
@@ -1769,47 +2070,50 @@ function KeySystem:CreateAdminGUI()
                 InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
                 InfoLabel.Parent = KeyFrame
 
-                -- HWID reset
-                local HwBtn = Instance.new("TextButton")
-                HwBtn.Size = UDim2.new(0, 45, 0, 20)
-                HwBtn.Position = UDim2.new(1, -55, 0, 5)
-                HwBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
-                HwBtn.Text = "↺HWID"
-                HwBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-                HwBtn.Font = Enum.Font.GothamBold
-                HwBtn.TextSize = 9
-                HwBtn.BorderSizePixel = 0
-                HwBtn.ZIndex = 3
-                HwBtn.Visible = (data.hwid ~= nil) and not data.noHwid
-                HwBtn.Parent = KeyFrame
-                local HwCorner = Instance.new("UICorner")
-                HwCorner.CornerRadius = UDim.new(0, 4)
-                HwCorner.Parent = HwBtn
-                HwBtn.MouseButton1Click:Connect(function()
-                    KeySystem:ResetHwid(key)
-                    RefreshKeysList()
-                end)
+                if not isModerR then
+                    -- HWID reset
+                    local HwBtn = Instance.new("TextButton")
+                    HwBtn.Size = UDim2.new(0, 45, 0, 20)
+                    HwBtn.Position = UDim2.new(1, -55, 0, 5)
+                    HwBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
+                    HwBtn.Text = "↺HWID"
+                    HwBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    HwBtn.Font = Enum.Font.GothamBold
+                    HwBtn.TextSize = 9
+                    HwBtn.BorderSizePixel = 0
+                    HwBtn.ZIndex = 3
+                    HwBtn.Visible = (data.hwid ~= nil) and not data.noHwid
+                    HwBtn.Parent = KeyFrame
+                    local HwCorner = Instance.new("UICorner")
+                    HwCorner.CornerRadius = UDim.new(0, 4)
+                    HwCorner.Parent = HwBtn
+                    HwBtn.MouseButton1Click:Connect(function()
+                        KeySystem:ResetHwid(key)
+                        RefreshKeysList()
+                    end)
 
-                -- Delete
-                local DelBtn = Instance.new("TextButton")
-                DelBtn.Size = UDim2.new(0, 45, 0, 20)
-                DelBtn.Position = UDim2.new(1, -55, 0, 27)
-                DelBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-                DelBtn.Text = "Удалить"
-                DelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-                DelBtn.Font = Enum.Font.GothamBold
-                DelBtn.TextSize = 10
-                DelBtn.BorderSizePixel = 0
-                DelBtn.ZIndex = 3
-                DelBtn.Parent = KeyFrame
-                local DelCorner = Instance.new("UICorner")
-                DelCorner.CornerRadius = UDim.new(0, 4)
-                DelCorner.Parent = DelBtn
-                DelBtn.MouseButton1Click:Connect(function()
-                    KeySystem:RevokeKey(key)
-                    if KeySystem.State.SelectedKey == key then KeySystem.State.SelectedKey = nil end
-                    RefreshKeysList()
-                end)
+                    -- Delete
+                    local DelBtn = Instance.new("TextButton")
+                    DelBtn.Size = UDim2.new(0, 45, 0, 20)
+                    DelBtn.Position = UDim2.new(1, -55, 0, 27)
+                    DelBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+                    DelBtn.Text = "Удалить"
+                    DelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    DelBtn.Font = Enum.Font.GothamBold
+                    DelBtn.TextSize = 10
+                    DelBtn.BorderSizePixel = 0
+                    DelBtn.ZIndex = 3
+                    DelBtn.Parent = KeyFrame
+                    local DelCorner = Instance.new("UICorner")
+                    DelCorner.CornerRadius = UDim.new(0, 4)
+                    DelCorner.Parent = DelBtn
+                    DelBtn.MouseButton1Click:Connect(function()
+                        KeySystem:RevokeKey(key)
+                        if KeySystem.State.SelectedKey == key then KeySystem.State.SelectedKey = nil end
+                        KeySystem.State.MultiSel[key] = nil
+                        RefreshKeysList()
+                    end)
+                end
             end
         end
 
@@ -1822,7 +2126,7 @@ function KeySystem:CreateAdminGUI()
 
     local NOutline = Instance.new("Frame")
     NOutline.Size = UDim2.new(0, 72, 0, 26)
-    NOutline.Position = UDim2.new(0, 10, 0, 308)
+    NOutline.Position = UDim2.new(0, 10, 0, 322)
     NOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     NOutline.BorderSizePixel = 0
     NOutline.Parent = LeftPanel
@@ -1852,7 +2156,7 @@ function KeySystem:CreateAdminGUI()
 
     local NoHwidBtn = Instance.new("TextButton")
     NoHwidBtn.Size = UDim2.new(1, -97, 0, 26)
-    NoHwidBtn.Position = UDim2.new(0, 87, 0, 308)
+    NoHwidBtn.Position = UDim2.new(0, 87, 0, 322)
     NoHwidBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     NoHwidBtn.Text = "HWID-привязка: ВКЛ"
     NoHwidBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -1872,7 +2176,7 @@ function KeySystem:CreateAdminGUI()
     --// смена пароля админки
     local PassHint = Instance.new("TextLabel")
     PassHint.Size = UDim2.new(1, -20, 0, 12)
-    PassHint.Position = UDim2.new(0, 10, 0, 342)
+    PassHint.Position = UDim2.new(0, 10, 0, 412)
     PassHint.BackgroundTransparency = 1
     PassHint.Text = "Новый пароль админки (≥2 символа):"
     PassHint.TextColor3 = Color3.fromRGB(150, 150, 170)
@@ -1883,7 +2187,7 @@ function KeySystem:CreateAdminGUI()
 
     local PassOutline = Instance.new("Frame")
     PassOutline.Size = UDim2.new(1, -116, 0, 26)
-    PassOutline.Position = UDim2.new(0, 10, 0, 356)
+    PassOutline.Position = UDim2.new(0, 10, 0, 426)
     PassOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     PassOutline.BorderSizePixel = 0
     PassOutline.Parent = LeftPanel
@@ -1906,7 +2210,7 @@ function KeySystem:CreateAdminGUI()
 
     local PassSaveBtn = Instance.new("TextButton")
     PassSaveBtn.Size = UDim2.new(0, 96, 0, 26)
-    PassSaveBtn.Position = UDim2.new(1, -106, 0, 356)
+    PassSaveBtn.Position = UDim2.new(1, -106, 0, 426)
     PassSaveBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 80)
     PassSaveBtn.Text = "💾 пароль"
     PassSaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1932,7 +2236,7 @@ function KeySystem:CreateAdminGUI()
     --// экспорт / импорт базы
     local ExpBtn = Instance.new("TextButton")
     ExpBtn.Size = UDim2.new(0.5, -15, 0, 26)
-    ExpBtn.Position = UDim2.new(0, 10, 0, 388)
+    ExpBtn.Position = UDim2.new(0, 10, 0, 458)
     ExpBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
     ExpBtn.Text = "📤 Экспорт"
     ExpBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
@@ -1946,7 +2250,7 @@ function KeySystem:CreateAdminGUI()
 
     local ImpBtn = Instance.new("TextButton")
     ImpBtn.Size = UDim2.new(0.5, -15, 0, 26)
-    ImpBtn.Position = UDim2.new(0.5, 5, 0, 388)
+    ImpBtn.Position = UDim2.new(0.5, 5, 0, 458)
     ImpBtn.BackgroundColor3 = Color3.fromRGB(147, 112, 219)
     ImpBtn.Text = "📥 Импорт"
     ImpBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
@@ -1960,7 +2264,7 @@ function KeySystem:CreateAdminGUI()
 
     local ImpOutline = Instance.new("Frame")
     ImpOutline.Size = UDim2.new(1, -20, 0, 26)
-    ImpOutline.Position = UDim2.new(0, 10, 0, 420)
+    ImpOutline.Position = UDim2.new(0, 10, 0, 490)
     ImpOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     ImpOutline.BorderSizePixel = 0
     ImpOutline.Parent = LeftPanel
@@ -2043,10 +2347,129 @@ function KeySystem:CreateAdminGUI()
         ksNotify("Admin", "📥 Импортировано ключей: " .. added, 3)
     end)
 
+    --// rev34: генераторные тоглы 🔥1-раз / ⏳отсчёт-с-входа / свой срок / 💰цена
+    local genOneTime = false
+    local OneTimeBtn = Instance.new("TextButton")
+    OneTimeBtn.Size = UDim2.new(0.5, -15, 0, 24)
+    OneTimeBtn.Position = UDim2.new(0, 10, 0, 352)
+    OneTimeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    OneTimeBtn.Text = "🔥 ОДНОРАЗОВЫЙ"
+    OneTimeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    OneTimeBtn.Font = Enum.Font.GothamBold
+    OneTimeBtn.TextSize = 10
+    OneTimeBtn.BorderSizePixel = 0
+    OneTimeBtn.Parent = LeftPanel
+    local OTCorner = Instance.new("UICorner")
+    OTCorner.CornerRadius = UDim.new(0, 6)
+    OTCorner.Parent = OneTimeBtn
+
+    local genDefer = false
+    local DeferBtn = Instance.new("TextButton")
+    DeferBtn.Size = UDim2.new(0.5, -15, 0, 24)
+    DeferBtn.Position = UDim2.new(0.5, 5, 0, 352)
+    DeferBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    DeferBtn.Text = "⏳ ОТСЧЁТ-С-ВХОДА"
+    DeferBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    DeferBtn.Font = Enum.Font.GothamBold
+    DeferBtn.TextSize = 10
+    DeferBtn.BorderSizePixel = 0
+    DeferBtn.Parent = LeftPanel
+    local DFCorner = Instance.new("UICorner")
+    DFCorner.CornerRadius = UDim.new(0, 6)
+    DFCorner.Parent = DeferBtn
+
+    OneTimeBtn.MouseButton1Click:Connect(function()
+        genOneTime = not genOneTime
+        OneTimeBtn.Text = genOneTime and "🔥 1-РАЗ: ВКЛ ✓" or "🔥 ОДНОРАЗОВЫЙ"
+        OneTimeBtn.BackgroundColor3 = genOneTime and Color3.fromRGB(200, 80, 40) or Color3.fromRGB(30, 30, 45)
+    end)
+    DeferBtn.MouseButton1Click:Connect(function()
+        genDefer = not genDefer
+        DeferBtn.Text = genDefer and "⏳ СТАРТ-С-ВХОДА ✓" or "⏳ ОТСЧЁТ-С-ВХОДА"
+        DeferBtn.BackgroundColor3 = genDefer and Color3.fromRGB(255, 165, 0) or Color3.fromRGB(30, 30, 45)
+    end)
+
+    local function mkSmallBox(placeholder, y, xScale, xOff, wScale, wOff)
+        local o = Instance.new("Frame")
+        o.Size = UDim2.new(wScale, wOff, 0, 26)
+        o.Position = UDim2.new(xScale, xOff, 0, y)
+        o.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+        o.BorderSizePixel = 0
+        o.Parent = LeftPanel
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = o
+        local b = Instance.new("TextBox")
+        b.Size = UDim2.new(1, -12, 1, 0)
+        b.Position = UDim2.new(0, 6, 0, 0)
+        b.BackgroundTransparency = 1
+        b.Text = ""
+        b.PlaceholderText = placeholder
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
+        b.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 11
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.ClearTextOnFocus = false
+        b.Parent = o
+        return b, o
+    end
+    local DurBox, DurOutline = mkSmallBox("свой срок: 6h/3d/2w", 382, 0, 10, 0.55, -13)
+    local PriceGenBox, PriceGenOutline = mkSmallBox("💰 ₽/шт", 382, 0.58, 5, 0.42, -15)
+
+    --// rev34: MOTD + Режим обслуживания
+    local MotdBox, MotdOutline = mkSmallBox("📣 MOTD при входе", 550, 0, 10, 0.62, -13)
+    local MaintBtn = Instance.new("TextButton")
+    MaintBtn.Size = UDim2.new(0.38, -19, 0, 26)
+    MaintBtn.Position = UDim2.new(0.62, 3, 0, 550)
+    MaintBtn.BackgroundColor3 = KeySystem.State.Maintenance and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(70, 130, 80)
+    MaintBtn.Text = KeySystem.State.Maintenance and "🔧 ВКЛ" or "🔧 ВЫКЛ"
+    MaintBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MaintBtn.Font = Enum.Font.GothamBold
+    MaintBtn.TextSize = 10
+    MaintBtn.BorderSizePixel = 0
+    MaintBtn.Parent = LeftPanel
+    local MaintCorner = Instance.new("UICorner")
+    MaintCorner.CornerRadius = UDim.new(0, 6)
+    MaintCorner.Parent = MaintBtn
+    MotdBox.FocusLost:Connect(function(enter)
+        if enter then KeySystem:SetMotd(MotdBox.Text) end
+    end)
+    MaintBtn.MouseButton1Click:Connect(function()
+        KeySystem:SetMaintenance(not KeySystem.State.Maintenance)
+        MaintBtn.Text = KeySystem.State.Maintenance and "🔧 ВКЛ" or "🔧 ВЫКЛ"
+        MaintBtn.BackgroundColor3 = KeySystem.State.Maintenance and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(70, 130, 80)
+        ksNotify("Admin", KeySystem.State.Maintenance and "🔧 Техработы ВКЛ — все ключи молчат" or "🔧 Техработы ВЫКЛ", 3)
+    end)
+    MotdBox.Text = KeySystem.State.Motd or ""
+
+    --// rev34: minVersion (минимальная ревизия сборки)
+    local MinVerBox, MinVerOutline = mkSmallBox("minRev (" .. tostring(KeySystem.State.MinVersion or "—") .. ")", 582, 0, 10, 0.62, -13)
+    local MVSaveBtn = Instance.new("TextButton")
+    MVSaveBtn.Size = UDim2.new(0.38, -19, 0, 26)
+    MVSaveBtn.Position = UDim2.new(0.62, 3, 0, 582)
+    MVSaveBtn.BackgroundColor3 = Color3.fromRGB(90, 90, 110)
+    MVSaveBtn.Text = "💾 minRev"
+    MVSaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MVSaveBtn.Font = Enum.Font.GothamBold
+    MVSaveBtn.TextSize = 10
+    MVSaveBtn.BorderSizePixel = 0
+    MVSaveBtn.Parent = LeftPanel
+    local MVSaveCorner = Instance.new("UICorner")
+    MVSaveCorner.CornerRadius = UDim.new(0, 6)
+    MVSaveCorner.Parent = MVSaveBtn
+    MVSaveBtn.MouseButton1Click:Connect(function()
+        local v = tonumber(MinVerBox.Text)
+        KeySystem:SetMinVersion(v)
+        MinVerBox.Text = ""
+        MinVerBox.PlaceholderText = "minRev (" .. tostring(KeySystem.State.MinVersion or "—") .. ")"
+        ksNotify("Admin", "🧱 minRev = " .. tostring(KeySystem.State.MinVersion or "снято"), 3)
+    end)
+
     --// вайп базы (двойное нажатие)
     local WipeBtn = Instance.new("TextButton")
     WipeBtn.Size = UDim2.new(1, -20, 0, 24)
-    WipeBtn.Position = UDim2.new(0, 10, 0, 452)
+    WipeBtn.Position = UDim2.new(0, 10, 0, 522)
     WipeBtn.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
     WipeBtn.Text = "🧹 УДАЛИТЬ ВСЕ КЛЮЧИ"
     WipeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -2082,6 +2505,23 @@ function KeySystem:CreateAdminGUI()
         end
     end)
 
+    --// rev34: МОДЕР (mod2288) — видит только генерацию и список
+    if KeySystem.State.IsModer then
+        local hide = {Editor, LogPanel, NOutline, NMark, NoHwidBtn, OneTimeBtn, DeferBtn,
+                      DurOutline, PriceGenOutline, PassHint, PassOutline, PassSaveBtn,
+                      ExpBtn, ImpBtn, ImpOutline, WipeBtn, MotdOutline, MaintBtn,
+                      MinVerOutline, MVSaveBtn, SearchOutline, SelAllBtn, MassBanBtn,
+                      MassExtBtn, MassDelBtn, MassClrBtn}
+        for _, w in ipairs(hide) do
+            pcall(function() w.Visible = false end)
+        end
+        for _, b in pairs(chipBtns) do
+            pcall(function() b.Visible = false end)
+        end
+        KillBtn.Visible = false
+        RunBtn.Visible = false
+    end
+
     --// авто-обновление онлайн-меток раз в 20 сек
     task.spawn(function()
         while task.wait(20) do
@@ -2098,10 +2538,20 @@ function KeySystem:CreateAdminGUI()
         local hasCustom = #custom > 0
         local n = math.clamp(math.floor(tonumber(NBox.Text) or 1), 1, 50)
         if hasCustom then n = 1 end
+        local genOpts = {
+            noHwid = genNoHwid,
+            oneTime = genOneTime,
+            defer = genDefer,
+            tier = genTierDefs[genTierIdx].Name,
+        }
+        local dsec = ParseDuration(DurBox.Text)
+        if dsec then genOpts.durationSecs = dsec end
+        local prc = tonumber(PriceGenBox.Text)
+        if prc then genOpts.price = prc end
         lastGenList = {}
         local lastErr = nil
         for i = 1, n do
-            local newKey, keyType, err = KeySystem:GenerateKey(selectedType, (i == 1 and hasCustom) and custom or nil, genNoHwid)
+            local newKey, keyType, err = KeySystem:GenerateKey(selectedType, (i == 1 and hasCustom) and custom or nil, genOpts)
             if newKey then
                 table.insert(lastGenList, newKey)
             else
@@ -2283,7 +2733,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev33 (движок: одноразовые/⏳отсчёт-с-входа/🤡тихие ключи, кик-пульт ⛔, переименование, 💰цены+выручка, playtime 🎮, MOTD 📣, техработы 🔧, брутфорс-ban, minVersion 🔄, водяной знак 🛰️, admin-HWID-lock, модер-пароль, аудит 📚)")
+print("[SpermaHub] сборка: build18 rev34 (UI: окно 700, 🔥/⏳/свой-срок/💰-генерация, 🏆тарифы, поиск 🔎, мультиселект ☑ + массовые действия, 🤡-кнопка, ⛔КИК, rename ✏, 💰цены у выбранного, MOTD/🔧/minRev-боксы, дашборд 📊 в заголовке, модер-режим mod2288, значки в строках)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
