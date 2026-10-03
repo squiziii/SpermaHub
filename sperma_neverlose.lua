@@ -894,7 +894,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev24 (KeySystem v2.0: админка+генератор, фикс кликов Час/День)")
+print("[SpermaHub] сборка: build18 rev24b (Close Script = ПОЛНАЯ выгрузка: оба GUI-движка, все 30 коннектов, renderbinds, синглтон-ресет)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -4334,7 +4334,7 @@ local neon = (function() -- Open sourced neon module
 			return binds[frame].parts
 		end
 
-		local uid = GenUid()
+		local uid = "SpermaRayPulse"
 		local parts = {}
 		local f = Instance.new('Folder', root)
 		f.Name = frame.Name
@@ -6456,6 +6456,7 @@ local Mouse = LocalPlayer:GetMouse();
 local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
 
 local ScreenGui = Instance.new('ScreenGui');
+ScreenGui.Name = 'SpermaLinoria';
 ProtectGui(ScreenGui);
 
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global;
@@ -10194,7 +10195,7 @@ do
 end
 
 -- RightShift = скрыть/показать меню (какой бы движок ни жив)
-UIS.InputBegan:Connect(function(input, gpe)
+S.rsToggleConn = UIS.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
         if LinLib and LinWindow then
@@ -13336,18 +13337,29 @@ bootStep("страницы OK")
 -- ===================== ПОЛНАЯ ВЫГРУЗКА ======================
 -- ============================================================
 function fullCleanupNL()
-    -- снести окно Rayfield при анлoаде
+    -- 1) снести окна ОБОИХ движков + свои GUI (по всем контейнерам)
+    pcall(function()
+        if LinLib and LinLib.Unload then LinLib:Unload() end
+    end)
     pcall(function()
         local heirsR = {}
+        table.insert(heirsR, LP.PlayerGui)
         pcall(function() if gethui then table.insert(heirsR, gethui()) end end)
-        pcall(function() table.insert(heirsR, game.CoreGui) end)
+        pcall(function() table.insert(heirsR, game:GetService("CoreGui")) end)
         for _, parent in ipairs(heirsR) do
-            local rf = parent:FindFirstChild("Rayfield")
-            if rf then rf:Destroy() end
+            for _, gname in ipairs({"Rayfield", "SpermaLinoria", "SpermaAdmin", "SpermaKeySystem"}) do
+                pcall(function()
+                    local rf = parent:FindFirstChild(gname)
+                    if rf then rf:Destroy() end
+                end)
+            end
         end
     end)
+    -- 2) отвязать render-loop Rayfield (остаётся жить даже после Destroy окна)
+    pcall(function() RunService:UnbindFromRenderStep("SpermaRayPulse") end)
     if unloadedNL then return end
     unloadedNL = true
+    dcc(S.rsToggleConn)
     S.guiAlive = false
     dcc(S.flyConn)
     dcc(S.noclipConn)
@@ -13413,12 +13425,26 @@ function fullCleanupNL()
     end
     pcall(disableESP)
     pcall(disableTargetESP)
-    for _, n in ipairs({"SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL","SpermaHubNLToggle","SpermaHubClickGui","SpermaHubSpec","SpermaHubWatermark","SpermaHubBinds","SpermaHubTHud"}) do
-        local g = LP.PlayerGui:FindFirstChild(n)
-        if g then g:Destroy() end
+    local heirsT = { LP.PlayerGui }
+    pcall(function() if gethui then table.insert(heirsT, gethui()) end end)
+    pcall(function() table.insert(heirsT, game:GetService("CoreGui")) end)
+    for _, parent in ipairs(heirsT) do
+        for _, n in ipairs({
+            "SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL",
+            "SpermaHubNLToggle","SpermaHubClickGui","SpermaHubSpec","SpermaHubWatermark",
+            "SpermaHubBinds","SpermaHubTHud","SpermaHubToast","SpermaHubBoot",
+            "SpermaKeySystem","SpermaAdmin","Rayfield","SpermaLinoria","KeyUI"
+        }) do
+            pcall(function()
+                local g = parent:FindFirstChild(n)
+                if g then g:Destroy() end
+            end)
+        end
     end
     pcall(function() getgenv().Library:Unload() end)
-    print("✦ SpermaHub полностью выгружен")
+    -- сброс синглтона: после close скрипт можно запустить заново без перезахода
+    pcall(function() if getgenv then getgenv().SpermaHubRunning = false end end)
+    print("✦ SpermaHub ПОЛНОСТЬЮ выгружен (GUI/циклы/коннекты добиты; можно запускать заново)")
 end
 S.autoClickBindConn = UIS.InputBegan:Connect(function(input, gpe)
     if gpe then return end
@@ -13466,6 +13492,7 @@ end)
 -- ============================================================
 LP.CharacterAdded:Connect(function()
     task.wait(0.5)
+    if not S.guiAlive then return end
     if S.flying then
         stopFly()
         if flightToggleCtl then flightToggleCtl.set(false) end
