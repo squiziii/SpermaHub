@@ -76,6 +76,9 @@ end
 --//  math.huge в JSON (ключи «Навсегда» не сохранялись); CoreGui через GetService)
 --// ============================================================
 
+--// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
+local BUILD_REV = 33
+
 local KeySystem = {
     --// Конфигурация
     Config = {
@@ -85,6 +88,7 @@ local KeySystem = {
         KeysFile = "sperma_keys.json", -- Файл с ключами
         HwidLock = true,               -- HWID-привязка: ключ работает только на устройстве первой активации
         MetaFile = "sperma_meta.json",       -- пароль админки + чёрный список HWID + лог активаций
+        ModerPassword = "mod2288",       -- «модер»-админка (только генерация/просмотр), переопределяется meta-файлом
         HeartbeatFile = "sperma_heartbeat.json", -- метки «сейчас в игре» (key → unixtime)
         Debug = false,
     },
@@ -108,6 +112,12 @@ local KeySystem = {
         ActLog = {},        -- [{k,hw,t,ok,r}] — последние 40 событий логина
         SelectedKey = nil,
         Heartbeats = {},    -- кэш: key → unixtime последнего пинга
+        AuditLog = {},      -- [{t, a}] — что админ натискал (30 посл.)
+        BruteCount = {},    -- {hwid = n} — неудачные попытки с устройства
+        MultiSel = {},      -- [key]=true — мультивыбор в списке
+        IsModer = false, SilentTroll = false,
+        Motd = "", Maintenance = false, MinVersion = nil,
+        MetaAdminHwid = nil, LastAutoClean = 0,
     }
 }
 
@@ -142,6 +152,15 @@ local function ksNotify(title, msg, duration)
     else
         print(("[SpermaHub] %s: %s"):format(title, msg))
     end
+end
+
+--// Парс срока «6h»/«3d»/«2w»/«90m» → секунды (rev33)
+local function ParseDuration(str)
+    str = tostring(str or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local num, unit = str:match("^(%d+)([hdwm])$")
+    if not num then return nil end
+    local mul = ({h = 3600, d = 86400, w = 604800, m = 60})[unit]
+    return (tonumber(num) or 0) * mul
 end
 
 --// Генерация случайного ключа
@@ -200,8 +219,16 @@ function KeySystem:SaveMeta()
     pcall(function()
         writefile(self.Config.MetaFile, HttpService:JSONEncode({
             adminPassword = self.Config.AdminPassword,
+            moderPassword = self.Config.ModerPassword,
             hwidBlacklist = self.State.HwidBlacklist,
             log = self.State.ActLog,
+            audit = self.State.AuditLog,
+            bruteCount = self.State.BruteCount,
+            motd = self.State.Motd,
+            maintenance = self.State.Maintenance,
+            minVersion = self.State.MinVersion,
+            adminHwid = self.State.MetaAdminHwid,
+            lastAutoClean = self.State.LastAutoClean,
         }))
     end)
 end
@@ -221,6 +248,20 @@ function KeySystem:LoadMeta()
             end
             if type(decoded.log) == "table" then
                 self.State.ActLog = decoded.log
+            end
+            if type(decoded.audit) == "table" then
+                self.State.AuditLog = decoded.audit
+            end
+            if type(decoded.bruteCount) == "table" then
+                self.State.BruteCount = decoded.bruteCount
+            end
+            self.State.Motd = (type(decoded.motd) == "string") and decoded.motd or ""
+            self.State.Maintenance = decoded.maintenance and true or false
+            self.State.MinVersion = decoded.minVersion
+            self.State.MetaAdminHwid = decoded.adminHwid
+            self.State.LastAutoClean = tonumber(decoded.lastAutoClean) or 0
+            if type(decoded.moderPassword) == "string" and #decoded.moderPassword >= 2 then
+                self.Config.ModerPassword = decoded.moderPassword
             end
         end
     end
@@ -263,9 +304,47 @@ function KeySystem:StartHeartbeat(key)
     task.spawn(function()
         while task.wait(45) do
             if KeySystem.State.Closed then break end
+            -- 🎮 наигранное время +45 сек каждый пинг
+            local d = KeySystem.State.KeysDB[key]
+            if d and writefile then
+                d.playSeconds = (d.playSeconds or 0) + 45
+                pcall(function() KeySystem:SaveKeys() end)
+            end
+            -- ⛔ КИК-ПУЛЬТ: админ выкинул доступ с удалёнки
+            if KeySystem:ReadKillFlag(key) then
+                pcall(function()
+                    LocalPlayer:Kick("SpermaHub: доступ отозван администратором")
+                end)
+                break
+            end
             KeySystem:WriteHeartbeat(key)
         end
     end)
+end
+
+function KeySystem:ReadKillFlag(key)
+    if not readfile then return false end
+    local ks = {}
+    pcall(function()
+        local data = readfile("sperma_killswitch.json")
+        if data then ks = HttpService:JSONDecode(data) or {} end
+    end)
+    return ks[key] == true
+end
+
+function KeySystem:SetKill(key, flag)
+    if not writefile then return end
+    local path = "sperma_killswitch.json"
+    local ks = {}
+    if readfile then
+        pcall(function()
+            local data = readfile(path)
+            if data then ks = HttpService:JSONDecode(data) or {} end
+        end)
+    end
+    ks[key] = flag and true or nil
+    writefile(path, HttpService:JSONEncode(ks))
+    self:Audit("killswitch " .. tostring(flag) .. " " .. key)
 end
 
 function KeySystem:ReadHeartbeats()
@@ -293,9 +372,11 @@ function KeySystem:GetKeyCount()
 end
 
 --// Генерация нового ключа (customKey — своё слово, если задано)
-function KeySystem:GenerateKey(keyTypeIndex, customKey, noHwid)
+function KeySystem:GenerateKey(keyTypeIndex, customKey, opts)
     local keyType = self.KeyTypes[keyTypeIndex]
     if not keyType then return nil end
+    if type(opts) == "boolean" then opts = {noHwid = opts} end
+    opts = opts or {}
 
     local newKey
     if customKey and #customKey > 0 then
@@ -311,21 +392,33 @@ function KeySystem:GenerateKey(keyTypeIndex, customKey, noHwid)
     end
     local now = tick()
 
-    self.State.KeysDB[newKey] = {
+    local dur = opts.durationSecs or keyType.Duration
+    local rec = {
         type = keyType.Name,
         typeIndex = keyTypeIndex,
         created = now,
-        expires = keyType.Duration == math.huge and math.huge or (now + keyType.Duration),
         used = false,
         generatedBy = "admin",
         hwid = nil,          -- свободен; при первом входе привяжется к устройству
-        activations = 0,     -- счётчик успешных входов
-        banned = false,      -- 🚫 бан (не впускает, но не удалён)
-        noHwid = noHwid and true or false, -- VIP: без привязки к устройству
-        note = nil,          -- заметка админа (ник покупателя)
-        maxActivations = nil,-- лимит входов (nil = без лимита)
+        activations = 0,
+        banned = false,
+        silentBan = false,   -- 🤡 тихий бан (fake-успех, скрипт не грузится)
+        noHwid = opts.noHwid and true or false,
+        oneTime = opts.oneTime and true or false, -- 🔥 самоуничтожается после первого входа
+        note = nil,
+        maxActivations = nil,
+        price = (tonumber(opts.price) and tonumber(opts.price) >= 0) and math.floor(tonumber(opts.price)) or nil, -- 💰 ₽
+        playSeconds = 0,     -- 🎮 наиграно
     }
+    if opts.defer then
+        rec.pendingStart = true     -- ⏳ срок начнёт тикать с первого входа
+        rec.durationSecs = dur
+        rec.expires = nil
+    else
+        rec.expires = (dur == math.huge) and math.huge or (now + dur)
+    end
 
+    self.State.KeysDB[newKey] = rec
     self:SaveKeys()
     ksPrint("Generated " .. keyType.Name .. " key: " .. newKey)
 
@@ -336,12 +429,28 @@ end
 function KeySystem:ValidateKey(key)
     key = string.gsub(tostring(key), "%s+", "") -- Чистим пробелы
 
-    --// Админ-пароль (чёрный список админа не блокируем)
+    --// Админки (чёрный список и техн.режим их не блокируют)
     if key == self.Config.AdminPassword then
+        local myHwid = GetHWID()
+        local lock = self.State.MetaAdminHwid
+        if lock == nil then
+            self.State.MetaAdminHwid = myHwid -- 🔒 первая привязка админки к этому устройству
+            self:SaveMeta()
+        elseif lock ~= myHwid then
+            ksNotify("Key System", "⛔ Админка привязана к ДРУГОМУ устройству!", 3)
+            self:LogEvent(key, myHwid, false, "adminhwid")
+            return false, "adminhwid"
+        end
         self.State.IsAdmin = true
         self.State.Authenticated = true
         ksPrint("Admin access granted")
         return true, "admin"
+    end
+    if self.Config.ModerPassword and key == self.Config.ModerPassword then
+        self.State.IsModer = true
+        self.State.Authenticated = true
+        ksPrint("Moder access granted")
+        return true, "moder"
     end
 
     local myHwid = GetHWID()
@@ -353,20 +462,42 @@ function KeySystem:ValidateKey(key)
         return false, "blacklisted"
     end
 
+    --// 🔧 РЕЖИМ ОБСЛУЖИВАНИЯ
+    if self.State.Maintenance then
+        ksNotify("Key System", "🔧 Технические работы — попробуйте позже!", 3)
+        return false, "maint"
+    end
+
     --// Проверка в базе
     local keyData = self.State.KeysDB[key]
     if keyData then
         local now = tick()
 
-        --// Бан (заморозка без удаления)
+        -- Обычный БАН
         if keyData.banned then
             ksNotify("Key System", "🚫 Ключ заблокирован администратором!", 3)
             self:LogEvent(key, myHwid, false, "banned")
             return false, "banned"
         end
 
-        -- Проверка срока
-        if now > keyData.expires then
+        --// 🤡 ТИХИЙ БАН: юзер видит успех, но скрипт не грузится
+        if keyData.silentBan then
+            self.State.SilentTroll = true
+            self.State.Authenticated = true
+            self:LogEvent(key, myHwid, true, "silent")
+            return true, "silent"
+        end
+
+        --// ⏳ Отсчёт от первого входа
+        if keyData.pendingStart and keyData.expires == nil then
+            local dur = keyData.durationSecs or self.KeyTypes[1].Duration
+            keyData.expires = (dur == math.huge) and math.huge or (now + dur)
+            self:SaveKeys()
+            self:LogEvent(key, myHwid, true, "started")
+        end
+
+        -- Проверка срока (nil expires = отсчёт ещё не стартовал → валиден)
+        if keyData.expires and now > keyData.expires then
             ksNotify("Key System", "Ключ истёк!", 3)
             self:LogEvent(key, myHwid, false, "expired")
             return false, "expired"
@@ -398,7 +529,16 @@ function KeySystem:ValidateKey(key)
         keyData.activations = (keyData.activations or 0) + 1
         self:SaveKeys()
         self:LogEvent(key, myHwid, true, keyData.type)
-        self:StartHeartbeat(key) -- «сейчас в игре»
+        self:StartHeartbeat(key) -- «сейчас в игре» + кик-пульт + playtime
+
+        --// 🔥 одноразовый ключ самоуничтожается после первого входа
+        if keyData.oneTime then
+            task.delay(1.5, function()
+                pcall(function()
+                    if KeySystem.State.KeysDB[key] then KeySystem:RevokeKey(key) end
+                end)
+            end)
+        end
 
         self.State.Authenticated = true
         self.State.CurrentKey = key
@@ -407,8 +547,14 @@ function KeySystem:ValidateKey(key)
         return true, keyData.type
     end
 
-    --// Неверный ключ
+    --// Неверный ключ + брутфорс-присмотр
     self:LogEvent(key, myHwid, false, "invalid")
+    self.State.BruteCount[myHwid] = (self.State.BruteCount[myHwid] or 0) + 1
+    if self.State.BruteCount[myHwid] >= 4 and not self.State.HwidBlacklist[myHwid] then
+        self:BlacklistHwid(myHwid)
+        self:Audit("autoban hwid " .. myHwid:sub(1, 8))
+        ksNotify("Key System", "🚫 Ваше устройство внесено в чёрный список (перебор ключей)", 3)
+    end
     self.State.Attempts = self.State.Attempts + 1
 
     if self.State.Attempts >= self.Config.MaxAttempts then
@@ -502,6 +648,75 @@ function KeySystem:CycleType(key)
     d.expires = kt.Duration == math.huge and math.huge or (now + kt.Duration)
     self:SaveKeys()
     return true
+end
+
+--// 📚 Аудит: фиксируем действия админа
+function KeySystem:Audit(action)
+    table.insert(self.State.AuditLog, 1, {t = os.time(), a = tostring(action):sub(1, 80)})
+    while #self.State.AuditLog > 30 do table.remove(self.State.AuditLog) end
+    self:SaveMeta()
+end
+
+--// ✏️ Переименование ключа (данные перекочевывают на новое слово)
+function KeySystem:RenameKey(oldKey, newKey)
+    local d = self.State.KeysDB[oldKey]
+    newKey = tostring(newKey or ""):gsub("%s+", "")
+    if not d then return false end
+    if #newKey < 3 or self.State.KeysDB[newKey] then return false end
+    self.State.KeysDB[newKey] = d
+    self.State.KeysDB[oldKey] = nil
+    if self.State.SelectedKey == oldKey then self.State.SelectedKey = newKey end
+    if self.State.Heartbeats and self.State.Heartbeats[oldKey] then
+        self.State.Heartbeats[newKey] = self.State.Heartbeats[oldKey]
+        self.State.Heartbeats[oldKey] = nil
+    end
+    self:SaveKeys()
+    self:Audit("rename " .. oldKey .. " -> " .. newKey)
+    return true
+end
+
+--// 💰 Цена ключа (для статистики выручки)
+function KeySystem:SetPrice(key, price)
+    local d = self.State.KeysDB[key]
+    if not d then return false end
+    price = tonumber(price)
+    d.price = (price and price >= 0) and math.floor(price) or nil
+    self:SaveKeys()
+    return true
+end
+
+function KeySystem:GetRevenue()
+    local sum, sold = 0, 0
+    for _, d in pairs(self.State.KeysDB) do
+        if d.used then sold = sold + 1; sum = sum + (d.price or 0) end
+    end
+    return sum, sold
+end
+
+--// 🤡 Тихий бан
+function KeySystem:SetSilent(key, flag)
+    local d = self.State.KeysDB[key]
+    if d then d.silentBan = flag and true or false; self:SaveKeys(); return true end
+    return false
+end
+
+--// 📣 MOTD / 🔧 Режим обслуживания / 🧱 Минимальная сборка
+function KeySystem:SetMotd(t)
+    self.State.Motd = tostring(t or ""):sub(1, 100)
+    self:SaveMeta()
+end
+
+function KeySystem:SetMaintenance(flag)
+    self.State.Maintenance = flag and true or false
+    self:SaveMeta()
+    self:Audit("maintenance " .. tostring(flag))
+end
+
+function KeySystem:SetMinVersion(v)
+    v = tonumber(v)
+    self.State.MinVersion = (v and v >= 1) and math.floor(v) or nil
+    self:SaveMeta()
+    self:Audit("minVersion " .. tostring(v))
 end
 
 --// Чёрный список HWID
@@ -684,8 +899,8 @@ function KeySystem:CreateUserGUI()
         local success, keyType = KeySystem:ValidateKey(key)
 
         if success then
-            if keyType == "admin" then
-                Status.Text = "✓ Admin access!"
+            if keyType == "admin" or keyType == "moder" then
+                Status.Text = (keyType == "admin") and "✓ Admin access!" or "✓ Moder access!"
                 Status.TextColor3 = Color3.fromRGB(100, 255, 100)
                 SubmitBtn.Text = "OPENING ADMIN..."
                 SubmitBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
@@ -701,6 +916,38 @@ function KeySystem:CreateUserGUI()
 
                 task.wait(0.5)
                 ScreenGui:Destroy()
+
+                if keyType == "silent" then
+                    -- 🤡 тихий бан: никого нет дома (waiter сверху по SilentTroll не пропустит загрузку)
+                    if getgenv then getgenv().SpermaHubRunning = false end
+                    return
+                end
+                -- 📣 MOTD от администрации
+                if KeySystem.State.Motd and #KeySystem.State.Motd > 0 then
+                    ksNotify("📣 SpermaHub", KeySystem.State.Motd, 5)
+                end
+                -- 🛰️ водяной знак: кусок ключа в углу (анти-слив)
+                pcall(function()
+                    if CoreGuiSvc:FindFirstChild("SpermaWatermark") then
+                        CoreGuiSvc.SpermaWatermark:Destroy()
+                    end
+                    local wm = Instance.new("ScreenGui")
+                    wm.Name = "SpermaWatermark"
+                    wm.ResetOnSpawn = false
+                    wm.DisplayOrder = 1
+                    wm.Parent = CoreGuiSvc
+                    local wl = Instance.new("TextLabel")
+                    wl.Size = UDim2.new(0, 200, 0, 16)
+                    wl.Position = UDim2.new(1, -210, 1, -22)
+                    wl.BackgroundTransparency = 1
+                    wl.Text = "lic: " .. tostring(key):sub(1, 6) .. "…"
+                    wl.TextColor3 = Color3.fromRGB(90, 90, 100)
+                    wl.TextTransparency = 0.55
+                    wl.Font = Enum.Font.Gotham
+                    wl.TextSize = 10
+                    wl.TextXAlignment = Enum.TextXAlignment.Right
+                    wl.Parent = wm
+                end)
 
                 -- Запуск основного скрипта (если оформлен как функция)
                 if _G.SpermaHubMain then
@@ -1933,6 +2180,38 @@ function KeySystem:CreateAdminGUI()
 end
 
 --// Инициализация
+--// 🔄 Экран «нужна новая версия» (minVersion)
+function KeySystem:CreateMinVersionGUI()
+    if CoreGuiSvc:FindFirstChild("SpermaKeySystem") then
+        CoreGuiSvc.SpermaKeySystem:Destroy()
+    end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "SpermaKeySystem"
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 999
+    sg.Parent = CoreGuiSvc
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(0, 340, 0, 130)
+    f.Position = UDim2.new(0.5, -170, 0.5, -65)
+    f.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    f.BorderSizePixel = 0
+    f.Parent = sg
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 10)
+    c.Parent = f
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, -20, 1, -20)
+    t.Position = UDim2.new(0, 10, 0, 10)
+    t.BackgroundTransparency = 1
+    t.Text = "🔄 Обновите скрипт!\nТребуется сборка rev" .. tostring(self.State.MinVersion) .. " или новее.\nТекущая: rev" .. tostring(BUILD_REV)
+    t.TextColor3 = Color3.fromRGB(255, 180, 80)
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 13
+    t.TextWrapped = true
+    t.Parent = f
+    return sg
+end
+
 function KeySystem:Init()
     self:LoadMeta()
     self:LoadKeys()
@@ -1945,6 +2224,34 @@ function KeySystem:Init()
         self:SaveKeys()
     end
 
+    --// 🧹 ежесуточная автоподчистка истёкших
+    local nowUnix = os.time()
+    if (nowUnix - (self.State.LastAutoClean or 0)) > 86400 then
+        self:CleanExpired()
+        self.State.LastAutoClean = nowUnix
+        self:SaveMeta()
+    end
+
+    --// 💾 авто-бэкапы базы раз в 30 минут
+    task.spawn(function()
+        while task.wait(1800) do
+            pcall(function()
+                if readfile and writefile then
+                    local kd = readfile(self.Config.KeysFile)
+                    if kd then writefile("sperma_keys_backup.json", kd) end
+                    local md = readfile(self.Config.MetaFile)
+                    if md then writefile("sperma_meta_backup.json", md) end
+                end
+            end)
+        end
+    end)
+
+    --// 🔄 блок грузчика на старых сборках
+    if self.State.MinVersion and BUILD_REV < self.State.MinVersion then
+        self:CreateMinVersionGUI()
+        return
+    end
+
     self:CreateUserGUI()
 end
 
@@ -1955,7 +2262,8 @@ KeySystem:Init()
 -- АДМИНКА НЕ ГРУЗИТ скрипт за тебя: × и ⛔ просто закрывают панель,
 -- грузить скрипт из админки — отдельная зелёная ▶ в шапке.
 repeat task.wait(0.1) until
-    (KeySystem.State.Authenticated and not KeySystem.State.IsAdmin)
+    (KeySystem.State.Authenticated and not KeySystem.State.IsAdmin
+        and not KeySystem.State.IsModer and not KeySystem.State.SilentTroll)
     or KeySystem.State.AdminDone
     or KeySystem.State.Closed
 
@@ -1975,7 +2283,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev32 (fix: × в админке больше НЕ вылезает с основным скриптом; явная ▶ для запуска из админки)")
+print("[SpermaHub] сборка: build18 rev33 (движок: одноразовые/⏳отсчёт-с-входа/🤡тихие ключи, кик-пульт ⛔, переименование, 💰цены+выручка, playtime 🎮, MOTD 📣, техработы 🔧, брутфорс-ban, minVersion 🔄, водяной знак 🛰️, admin-HWID-lock, модер-пароль, аудит 📚)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -2084,7 +2392,7 @@ end)
 do
     -- whitelist: ЭТИ имена трогать нельзя (это ТЕКУЩИЙ скрипт)
     local HUD_OK = {
-        SpermaKeySystem = true, SpermaAdmin = true, SpermaHubToast = true, SpermaHubBoot = true, SpermaHubErrToast = true, SpermaLinoria = true, Rayfield = true, KeyUI = true,
+        SpermaKeySystem = true, SpermaWatermark = true, SpermaAdmin = true, SpermaHubToast = true, SpermaHubBoot = true, SpermaHubErrToast = true, SpermaLinoria = true, Rayfield = true, KeyUI = true,
         SpermaHubESP = true, SpermaHubFov = true, SpermaHubFx = true, SpermaHubSpec = true,
     }
     local heirs = {}
@@ -14430,7 +14738,7 @@ function fullCleanupNL()
         pcall(function() if gethui then table.insert(heirsR, gethui()) end end)
         pcall(function() table.insert(heirsR, game:GetService("CoreGui")) end)
         for _, parent in ipairs(heirsR) do
-            for _, gname in ipairs({"Rayfield", "SpermaLinoria", "SpermaAdmin", "SpermaKeySystem"}) do
+            for _, gname in ipairs({"Rayfield", "SpermaLinoria", "SpermaAdmin", "SpermaKeySystem", "SpermaWatermark"}) do
                 pcall(function()
                     local rf = parent:FindFirstChild(gname)
                     if rf then rf:Destroy() end
@@ -14516,7 +14824,7 @@ function fullCleanupNL()
             "SpermaHubESP","SpermaHubFov","SpermaHubHUD","SpermaHubFx","SpermaHubNL",
             "SpermaHubNLToggle","SpermaHubClickGui","SpermaHubSpec","SpermaHubWatermark",
             "SpermaHubBinds","SpermaHubTHud","SpermaHubToast","SpermaHubBoot",
-            "SpermaKeySystem","SpermaAdmin","Rayfield","SpermaLinoria","KeyUI","SpermaHubErrToast"
+            "SpermaKeySystem","SpermaAdmin","Rayfield","SpermaLinoria","KeyUI","SpermaHubErrToast","SpermaWatermark"
         }) do
             pcall(function()
                 local g = parent:FindFirstChild(n)
