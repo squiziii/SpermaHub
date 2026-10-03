@@ -73,6 +73,7 @@ local KeySystem = {
         MaxAttempts = 3,               -- Попыток до кика
         SaveKeys = true,               -- Сохранять ключи в файл
         KeysFile = "sperma_keys.json", -- Файл с ключами
+        HwidLock = true,               -- HWID-привязка: ключ работает только на устройстве первой активации
         Debug = false,
     },
 
@@ -98,6 +99,18 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local CoreGuiSvc = game:GetService("CoreGui")
+
+--// HWID устройства (gethwid → fallback UserId)
+local function GetHWID()
+    local ok, h = pcall(function()
+        if gethwid then return gethwid() end
+        return LocalPlayer.UserId
+    end)
+    if not ok or h == nil or h == "" then
+        return tostring(LocalPlayer.UserId)
+    end
+    return tostring(h)
+end
 pcall(function() math.randomseed(tick() % 1 * 1e6 + os.clock() * 1e3) end)
 
 --// Хелперы
@@ -196,7 +209,9 @@ function KeySystem:GenerateKey(keyTypeIndex, customKey)
         created = now,
         expires = keyType.Duration == math.huge and math.huge or (now + keyType.Duration),
         used = false,
-        generatedBy = "admin"
+        generatedBy = "admin",
+        hwid = nil,          -- свободен; при первом входе привяжется к устройству
+        activations = 0,     -- счётчик успешных входов
     }
 
     self:SaveKeys()
@@ -228,11 +243,24 @@ function KeySystem:ValidateKey(key)
             return false, "expired"
         end
 
-        -- Помечаем использованным (одноразовый)
+        --// HWID-ПРИВЯЗКА: один ключ = одно устройство
+        if self.Config.HwidLock then
+            local myHwid = GetHWID()
+            if keyData.hwid == nil then
+                keyData.hwid = myHwid
+                keyData.hwidSetAt = now
+            elseif tostring(keyData.hwid) ~= myHwid then
+                ksNotify("Key System", "⛔ Ключ привязан к ДРУГОМУ устройству!", 3)
+                return false, "hwid"
+            end
+        end
+
+        -- Помечаем использованным + счётчик активаций
         if not keyData.used then
             keyData.used = true
-            self:SaveKeys()
         end
+        keyData.activations = (keyData.activations or 0) + 1
+        self:SaveKeys()
 
         self.State.Authenticated = true
         self.State.CurrentKey = key
@@ -257,6 +285,17 @@ end
 function KeySystem:RevokeKey(key)
     if self.State.KeysDB[key] then
         self.State.KeysDB[key] = nil
+        self:SaveKeys()
+        return true
+    end
+    return false
+end
+
+--// Сброс HWID (ключ снова сможет привязаться к любому устройству)
+function KeySystem:ResetHwid(key)
+    if self.State.KeysDB[key] and self.State.KeysDB[key].hwid ~= nil then
+        self.State.KeysDB[key].hwid = nil
+        self.State.KeysDB[key].hwidSetAt = nil
         self:SaveKeys()
         return true
     end
@@ -767,6 +806,18 @@ function KeySystem:CreateAdminGUI()
     StatsLabel.ClipsDescendants = true
     StatsLabel.Parent = LeftPanel
 
+    local HwidLabel = Instance.new("TextLabel")
+    HwidLabel.Size = UDim2.new(1, -20, 0, 14)
+    HwidLabel.Position = UDim2.new(0, 10, 1, -24)
+    HwidLabel.BackgroundTransparency = 1
+    HwidLabel.Text = "Мой HWID: " .. GetHWID():sub(1, 18) .. "…"
+    HwidLabel.TextColor3 = Color3.fromRGB(110, 110, 130)
+    HwidLabel.Font = Enum.Font.Gotham
+    HwidLabel.TextSize = 10
+    HwidLabel.TextXAlignment = Enum.TextXAlignment.Left
+    HwidLabel.ClipsDescendants = true
+    HwidLabel.Parent = LeftPanel
+
     --// Правая панель - Список ключей
     local RightPanel = Instance.new("Frame")
     RightPanel.Size = UDim2.new(0.55, -5, 1, 0)
@@ -898,17 +949,41 @@ function KeySystem:CreateAdminGUI()
                 end
             end
 
-            InfoLabel.Text = string.format("%s | %s | %s", tostring(data.type), timeLeft, data.used and "Использован" or "Свежий")
+            local hwidShort = (data.hwid ~= nil) and ("HW:" .. tostring(data.hwid):sub(1, 8) .. "…") or "HW: свободен"
+            InfoLabel.Text = string.format("%s | %s | %s | %s | x%d", tostring(data.type), timeLeft, data.used and "Использован" or "Свежий", hwidShort, data.activations or 0)
             InfoLabel.TextColor3 = isExpired and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(180, 180, 200)
             InfoLabel.Font = Enum.Font.Gotham
             InfoLabel.TextSize = 10
             InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
             InfoLabel.Parent = KeyFrame
 
+            -- HWID reset button
+            local HwBtn = Instance.new("TextButton")
+            HwBtn.Size = UDim2.new(0, 45, 0, 20)
+            HwBtn.Position = UDim2.new(1, -55, 0, 5)
+            HwBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
+            HwBtn.Text = "↺HWID"
+            HwBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            HwBtn.Font = Enum.Font.GothamBold
+            HwBtn.TextSize = 9
+            HwBtn.BorderSizePixel = 0
+            HwBtn.Visible = (data.hwid ~= nil)
+            HwBtn.Parent = KeyFrame
+
+            local HwCorner = Instance.new("UICorner")
+            HwCorner.CornerRadius = UDim.new(0, 4)
+            HwCorner.Parent = HwBtn
+
+            HwBtn.MouseButton1Click:Connect(function()
+                KeySystem:ResetHwid(key)
+                RefreshKeysList()
+                UpdateStats()
+            end)
+
             -- Delete button
             local DelBtn = Instance.new("TextButton")
             DelBtn.Size = UDim2.new(0, 45, 0, 20)
-            DelBtn.Position = UDim2.new(1, -50, 0, 15)
+            DelBtn.Position = UDim2.new(1, -55, 0, 27)
             DelBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
             DelBtn.Text = "Удалить"
             DelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -983,8 +1058,8 @@ function KeySystem:Init()
 
     --// Сиды: вечные базовые ключи, чтобы вход был всегда (если база пустая)
     if not next(self.State.KeysDB) then
-        self.State.KeysDB["sperma"] = { type = "Навсегда", typeIndex = 1, created = tick(), expires = math.huge, used = false, generatedBy = "seed" }
-        self.State.KeysDB["eniloveslo"] = { type = "Навсегда", typeIndex = 1, created = tick(), expires = math.huge, used = false, generatedBy = "seed" }
+        self.State.KeysDB["sperma"] = { type = "Навсегда", typeIndex = 1, created = tick(), expires = math.huge, used = false, generatedBy = "seed", hwid = nil, activations = 0 }
+        self.State.KeysDB["eniloveslo"] = { type = "Навсегда", typeIndex = 1, created = tick(), expires = math.huge, used = false, generatedBy = "seed", hwid = nil, activations = 0 }
         self:SaveKeys()
     end
 
@@ -1018,7 +1093,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev28 (админка: генерация ключей СВОИМ словом)")
+print("[SpermaHub] сборка: build18 rev29 (HWID-привязка ключей + счётчик активаций + ↺сброс HWID в админке)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
