@@ -513,6 +513,32 @@ function KeySystem:CreateAdminGUI()
     CloseCorner.CornerRadius = UDim.new(0, 6)
     CloseCorner.Parent = CloseBtn
 
+    --// ЗАКРЫТЬ СКРИПТ (убивает админку и всё вместе с ней)
+    local KillBtn = Instance.new("TextButton")
+    KillBtn.Size = UDim2.new(0, 96, 0, 30)
+    KillBtn.Position = UDim2.new(1, -140, 0, 5)
+    KillBtn.BackgroundColor3 = Color3.fromRGB(140, 30, 30)
+    KillBtn.Text = "⛔ Скрипт"
+    KillBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    KillBtn.Font = Enum.Font.GothamBold
+    KillBtn.TextSize = 12
+    KillBtn.BorderSizePixel = 0
+    KillBtn.Parent = TitleBar
+
+    local KillCorner = Instance.new("UICorner")
+    KillCorner.CornerRadius = UDim.new(0, 6)
+    KillCorner.Parent = KillBtn
+
+    KillBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            KeySystem.State.Closed = true
+            ScreenGui:Destroy()
+            local pg = CoreGuiSvc
+            pcall(function() if pg:FindFirstChild("SpermaKeySystem") then pg.SpermaKeySystem:Destroy() end end)
+            print("[SpermaHub] Закрыто из админ-панели")
+        end)
+    end)
+
     --// Content
     local Content = Instance.new("Frame")
     Content.Size = UDim2.new(1, -20, 1, -60)
@@ -854,6 +880,8 @@ function KeySystem:CreateAdminGUI()
 
     CloseBtn.MouseButton1Click:Connect(function()
         ScreenGui:Destroy()
+        -- панель закрыта → ВОТ ТЕПЕРЬ грузим основной скрипт
+        KeySystem.State.AdminDone = true
     end)
 
     --// Init
@@ -880,11 +908,21 @@ end
 --// Запуск
 KeySystem:Init()
 
---// Ожидание авторизации
-repeat task.wait(0.1) until KeySystem.State.Authenticated
+--// Ожидание авторизации.
+-- АДМИНКА НЕ ГРУЗИТ скрипт сразу: основной скрипт стартует,
+-- когда админ закроет панель (×); «Закрыть скрипт» в админке убивает всё.
+repeat task.wait(0.1) until
+    (KeySystem.State.Authenticated and not KeySystem.State.IsAdmin)
+    or KeySystem.State.AdminDone
+    or KeySystem.State.Closed
 
-if KeySystem.State.IsAdmin then
-    print("[SpermaHub] Admin mode — админ-панель открыта (пароль 1337), основной скрипт грузится параллельно")
+if KeySystem.State.Closed then
+    pcall(function() if getgenv then getgenv().SpermaHubRunning = false end end)
+    warn("[SpermaHub] ЗАКРЫТ ИЗ АДМИН-ПАНЕЛИ — основной скрипт не загружен")
+    return
+end
+if KeySystem.State.AdminDone then
+    print("[SpermaHub] Admin закрыл панель — загружаю основной скрипт...")
 else
     print("[SpermaHub] User authenticated with key: " .. tostring(KeySystem.State.KeyType))
 end
@@ -894,7 +932,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev24b (Close Script = ПОЛНАЯ выгрузка: оба GUI-движка, все 30 коннектов, renderbinds, синглтон-ресет)")
+print("[SpermaHub] сборка: build18 rev25 (Linoria первичная; админка не грузит скрипт сразу; ⛔ Закрыть скрипт в админке)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -10081,116 +10119,114 @@ getgenv().Library = Library
 return Library
 ]=]
 
-print("[SpermaHub] GUI режим: Rayfield → автоматический фолбэк на Linoria")
+print("[SpermaHub] GUI режим: Linoria (первичная, безассетная) — фолбэк Rayfield")
 
 local RayLib = nil
 local RayWindow = nil
 local LinLib = nil
 local LinWindow = nil
+local guiLastErr = "unknown"
 do
-    local function tryRay(src, tag)
+    local function tryLib(src, tag, libName)
         if not src then return nil end
-        local fn = loadstring(src, "@rayfield")
-        local okLib, lib = pcall(function() if fn then return fn() end return nil end)
-        if okLib and type(lib) == "table" and lib.CreateWindow then
-            print("[SpermaHub] Rayfield загружен: " .. tag)
+        local fn = loadstring(src, libName == "linoria" and "@linoria" or "@rayfield")
+        local okL, lib = pcall(function() if fn then return fn() end return nil end)
+        if okL and type(lib) == "table" and lib.CreateWindow then
+            print("[SpermaHub] " .. libName .. " загружен: " .. tag)
             return lib
         end
-        warn("[SpermaHub] Rayfield не завёлся (" .. tag .. "): " .. tostring(lib))
+        guiLastErr = tostring(lib)
+        warn("[SpermaHub] " .. libName .. " не завёлся (" .. tag .. "): " .. tostring(lib))
         return nil
     end
-    RayLib = tryRay(RAYFIELD_SRC, "встроенная копия")
-    if not RayLib then
-        local RU = {
-            "https://cdn.jsdelivr.net/gh/jensonhirst/Rayfield@main/source",
-            "https://fastly.jsdelivr.net/gh/jensonhirst/Rayfield@main/source",
-            "https://cdn.jsdelivr.net/gh/SiriusSoftwareLtd/Rayfield@main/source.lua",
+
+    -- 1) LINORIA — безассетный движок (чистый Instance.new; точно заводится везде)
+    LinLib = tryLib(LINORIA_SRC, "встроенная копия", "linoria")
+    if not LinLib then
+        local LU = {
+            "https://cdn.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/Library.lua",
+            "https://fastly.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/Library.lua",
+            "https://gcore.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/Library.lua",
         }
-        for _, u in ipairs(RU) do
+        for _, u in ipairs(LU) do
             local ok, r = pcall(function() return game:HttpGet(u) end)
-            if ok and type(r) == "string" and #r > 50000 and r:find("Rayfield", 1, true) then
-                RayLib = tryRay(r, u)
-                if RayLib then break end
+            if ok and type(r) == "string" and #r > 50000 and r:find("CreateWindow", 1, true) then
+                LinLib = tryLib(r, u, "linoria")
+                if LinLib then break end
             end
         end
     end
-    if RayLib then
-        -- сносим окна Rayfield/KeyUI от прошлых запусков
-        local heirsW = { LP.PlayerGui }
-        pcall(function() if gethui then table.insert(heirsW, gethui()) end end)
-        pcall(function() table.insert(heirsW, game.CoreGui) end)
-        for _, parent in ipairs(heirsW) do
-            pcall(function()
-                for _, gui in ipairs(parent:GetChildren()) do
-                    if gui:IsA("ScreenGui") and (gui.Name == "Rayfield" or gui.Name == "KeyUI") then
-                        gui:Destroy()
-                    end
-                end
-            end)
-        end
-        -- окно + нативная KeySystem Rayfield: главное окно не откроется без ключа
-        local okWin, win = pcall(function()
-            return RayLib:CreateWindow({
-                Name = "SpermaHub",
-                LoadingTitle = "SpermaHub",
-                LoadingSubtitle = "by eni",
-                ConfigurationSaving = { Enabled = false },
-                Discord = { Enabled = false },
-                KeySystem = false,
-            })
+    if LinLib then
+        local okW, w = pcall(function()
+            return LinLib:CreateWindow({ Title = "SpermaHub", Center = true, AutoShow = false, MenuFadeTime = 0.15 })
         end)
-        if okWin and win then
-            RayWindow = win
-            print("[SpermaHub] Rayfield window OK (toggle: RightShift)")
+        if okW and w then
+            LinWindow = w
+            print("[SpermaHub] Linoria window OK (toggle: RightShift)")
         else
-            warn("[SpermaHub] Rayfield CreateWindow fail: " .. tostring(win))
-            RayLib = nil
+            guiLastErr = tostring(w)
+            warn("[SpermaHub] Linoria CreateWindow fail: " .. tostring(w))
+            LinLib = nil
         end
     end
-    if not RayLib then
-        warn("[SpermaHub] Rayfield не завёлся — пробую Linoria (безассетный движок)...")
-        local function tryLin(src, tag)
-            if not src then return nil end
-            local fn = loadstring(src, "@linoria")
-            local okL, lib = pcall(function() if fn then return fn() end return nil end)
-            if okL and type(lib) == "table" and lib.CreateWindow then
-                print("[SpermaHub] Linoria загружена: " .. tag)
-                return lib
-            end
-            warn("[SpermaHub] Linoria не завёлся (" .. tag .. "): " .. tostring(lib))
-            return nil
-        end
-        LinLib = tryLin(LINORIA_SRC, "встроенная копия")
-        if not LinLib then
-            local LU = {
-                "https://cdn.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/Library.lua",
-                "https://fastly.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/Library.lua",
-                "https://gcore.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/Library.lua",
+
+    -- 2) RAYFIELD — фолбэк (если Linoria вдруг не завелась)
+    if not LinLib then
+        warn("[SpermaHub] Linoria не завёлся — пробую Rayfield...")
+        RayLib = tryLib(RAYFIELD_SRC, "встроенная копия", "rayfield")
+        if not RayLib then
+            local RU = {
+                "https://cdn.jsdelivr.net/gh/jensonhirst/Rayfield@main/source",
+                "https://fastly.jsdelivr.net/gh/jensonhirst/Rayfield@main/source",
+                "https://cdn.jsdelivr.net/gh/SiriusSoftwareLtd/Rayfield@main/source.lua",
             }
-            for _, u in ipairs(LU) do
+            for _, u in ipairs(RU) do
                 local ok, r = pcall(function() return game:HttpGet(u) end)
-                if ok and type(r) == "string" and #r > 50000 and r:find("CreateWindow", 1, true) then
-                    LinLib = tryLin(r, u)
-                    if LinLib then break end
+                if ok and type(r) == "string" and #r > 50000 and r:find("Rayfield", 1, true) then
+                    RayLib = tryLib(r, u, "rayfield")
+                    if RayLib then break end
                 end
             end
         end
-        if LinLib then
-            local okW, w = pcall(function()
-                return LinLib:CreateWindow({ Title = "SpermaHub", Center = true, AutoShow = false, MenuFadeTime = 0.15 })
+        if RayLib then
+            local heirsW = { LP.PlayerGui }
+            pcall(function() if gethui then table.insert(heirsW, gethui()) end end)
+            pcall(function() table.insert(heirsW, game.CoreGui) end)
+            for _, parent in ipairs(heirsW) do
+                pcall(function()
+                    for _, gui in ipairs(parent:GetChildren()) do
+                        if gui:IsA("ScreenGui") and (gui.Name == "Rayfield" or gui.Name == "KeyUI") then
+                            gui:Destroy()
+                        end
+                    end
+                end)
+            end
+            local okWin, win = pcall(function()
+                return RayLib:CreateWindow({
+                    Name = "SpermaHub",
+                    LoadingTitle = "SpermaHub",
+                    LoadingSubtitle = "by eni",
+                    ConfigurationSaving = { Enabled = false },
+                    Discord = { Enabled = false },
+                    KeySystem = false,
+                })
             end)
-            if okW and w then
-                LinWindow = w
-                print("[SpermaHub] Linoria window OK (toggle: RightShift)")
+            if okWin and win then
+                RayWindow = win
+                print("[SpermaHub] Rayfield window OK (toggle: RightShift)")
             else
-                warn("[SpermaHub] Linoria CreateWindow fail: " .. tostring(w))
-                LinLib = nil
+                guiLastErr = tostring(win)
+                warn("[SpermaHub] Rayfield CreateWindow fail: " .. tostring(win))
+                RayLib = nil
             end
         end
     end
+
     if not RayLib and not LinLib then
-        warn("[SpermaHub] GUI: оба движка не загрузились — меню недоступно, смотри консоль")
-        task.delay(4, function() pcall(function() toastImpl("GUI", "GUI не запустился — меню недоступно в этой сессии") end) end)
+        warn("[SpermaHub] GUI: оба движка не завелись — " .. tostring(guiLastErr))
+        task.delay(3, function()
+            pcall(function() toastImpl("GUI", "Меню не создаётся: " .. tostring(guiLastErr):sub(1, 100)) end)
+        end)
     end
 end
 
