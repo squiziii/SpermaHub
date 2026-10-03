@@ -39,9 +39,19 @@ do
         end)
     end
     pcall(function()
-        game:GetService("ScriptContext").Error:Connect(function(msg)
-            warn("[SpermaHub][FATAL] " .. tostring(msg))
-            errToast(msg)
+        local lastMsg, lastAt, shown = nil, 0, 0
+        game:GetService("ScriptContext").Error:Connect(function(msg, stack)
+            -- реагируем ТОЛЬКО на ошибки нашего чанка (остальные — чужие скрипты)
+            local st = tostring(stack or "")
+            if not st:find("spermahub", 1, true) then return end
+            local m = tostring(msg)
+            -- дедупе: одно и то же сообщение показываем максимум раз в 60 сек; всего не больше 8 плашек
+            local now = tick()
+            if m == lastMsg and (now - lastAt) < 60 then return end
+            if shown >= 8 then return end
+            lastMsg, lastAt, shown = m, now, shown + 1
+            warn("[SpermaHub][FATAL] " .. m)
+            errToast(m)
         end)
     end)
 end
@@ -1093,7 +1103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev29 (HWID-привязка ключей + счётчик активаций + ↺сброс HWID в админке)")
+print("[SpermaHub] сборка: build18 rev30 (ловушка ошибок: только наш чанк, дедупе 60с — чужие скрипты больше не спамят)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
