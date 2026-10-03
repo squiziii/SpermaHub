@@ -1896,9 +1896,32 @@ function KeySystem:CreateAdminGUI()
     end)
 
     CloseBtn.MouseButton1Click:Connect(function()
+        -- × = просто ЗАКРЫТЬ админку: основной скрипт НЕ кипит, не вылезает.
+        -- Closed=true → вайтлер сверху уйдёт в return и отпустит getgenv().SpermaHubRunning
+        pcall(function()
+            KeySystem.State.Closed = true
+            ScreenGui:Destroy()
+            print("[SpermaHub] Админ-панель закрыта (основной скрипт НЕ загружен)")
+        end)
+    end)
+
+    --// rev32: ▶ явный запуск основного скрипта из админки (старое поведение ×)
+    local RunBtn = Instance.new("TextButton")
+    RunBtn.Size = UDim2.new(0, 96, 0, 30)
+    RunBtn.Position = UDim2.new(1, -245, 0, 5)
+    RunBtn.BackgroundColor3 = Color3.fromRGB(60, 160, 90)
+    RunBtn.Text = "▶ Скрипт"
+    RunBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    RunBtn.Font = Enum.Font.GothamBold
+    RunBtn.TextSize = 12
+    RunBtn.BorderSizePixel = 0
+    RunBtn.Parent = TitleBar
+    local RunCorner = Instance.new("UICorner")
+    RunCorner.CornerRadius = UDim.new(0, 6)
+    RunCorner.Parent = RunBtn
+    RunBtn.MouseButton1Click:Connect(function()
         ScreenGui:Destroy()
-        -- панель закрыта → ВОТ ТЕПЕРЬ грузим основной скрипт
-        KeySystem.State.AdminDone = true
+        KeySystem.State.AdminDone = true -- вайтлер сверху пойдёт и загрузит основной скрипт
     end)
 
     --// Init
@@ -1929,8 +1952,8 @@ end
 KeySystem:Init()
 
 --// Ожидание авторизации.
--- АДМИНКА НЕ ГРУЗИТ скрипт сразу: основной скрипт стартует,
--- когда админ закроет панель (×); «Закрыть скрипт» в админке убивает всё.
+-- АДМИНКА НЕ ГРУЗИТ скрипт за тебя: × и ⛔ просто закрывают панель,
+-- грузить скрипт из админки — отдельная зелёная ▶ в шапке.
 repeat task.wait(0.1) until
     (KeySystem.State.Authenticated and not KeySystem.State.IsAdmin)
     or KeySystem.State.AdminDone
@@ -1952,7 +1975,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev31 (АДМИНКА ХАРДКОР: бан, блэклист HWID, заметки, лимит входов, VIP без привязки, продление, смена типа, лог, мультиген, экспорт/импорт, вайп, смена пароля, 🟢-онлайн)")
+print("[SpermaHub] сборка: build18 rev32 (fix: × в админке больше НЕ вылезает с основным скриптом; явная ▶ для запуска из админки)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
