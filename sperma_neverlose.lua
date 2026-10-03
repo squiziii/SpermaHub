@@ -171,12 +171,23 @@ function KeySystem:GetKeyCount()
     return count
 end
 
---// Генерация нового ключа
-function KeySystem:GenerateKey(keyTypeIndex)
+--// Генерация нового ключа (customKey — своё слово, если задано)
+function KeySystem:GenerateKey(keyTypeIndex, customKey)
     local keyType = self.KeyTypes[keyTypeIndex]
     if not keyType then return nil end
 
-    local newKey = GenerateKeyString(16)
+    local newKey
+    if customKey and #customKey > 0 then
+        newKey = string.gsub(tostring(customKey), "%s+", "")
+        if #newKey < 3 then
+            return nil, nil, "tooshort"
+        end
+        if self.State.KeysDB[newKey] then
+            return nil, nil, "exists"
+        end
+    else
+        newKey = GenerateKeyString(16)
+    end
     local now = tick()
 
     self.State.KeysDB[newKey] = {
@@ -660,10 +671,36 @@ function KeySystem:CreateAdminGUI()
         end)
     end
 
+    --// Поле СВОЕГО ключа (если пусто — случайный)
+    local CustomKeyOutline = Instance.new("Frame")
+    CustomKeyOutline.Size = UDim2.new(1, -20, 0, 30)
+    CustomKeyOutline.Position = UDim2.new(0, 10, 0, 162)
+    CustomKeyOutline.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    CustomKeyOutline.BorderSizePixel = 0
+    CustomKeyOutline.Parent = LeftPanel
+
+    local CustomKeyCorner = Instance.new("UICorner")
+    CustomKeyCorner.CornerRadius = UDim.new(0, 6)
+    CustomKeyCorner.Parent = CustomKeyOutline
+
+    local CustomKeyBox = Instance.new("TextBox")
+    CustomKeyBox.Size = UDim2.new(1, -16, 1, 0)
+    CustomKeyBox.Position = UDim2.new(0, 8, 0, 0)
+    CustomKeyBox.BackgroundTransparency = 1
+    CustomKeyBox.Text = ""
+    CustomKeyBox.PlaceholderText = "свой ключ (необязательно)"
+    CustomKeyBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CustomKeyBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+    CustomKeyBox.Font = Enum.Font.GothamBold
+    CustomKeyBox.TextSize = 12
+    CustomKeyBox.TextXAlignment = Enum.TextXAlignment.Center
+    CustomKeyBox.ClearTextOnFocus = false
+    CustomKeyBox.Parent = CustomKeyOutline
+
     --// Generate Button
     local GenBtn = Instance.new("TextButton")
-    GenBtn.Size = UDim2.new(1, -20, 0, 35)
-    GenBtn.Position = UDim2.new(0, 10, 0, 180)
+    GenBtn.Size = UDim2.new(1, -20, 0, 32)
+    GenBtn.Position = UDim2.new(0, 10, 0, 198)
     GenBtn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
     GenBtn.Text = "СГЕНЕРИРОВАТЬ КЛЮЧ"
     GenBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
@@ -678,8 +715,8 @@ function KeySystem:CreateAdminGUI()
 
     --// Result Box
     local ResultBox = Instance.new("Frame")
-    ResultBox.Size = UDim2.new(1, -20, 0, 35)
-    ResultBox.Position = UDim2.new(0, 10, 0, 225)
+    ResultBox.Size = UDim2.new(1, -20, 0, 32)
+    ResultBox.Position = UDim2.new(0, 10, 0, 236)
     ResultBox.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     ResultBox.BorderSizePixel = 0
     ResultBox.Parent = LeftPanel
@@ -701,8 +738,8 @@ function KeySystem:CreateAdminGUI()
 
     --// Copy Button
     local CopyBtn = Instance.new("TextButton")
-    CopyBtn.Size = UDim2.new(1, -20, 0, 30)
-    CopyBtn.Position = UDim2.new(0, 10, 0, 265)
+    CopyBtn.Size = UDim2.new(1, -20, 0, 28)
+    CopyBtn.Position = UDim2.new(0, 10, 0, 272)
     CopyBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
     CopyBtn.Text = "📋 КОПИРОВАТЬ"
     CopyBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
@@ -896,12 +933,19 @@ function KeySystem:CreateAdminGUI()
 
     --// Generate logic
     GenBtn.MouseButton1Click:Connect(function()
-        local newKey, keyType = KeySystem:GenerateKey(selectedType)
+        local newKey, keyType, err = KeySystem:GenerateKey(selectedType, CustomKeyBox.Text)
         if newKey then
             ResultText.Text = newKey
             ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
+            CustomKeyBox.Text = ""
             CopyBtn.Visible = true
             RefreshKeysList()
+        elseif err == "exists" then
+            ResultText.Text = "⚠ такой ключ уже есть!"
+            ResultText.TextColor3 = Color3.fromRGB(255, 165, 0)
+        elseif err == "tooshort" then
+            ResultText.Text = "⚠ минимум 3 символа"
+            ResultText.TextColor3 = Color3.fromRGB(255, 165, 0)
         end
     end)
 
@@ -974,7 +1018,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev27 (админка: статистика сдвинута ниже кнопки Копировать, одной строкой)")
+print("[SpermaHub] сборка: build18 rev28 (админка: генерация ключей СВОИМ словом)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
