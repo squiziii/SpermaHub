@@ -77,7 +77,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 35
+local BUILD_REV = 36
 
 local KeySystem = {
     --// Конфигурация
@@ -2733,7 +2733,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev35 (+🔫 WEAPON: Rapid Fire ×N/instant reload/reload cancel, No Spread (режимы), No Recoil (направления+проценты), компенсация камеры)")
+print("[SpermaHub] сборка: build18 rev36 (⚡ ESP PERF: Heartbeat-троттл 20 Гц + кэши + куллиг по дистанции — лаг от ESP убит; 🔋 FPS Boost страница: тени/эффекты/Compatibility + fpscap + Render Quality)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -11790,18 +11790,79 @@ local function removeESP(plr)
     espObjects[plr] = nil
 end
 
+--// ============ ESP PERF (rev36) ============
+-- Лагалось потому, что на КАЖДОМ кадре дёргались ch:GetDescendants(),
+-- создавались строки/Color3/UDim2 и дважды isAlive/isTeammate (update + skeleton).
+-- Теперь: батч-тики на Heartbeat (по умолч. 20 Гц), кэш по игрокам,
+-- HP-текст меняем только при изменении, хитбокс сканируем редко,
+-- дальних игроков не рисуем вовсе.
+local espTickCache = {}    -- [plr] = {alive, team, ch, hum, hrp, head, dist, far}
+local espTickNo = 0
+local HITBOX_RESCAN_EVERY = 30 -- тиков (на 20 Гц = раз в ~1.5 сек)
+
+local R15_SKEL = {
+    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},{"UpperTorso","RightUpperArm"},
+    {"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+    {"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},{"LowerTorso","RightUpperLeg"},
+    {"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+    {"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+}
+local R6_SKEL = {
+    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
+    {"Torso","Left Leg"},{"Torso","Right Leg"},
+}
+
+local function espBuildCache(cam)
+    local camPos = cam.CFrame.Position
+    for plr in pairs(espObjects) do
+        local c = espTickCache[plr]
+        if not c then
+            c = {}
+            espTickCache[plr] = c
+        end
+        local ch = plr.Character
+        if ch then
+            local hum = ch:FindFirstChildOfClass("Humanoid")
+            local hrp = ch:FindFirstChild("HumanoidRootPart")
+            c.ch, c.hum, c.hrp = ch, hum, hrp
+            c.head = ch:FindFirstChild("Head")
+            c.alive = (hum ~= nil and hum.Health > 0 and hrp ~= nil)
+            c.team = isTeammate(plr)
+            if hrp then
+                c.dist = (hrp.Position - camPos).Magnitude
+            else
+                c.dist = math.huge
+            end
+        else
+            c.ch, c.hum, c.hrp, c.head = nil, nil, nil, nil
+            c.alive = false
+            c.team = false
+            c.dist = math.huge
+        end
+        c.far = c.dist > (S.espMaxDistance or 3000)
+    end
+end
+
+local function espHideAll(data, hideBox)
+    if data.highlight and data.highlight.Adornee then data.highlight.Adornee = nil end
+    if data.billboard and data.billboard.Adornee then data.billboard.Adornee = nil end
+    if hideBox and data.boxLines then
+        for _, line in ipairs(data.boxLines) do line.Visible = false end
+    end
+end
+
 local function updateESP()
     local cam = workspace.CurrentCamera
     for plr, data in pairs(espObjects) do
-        local ch = plr.Character
-        if ch and isAlive(plr) and not isTeammate(plr) then
-            local head = ch:FindFirstChild("Head")
-            local hum = ch:FindFirstChildOfClass("Humanoid")
-            local hrp = ch:FindFirstChild("HumanoidRootPart")
+        local c = espTickCache[plr]
+        if c and c.alive and not c.team and not c.far then
+            local head, hum, hrp = c.head, c.hum, c.hrp
 
             if data.highlight then
                 local st = CHAM_STYLES[S.chamStyle] or CHAM_STYLES.Purple
-                data.highlight.Adornee = ch
+                data.highlight.Adornee = c.ch
                 data.highlight.FillColor = st.fill
                 data.highlight.OutlineColor = st.outline
                 data.highlight.Enabled = S.espChams
@@ -11810,40 +11871,47 @@ local function updateESP()
                 data.billboard.Enabled = S.espNames
                 if head then data.billboard.Adornee = head end
             end
-            if data.nameLabel then data.nameLabel.Text = plr.Name end
+
+            -- HP: пересчёт строки и цвета ТОЛЬКО при изменении (нет спама GC)
             if data.hpLabel and hum then
-                local hp = math.floor(hum.Health)
-                data.hpLabel.Text = hp .. " HP"
-                local ratio = hum.Health / hum.MaxHealth
-                data.hpLabel.TextColor3 = Color3.fromRGB(
-                    math.floor(255 * (1 - ratio)),
-                    math.floor(255 * ratio),
-                    80
-                )
+                local hp = math.floor(hum.Health + 0.5)
+                if data.lastHp ~= hp then
+                    data.lastHp = hp
+                    data.hpLabel.Text = hp .. " HP"
+                    local ratio = (hum.MaxHealth > 0) and (hum.Health / hum.MaxHealth) or 1
+                    data.hpLabel.TextColor3 = Color3.fromRGB(
+                        math.floor(255 * (1 - ratio)),
+                        math.floor(255 * ratio),
+                        80
+                    )
+                end
             end
 
+            -- hitbox-детектор: редкий скан, в основном рисуем кэш
             if data.hitboxLabel and hrp then
-                local totalSize = 0
-                local count = 0
-                for _, part in ipairs(ch:GetDescendants()) do
-                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                        totalSize = totalSize + part.Size.X
-                        count = count + 1
+                if (espTickNo % HITBOX_RESCAN_EVERY) == 0 or data.hitAvg == nil then
+                    local totalSize, count = 0, 0
+                    for _, part in ipairs(c.ch:GetChildren()) do
+                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                            totalSize = totalSize + part.Size.X
+                            count = count + 1
+                        end
                     end
+                    data.hitAvg = (count > 0) and (totalSize / count) or nil
                 end
-                if count > 0 then
-                    local avgSize = totalSize / count
-                    if avgSize > 2.5 then
-                        data.hitboxLabel.Text = string.format("Hitbox: %.1f ⚠", avgSize)
-                        data.hitboxLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-                    else
-                        data.hitboxLabel.Text = string.format("Hitbox: %.1f", avgSize)
-                        data.hitboxLabel.TextColor3 = Color3.fromRGB(255, 180, 255)
+                if data.hitAvg then
+                    local avgSize = data.hitAvg
+                    local big = avgSize > 2.5
+                    local txt = big and string.format("Hitbox: %.1f ⚠", avgSize) or string.format("Hitbox: %.1f", avgSize)
+                    if data.lastHitTxt ~= txt then
+                        data.lastHitTxt = txt
+                        data.hitboxLabel.Text = txt
+                        data.hitboxLabel.TextColor3 = big and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(255, 180, 255)
                     end
                 end
             end
 
-            if hrp and data.boxLines and #data.boxLines >= 4 then
+            if hrp and data.boxLines then
                 local headPos = head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0))
                 local footPos = hrp.Position - Vector3.new(0, 3, 0)
                 local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
@@ -11853,36 +11921,32 @@ local function updateESP()
                     local width = height * 0.55
                     local x = topV.X - width / 2
                     local y = topV.Y
-                    data.boxLines[1].Size = UDim2.new(0, width, 0, 1)
-                    data.boxLines[1].Position = UDim2.new(0, x, 0, y)
-                    data.boxLines[1].Visible = true
-                    data.boxLines[2].Size = UDim2.new(0, width, 0, 1)
-                    data.boxLines[2].Position = UDim2.new(0, x, 0, y + height)
-                    data.boxLines[2].Visible = true
-                    data.boxLines[3].Size = UDim2.new(0, 1, 0, height)
-                    data.boxLines[3].Position = UDim2.new(0, x, 0, y)
-                    data.boxLines[3].Visible = true
-                    data.boxLines[4].Size = UDim2.new(0, 1, 0, height)
-                    data.boxLines[4].Position = UDim2.new(0, x + width, 0, y)
-                    data.boxLines[4].Visible = true
+                    local b = data.boxLines
+                    b[1].Size = UDim2.new(0, width, 0, 1)
+                    b[1].Position = UDim2.new(0, x, 0, y)
+                    b[2].Size = UDim2.new(0, width, 0, 1)
+                    b[2].Position = UDim2.new(0, x, 0, y + height)
+                    b[3].Size = UDim2.new(0, 1, 0, height)
+                    b[3].Position = UDim2.new(0, x, 0, y)
+                    b[4].Size = UDim2.new(0, 1, 0, height)
+                    b[4].Position = UDim2.new(0, x + width, 0, y)
+                    if not data.boxVisible then
+                        data.boxVisible = true
+                        for i = 1, 4 do b[i].Visible = true end
+                    end
                 else
-                    for _, line in ipairs(data.boxLines) do
-                        line.Visible = false
+                    if data.boxVisible ~= false then
+                        data.boxVisible = false
+                        for _, line in ipairs(data.boxLines) do line.Visible = false end
                     end
                 end
             end
         else
-            if data.highlight then data.highlight.Adornee = nil end
-            if data.billboard then data.billboard.Adornee = nil end
-            if data.boxLines then
-                for _, line in ipairs(data.boxLines) do
-                    line.Visible = false
-                end
-            end
+            espHideAll(data, data.boxVisible ~= false)
+            data.boxVisible = false
         end
     end
 end
-
 local function drawSkeleton()
     if not S.espSkeleton then
         for _, frames in pairs(skeletonFrames) do
@@ -11894,29 +11958,13 @@ local function drawSkeleton()
     end
     local cam = workspace.CurrentCamera
     for plr, data in pairs(espObjects) do
-        local ch = plr.Character
-        if ch and isAlive(plr) and not isTeammate(plr) then
+        local c = espTickCache[plr]
+        if c and c.alive and not c.team and not c.far and c.ch then
             local parts = {}
-            for _, p in ipairs(ch:GetChildren()) do
-                if p:IsA("BasePart") then parts[p.Name] = p end
+            for _, pp in ipairs(c.ch:GetChildren()) do
+                if pp:IsA("BasePart") then parts[pp.Name] = pp end
             end
-            local connections
-            if parts["UpperTorso"] then
-                connections = {
-                    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
-                    {"UpperTorso","LeftUpperArm"},{"UpperTorso","RightUpperArm"},
-                    {"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
-                    {"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
-                    {"LowerTorso","LeftUpperLeg"},{"LowerTorso","RightUpperLeg"},
-                    {"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
-                    {"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
-                }
-            else
-                connections = {
-                    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
-                    {"Torso","Left Leg"},{"Torso","Right Leg"},
-                }
-            end
+            local connections = parts["UpperTorso"] and R15_SKEL or R6_SKEL
             if not skeletonFrames[plr] then skeletonFrames[plr] = {} end
             local frames = skeletonFrames[plr]
             for i, conn in ipairs(connections) do
@@ -11937,26 +11985,30 @@ local function drawSkeleton()
                         local f = frames[i]
                         local dx = v2.X - v1.X
                         local dy = v2.Y - v1.Y
-                        local length = math.sqrt(dx*dx + dy*dy)
-                        local angle = math.atan2(dy, dx)
-                        f.Size = UDim2.new(0, length, 0, 2)
+                        f.Size = UDim2.new(0, math.sqrt(dx*dx + dy*dy), 0, 2)
                         f.Position = UDim2.new(0, v1.X, 0, v1.Y)
-                        f.Rotation = math.deg(angle)
+                        f.Rotation = math.deg(math.atan2(dy, dx))
                         f.Visible = true
-                    else
-                        if frames[i] then frames[i].Visible = false end
+                    elseif frames[i] then
+                        frames[i].Visible = false
                     end
-                else
-                    if frames[i] then frames[i].Visible = false end
+                elseif frames[i] then
+                    frames[i].Visible = false
                 end
             end
             for i = #connections + 1, #frames do
                 frames[i].Visible = false
             end
+        else
+            local frames = skeletonFrames[plr]
+            if frames then
+                for _, f in ipairs(frames) do
+                    if f then f.Visible = false end
+                end
+            end
         end
     end
 end
-
 local function enableESP()
     S.esp = true
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -11975,8 +12027,18 @@ local function enableESP()
         skeletonFrames[plr] = nil
     end)
     dcc(S.espConn)
-    S.espConn = RunService.RenderStepped:Connect(function()
+    S.espAcc = 0
+    S.espConn = RunService.Heartbeat:Connect(function(dt)
         if not S.esp then return end
+        -- rev36: обновляем ESP с ограниченной частотой (было: лагало с каждого кадра)
+        local interval = S.espInterval or (1 / 20)
+        S.espAcc = S.espAcc + dt
+        if S.espAcc < interval then return end
+        S.espAcc = 0
+        espTickNo = espTickNo + 1
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        espBuildCache(cam)
         updateESP()
         drawSkeleton()
     end)
@@ -14821,6 +14883,15 @@ do
     end)
     addText(pEsp, "Детектор чужого хитбокса (⚠ если увеличен) идёт вместе с именами.")
 
+    local pPerf = addPanel(pg.col1, "⚡ ESP Perf (антило́г)")
+    addSlider(pPerf, "espperf.rate", "Частота обновления (FPS)", 5, 60, 20, 5, function(v)
+        S.espInterval = 1 / math.max(5, v)
+    end)
+    addSlider(pPerf, "espperf.maxdist", "Дальность ESP", 500, 5000, 3000, 100, function(v)
+        S.espMaxDistance = math.floor(v)
+    end)
+    addText(pPerf, "20 FPS выглядит гладко, а жрёт в 3 раза меньше. Хитскан идёт раз в ~1.5 сек, дальние игроки не рисуются вообще — оттуда и был лаг.")
+
     local pComp = addPanel(pg.col1, "Components")
     addToggle(pComp, "esp.chams", "Chams (неон)", true, function(state)
         S.espChams = state
@@ -15415,6 +15486,68 @@ end
 -- ==== Main (Configs + Info + Script) ====
 local miscPage
 do
+    -- ==== 🔋 Performance (FPS Boost) rev36 ====
+    do
+        local pgPerf = addPage("Miscellaneous", "🔋", "Performance")
+
+        local fpSaved = nil
+        local function applyFpsBoost()
+            pcall(function()
+                local l = game:GetService("Lighting")
+                fpSaved = {
+                    GSh = l.GlobalShadows,
+                    FogS = l.FogStart, FogE = l.FogEnd,
+                    Tech = l.Technology,
+                    fx = {},
+                }
+                for _, fx in ipairs(l:GetChildren()) do
+                    if fx:IsA("BloomEffect") or fx:IsA("BlurEffect") or fx:IsA("ColorCorrectionEffect")
+                        or fx:IsA("DepthOfFieldEffect") or fx:IsA("SunRaysEffect") then
+                        table.insert(fpSaved.fx, {fx = fx, en = fx.Enabled})
+                        fx.Enabled = false
+                    end
+                end
+                l.GlobalShadows = false
+                l.FogStart = 0
+                l.FogEnd = 9e9
+                pcall(function() l.Technology = Enum.Technology.Compatibility end)
+            end)
+            pcall(function()
+                if sethiddenproperty then
+                    local t = game:GetService("Terrain")
+                    pcall(sethiddenproperty, t, "Decoration", false)
+                end
+            end)
+        end
+        local function restoreFpsBoost()
+            if not fpSaved then return end
+            pcall(function()
+                local l = game:GetService("Lighting")
+                l.GlobalShadows = fpSaved.GSh
+                l.FogStart, l.FogEnd = fpSaved.FogS, fpSaved.FogE
+                l.Technology = fpSaved.Tech
+                for _, r in ipairs(fpSaved.fx or {}) do
+                    if r.fx and r.fx.Parent then r.fx.Enabled = r.en end
+                end
+            end)
+            fpSaved = nil
+        end
+
+        local pFb = addPanel(pgPerf.col1, "⚡ FPS Boost")
+        addToggle(pFb, "perf.boost", "FPS Boost (тени/эффекты ВЫКЛ)", false, function(state)
+            if state then applyFpsBoost() else restoreFpsBoost() end
+            toastImpl("Performance", state and "FPS Boost ВКЛ — заслонки сняты 🚀" or "FPS Boost ВЫКЛ")
+        end)
+        addSlider(pFb, "perf.fpscap", "FPS Cap", 30, 240, 120, 10, function(v)
+            if setfpscap then pcall(setfpscap, math.floor(v)) end
+        end)
+        addDropdown(pFb, "perf.quality", "Render Quality", {"Low", "Medium", "High"}, "High", function(v)
+            local q = ({Low = 1, Medium = 8, High = 21})[v] or 21
+            pcall(function() settings().Rendering.QualityLevel = q end)
+        end)
+        addText(pFb, "Boost глушит тени, туман, bloom/sunrays/DoF/блур и текстурки-тратуар (оформление терайна), рендер переводит в Compatibility. Помимо этого — включи в Visuals → ⚡ ESP Perf частоту ниже: лаг уходил именно оттуда. FPS Cap срабатывает, только если executor держит setfpscap.")
+    end
+
     miscPage = addPage("Miscellaneous", "⚙", "Main")
 
     local pCfg = addPanel(miscPage.col1, "Configs")
