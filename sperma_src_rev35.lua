@@ -1,4 +1,13 @@
 -- синглтон: не даём запустить вторую копию (частая причина «старого худа» и пустых окон)
+if getgenv and getgenv().SpermaHubRevoked then
+    warn("[SpermaHub] ⛔ лицензия на этом устройстве отозвана в этой сессии — перезапуск запрещён")
+    pcall(function()
+        local lp = game:GetService("Players").LocalPlayer
+        if lp then lp:Kick("SpermaHub: лицензия отозвана администратором") end
+    end)
+    return
+end
+
 if getgenv and getgenv().SpermaHubRunning == true then
     warn("[SpermaHub] УЖЕ ЗАПУЩЕН — дубликат скрипта проигнорирован (перезайди в игру, если что-то не отображается)")
     return
@@ -83,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 47
+local BUILD_REV = 48
 
 local KeySystem = {
     --// Конфигурация
@@ -102,6 +111,7 @@ local KeySystem = {
             Enabled = true,
             Url = "https://sperma-key-server.vercel.app",
             AppSecret = "SineeNeboKefir13Krokodil66LetniyDen777", -- клиентская половина подписи (sig2); серверные секреты НЕ тут
+            HeartbeatSecs = 120, -- каждые 2 минуты перепроверяем ключ на сервере (бан/удаление → кик)
         },
     },
 
@@ -478,6 +488,69 @@ function KeySystem:ServerAuth(key)
     local minRevServ = tonumber(data.minRev) or 0
     if minRevServ > BUILD_REV then return "hardfail", "update_required" end
     return true, data
+end
+
+--// ❌ Серверный «терминал»: лицензия отозвана в живой сессии (бан/удаление/истёк)
+function KeySystem:ServerKick(reasonCode)
+    local msgs = {
+        banned = "⛔ ВАШ КЛЮЧ ЗАБАНЕН АДМИНИСТРАТОРОМ",
+        no_key = "⛔ ВАШ КЛЮЧ УДАЛЁН С СЕРВЕРА",
+        expired = "⏰ СРОК ДЕЙСТВИЯ КОНЧИЛСЯ",
+        hwid_mismatch = "⛔ КЛЮЧ ПРИВЯЗАН К ДРУГОМУ УСТРОЙСТВУ",
+        update_required = "🔄 ОБНОВИ СКРИПТ — сборка устарела",
+        activation_limit = "✋ ЛИМИТ АКТИВАЦИЙ ИСЧЕРПАН",
+    }
+    local text = msgs[reasonCode] or ("⛔ Лицензия отозвана: " .. tostring(reasonCode))
+    warn("[SpermaHub] ❌ серверный кик: " .. tostring(reasonCode))
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "SpermaHub", Text = text, Duration = 10})
+    end)
+    pcall(function()
+        local gui = game:GetService("CoreGui")
+        for _, ch in ipairs(gui:GetChildren()) do
+            if tostring(ch.Name):find("Sperma") then pcall(function() ch:Destroy() end) end
+        end
+    end)
+    if getgenv then
+        getgenv().SpermaHubRevoked = true
+    end
+    task.wait(1.2)
+    -- Hard-кик (срабатывает на большинстве executor'ов)
+    pcall(function()
+        local lp = game:GetService("Players").LocalPlayer
+        if lp then lp:Kick("SpermaHub: " .. tostring(reasonCode or "license revoked")) end
+    end)
+end
+
+--// 💓 Пульс: каждые HeartbeatSecs стукаем /api/check (без накрутки активаций)
+function KeySystem:StartServerHeartbeat(key)
+    task.spawn(function()
+        local secs = (self.Config.Server and self.Config.Server.HeartbeatSecs) or 120
+        while task.wait(secs) do
+            if getgenv and getgenv().SpermaHubRevoked then break end
+            local srv = self.Config.Server
+            if not (srv and srv.Enabled) then break end
+            local myHwid = GetHWID()
+            local url = string.format("%s/api/check?key=%s&hwid=%s&rev=%s",
+                srv.Url,
+                HttpService:UrlEncode(tostring(key)),
+                HttpService:UrlEncode(tostring(myHwid)),
+                tostring(BUILD_REV))
+            local ok, raw = pcall(function() return game:HttpGet(url) end)
+            if ok and type(raw) == "string" then
+                local okJ, d = pcall(function() return HttpService:JSONDecode(raw) end)
+                if okJ and type(d) == "table" then
+                    if d.ok == true then
+                        -- жив: лицензия на месте
+                    else
+                        self:ServerKick(tostring(d.err or "revoked"))
+                        break
+                    end
+                end
+            end
+            -- сбой сети — молчим и ждём следующий тик (кикаем только по осознанному отказу сервера)
+        end
+    end)
 end
 
 --// Проверка ключа
@@ -1020,6 +1093,11 @@ function KeySystem:CreateUserGUI()
                     wl.TextXAlignment = Enum.TextXAlignment.Right
                     wl.Parent = wm
                 end)
+
+                -- 💓 Серверный пульс (только для серверных ключей)
+                if keyType == "server" then
+                    pcall(function() KeySystem:StartServerHeartbeat(key) end)
+                end
 
                 -- Запуск основного скрипта (если оформлен как функция)
                 if _G.SpermaHubMain then
