@@ -1,8 +1,18 @@
---// SPERMAHUB SAFE LOADER (rev39)
---// обф → pcall, сбой → чистый исходник. Юзер никогда не упрётся.
+--// SPERMAHUB SAFE LOADER (rev40)
+--// 1) полифиллы для AntiLua (gcinfo и др. могут отсутствовать на executor'е)
+--// 2) обф → pcall, сбой → чистый исходник. Юзер никогда не упрётся.
 local BRANCH = "https://raw.githubusercontent.com/squiziii/SpermaHub/arena/01a0b8ab-spermahub/"
 local OBF_FILE   = "sperma_obf_build.lua"
 local CLEAN_FILE = "sperma_src_rev35.lua"
+
+-- == POLYFILL ZONE (до запуска обфа!) ==
+local G = (getgenv and getgenv()) or _G or getfenv(0)
+if G.gcinfo == nil then
+    G.gcinfo = function() return math.max(1, math.floor(collectgarbage("count"))) end
+    warn("[SpermaHub] polyfill: gcinfo установлен (на executor'е отсутствовал)")
+end
+if G.syn == nil then G.syn = {} end
+if G.getinfo == nil and G.debug and G.debug.info then G.getinfo = G.debug.info end
 
 local function get(name)
     for i = 1, 3 do
@@ -46,7 +56,7 @@ task.spawn(function()
         runClean("обф не скомпилировался: " .. tostring(cerr))
         return
     end
-    local okRun, errRun = pcall(f)
+    local okRun, errRun = xpcall(f, function(e) return tostring(e) .. " | " .. tostring(debug and debug.traceback and debug.traceback("", 2) or "") end)
     if not okRun then
         runClean("обф упал в рантайме: " .. tostring(errRun))
         return
