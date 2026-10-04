@@ -83,7 +83,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 45
+local BUILD_REV = 46
 
 local KeySystem = {
     --// Конфигурация
@@ -1362,6 +1362,204 @@ function KeySystem:CreateAdminGUI()
     local CopyCorner = Instance.new("UICorner")
     CopyCorner.CornerRadius = UDim.new(0, 6)
     CopyCorner.Parent = CopyBtn
+
+    --// ============================================================
+    --// 🌐 СЕРВЕРНЫЙ ГЕНЕРАТОР КЛЮЧЕЙ (Vercel) — rev46
+    --// ============================================================
+    local SrvGenTitle = Instance.new("TextLabel")
+    SrvGenTitle.Size = UDim2.new(1, -20, 0, 20)
+    SrvGenTitle.Position = UDim2.new(0, 10, 0, 320)
+    SrvGenTitle.BackgroundTransparency = 1
+    SrvGenTitle.Text = "🌐 СЕРВЕРНЫЙ ГЕНЕРАТОР (Vercel)"
+    SrvGenTitle.TextColor3 = Color3.fromRGB(100, 200, 255)
+    SrvGenTitle.Font = Enum.Font.GothamBold
+    SrvGenTitle.TextSize = 13
+    SrvGenTitle.TextXAlignment = Enum.TextXAlignment.Left
+    SrvGenTitle.Parent = LeftPanel
+
+    local ADMSEC_FILE = "sperma_admsec.txt"
+    local function makeInput(yPos, placeholder, w)
+        local F = Instance.new("Frame")
+        F.Size = UDim2.new(w or 1, -20, 0, 24)
+        F.Position = UDim2.new(0, 10, 0, yPos)
+        F.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+        F.BorderSizePixel = 0
+        F.Parent = LeftPanel
+        local FC = Instance.new("UICorner")
+        FC.CornerRadius = UDim.new(0, 6)
+        FC.Parent = F
+        local B = Instance.new("TextBox")
+        B.Size = UDim2.new(1, -16, 1, 0)
+        B.Position = UDim2.new(0, 8, 0, 0)
+        B.BackgroundTransparency = 1
+        B.Text = ""
+        B.PlaceholderText = placeholder
+        B.TextColor3 = Color3.fromRGB(255, 255, 255)
+        B.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+        B.Font = Enum.Font.GothamSemibold
+        B.TextSize = 11
+        B.TextXAlignment = Enum.TextXAlignment.Left
+        B.ClearTextOnFocus = false
+        B.Parent = F
+        return B
+    end
+
+    --// ADMIN_SECRET (вводится один раз, кэшируется в файл — НИКОГДА не зашит в код!)
+    local SecBox = makeInput(344, "ADMIN_SECRET (вводится один раз)")
+    pcall(function()
+        if readfile and type(readfile) == "function" then
+            local okR, saved = pcall(readfile, ADMSEC_FILE)
+            if okR and type(saved) == "string" and #saved > 4 then SecBox.Text = saved end
+        end
+    end)
+    SecBox.FocusLost:Connect(function(enterPressed)
+        local t = string.gsub(SecBox.Text or "", "%s+", "")
+        if #t > 4 then pcall(function() if writefile then writefile(ADMSEC_FILE, t) end end) end
+    end)
+
+    --// Выбор типа ключа (цикл)
+    local srvTypes = { "pending", "timed", "permanent" }
+    local srvTypeIdx = 1
+    local SrvTypeBtn = Instance.new("TextButton")
+    SrvTypeBtn.Size = UDim2.new(1, -20, 0, 22)
+    SrvTypeBtn.Position = UDim2.new(0, 10, 0, 372)
+    SrvTypeBtn.BackgroundColor3 = Color3.fromRGB(100, 149, 237)
+    SrvTypeBtn.Text = "ТИП: PENDING (⏳ с 1-й активации) — цикл"
+    SrvTypeBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    SrvTypeBtn.Font = Enum.Font.GothamSemibold
+    SrvTypeBtn.TextSize = 10
+    SrvTypeBtn.BorderSizePixel = 0
+    SrvTypeBtn.Parent = LeftPanel
+    local SrvTypeCorner = Instance.new("UICorner")
+    SrvTypeCorner.CornerRadius = UDim.new(0, 5)
+    SrvTypeCorner.Parent = SrvTypeBtn
+    SrvTypeBtn.MouseButton1Click:Connect(function()
+        srvTypeIdx = (srvTypeIdx % #srvTypes) + 1
+        local t = srvTypes[srvTypeIdx]
+        local label = (t == "pending") and "PENDING (⏳ с 1-й активации)" or (t == "timed") and "TIMED (⏰ отсчёт сразу)" or "PERMANENT (♾️ вечный)"
+        SrvTypeBtn.Text = "ТИП: " .. label .. " — цикл"
+    end)
+
+    local DaysBox  = makeInput(398, "дней (по умолч. 30)")
+    local CountBox = makeInput(426, "сколько ключей (по умолч. 1, макс. 50)")
+    local NoteBox  = makeInput(454, "пометка (необязательно)")
+
+    --// Кнопка генерации
+    local SrvGenBtn = Instance.new("TextButton")
+    SrvGenBtn.Size = UDim2.new(1, -20, 0, 28)
+    SrvGenBtn.Position = UDim2.new(0, 10, 0, 482)
+    SrvGenBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
+    SrvGenBtn.Text = "🌐 СГЕНЕРИТЬ С СЕРВЕРА"
+    SrvGenBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    SrvGenBtn.Font = Enum.Font.GothamBold
+    SrvGenBtn.TextSize = 12
+    SrvGenBtn.BorderSizePixel = 0
+    SrvGenBtn.Parent = LeftPanel
+    local SrvGenCorner = Instance.new("UICorner")
+    SrvGenCorner.CornerRadius = UDim.new(0, 6)
+    SrvGenCorner.Parent = SrvGenBtn
+
+    --// Результат (многострочный)
+    local SrvResult = Instance.new("TextLabel")
+    SrvResult.Size = UDim2.new(1, -20, 0, 56)
+    SrvResult.Position = UDim2.new(0, 10, 0, 514)
+    SrvResult.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    SrvResult.BorderSizePixel = 0
+    SrvResult.Text = "…"
+    SrvResult.TextColor3 = Color3.fromRGB(150, 150, 170)
+    SrvResult.Font = Enum.Font.GothamSemibold
+    SrvResult.TextSize = 10
+    SrvResult.TextWrapped = true
+    SrvResult.TextYAlignment = Enum.TextYAlignment.Top
+    SrvResult.ClipsDescendants = true
+    SrvResult.Parent = LeftPanel
+    local SrvResCorner = Instance.new("UICorner")
+    SrvResCorner.CornerRadius = UDim.new(0, 6)
+    SrvResCorner.Parent = SrvResult
+    local SrvResPad = Instance.new("UIPadding")
+    SrvResPad.PaddingTop = UDim.new(0, 4)
+    SrvResPad.PaddingLeft = UDim.new(0, 6)
+    SrvResPad.Parent = SrvResult
+
+    --// Копировать серверные ключи
+    local lastSrvKeys = {}
+    local SrvCopyBtn = Instance.new("TextButton")
+    SrvCopyBtn.Size = UDim2.new(1, -20, 0, 24)
+    SrvCopyBtn.Position = UDim2.new(0, 10, 0, 576)
+    SrvCopyBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+    SrvCopyBtn.Text = "📋 КОПИРОВАТЬ КЛЮЧИ"
+    SrvCopyBtn.TextColor3 = Color3.fromRGB(20, 20, 30)
+    SrvCopyBtn.Font = Enum.Font.GothamBold
+    SrvCopyBtn.TextSize = 11
+    SrvCopyBtn.BorderSizePixel = 0
+    SrvCopyBtn.Visible = false
+    SrvCopyBtn.Parent = LeftPanel
+    local SrvCopyCorner = Instance.new("UICorner")
+    SrvCopyCorner.CornerRadius = UDim.new(0, 6)
+    SrvCopyCorner.Parent = SrvCopyBtn
+    SrvCopyBtn.MouseButton1Click:Connect(function()
+        if #lastSrvKeys == 0 then return end
+        local all = table.concat(lastSrvKeys, "\n")
+        local done = false
+        pcall(function() if setclipboard then setclipboard(all) done = true end end)
+        pcall(function() if (not done) and toclipboard then toclipboard(all) done = true end end)
+        pcall(function() if writefile then writefile("sperma_server_keys_last.txt", all) end end)
+        local prev = SrvCopyBtn.Text
+        SrvCopyBtn.Text = done and "✅ В БУФЕРЕ!" or "💾 СОХРАНЕНО В ФАЙЛ"
+        task.delay(1.5, function() if SrvCopyBtn.Parent then SrvCopyBtn.Text = prev end end)
+    end)
+
+    SrvGenBtn.MouseButton1Click:Connect(function()
+        local secret = string.gsub(SecBox.Text or "", "%s+", "")
+        if #secret <= 4 then
+            SrvResult.Text = "⚠️ Введи ADMIN_SECRET (из Vercel) — один раз, сохранится сам"
+            SrvResult.TextColor3 = Color3.fromRGB(255, 120, 120)
+            return
+        end
+        local days  = tonumber(DaysBox.Text)  or 30
+        local count = tonumber(CountBox.Text) or 1
+        local noteStr = string.gsub(NoteBox.Text or "", "%s+", "")
+        local srv = KeySystem.Config.Server
+        if not (srv and srv.Enabled) then
+            SrvResult.Text = "⚠️ Config.Server выключен"
+            SrvResult.TextColor3 = Color3.fromRGB(255, 120, 120)
+            return
+        end
+        SrvGenBtn.Text = "⏳ ГЕНЕРИРУЮ..."
+        SrvResult.TextColor3 = Color3.fromRGB(150, 150, 170)
+        SrvResult.Text = "запрашиваю сервер…"
+        task.spawn(function()
+            local url = string.format("%s/api/gen?secret=%s&type=%s&days=%s&count=%s%s",
+                srv.Url,
+                HttpService:UrlEncode(secret),
+                HttpService:UrlEncode(srvTypes[srvTypeIdx]),
+                tostring(math.floor(days)),
+                tostring(math.floor(count)),
+                (#noteStr > 0) and ("&note=" .. HttpService:UrlEncode(noteStr)) or "")
+            local ok, raw = pcall(function() return game:HttpGet(url) end)
+            local okJ, data = false, nil
+            if ok and type(raw) == "string" then
+                okJ, data = pcall(function() return HttpService:JSONDecode(raw) end)
+            end
+            task.defer(function() SrvGenBtn.Text = "🌐 СГЕНЕРИТЬ С СЕРВЕРА" end)
+            if okJ and type(data) == "table" and data.ok == true and type(data.keys) == "table" then
+                lastSrvKeys = data.keys
+                local joined = table.concat(lastSrvKeys, "\n")
+                SrvResult.Text = "✅ сгенерено: " .. tostring(#lastSrvKeys) .. " шт.\n" .. joined
+                SrvResult.TextColor3 = Color3.fromRGB(100, 255, 150)
+                SrvCopyBtn.Visible = true
+                KeySystem:Audit("SRVGEN " .. tostring(#lastSrvKeys) .. "x " .. srvTypes[srvTypeIdx] .. " " .. tostring(days) .. "d")
+            else
+                local msg = "сервер вернул ошибку"
+                if okJ and type(data) == "table" and data.err then
+                    if tostring(data.err) == "forbidden" then msg = "⛔ forbidden — ADMIN_SECRET не совпадает с Vercel!"
+                    else msg = "ошибка: " .. tostring(data.err) end
+                elseif not ok then msg = "🔌 нет связи с сервером" end
+                SrvResult.Text = "❌ " .. msg
+                SrvResult.TextColor3 = Color3.fromRGB(255, 120, 120)
+            end
+        end)
+    end)
 
     --// Stats
     local StatsLabel = Instance.new("TextLabel")
