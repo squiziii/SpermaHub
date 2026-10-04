@@ -83,7 +83,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 44
+local BUILD_REV = 45
 
 local KeySystem = {
     --// Конфигурация
@@ -97,6 +97,12 @@ local KeySystem = {
         ModerPassword = "mod2288",       -- «модер»-админка (только генерация/просмотр), переопределяется meta-файлом
         HeartbeatFile = "sperma_heartbeat.json", -- метки «сейчас в игре» (key → unixtime)
         Debug = false,
+        --// 🌐 СЕРВЕРНАЯ АВТОРИЗАЦИЯ (Vercel). Главная проверка ключа; оффлайн сервер → запасная локальная база.
+        Server = {
+            Enabled = true,
+            Url = "https://sperma-key-server.vercel.app",
+            AppSecret = "SineeNeboKefir13Krokodil66LetniyDen777", -- клиентская половина подписи (sig2); серверные секреты НЕ тут
+        },
     },
 
     --// Типы ключей
@@ -432,6 +438,44 @@ function KeySystem:GenerateKey(keyTypeIndex, customKey, opts)
     return newKey, keyType
 end
 
+--// FNV-1a 32bit — та же подпись, что на сервере (нужна для проверки sig2)
+local function fnv32(s)
+    local h = 2166136261
+    for i = 1, #s do
+        h = bit32.bxor(h, s:byte(i))
+        h = (h * 16777619) % 4294967296
+    end
+    return string.format("%08x", h)
+end
+
+--// 🌐 Серверная валидация ключа (Vercel)
+--  → true, data  (впускать) | "hardfail", reason (отказ ОКОНЧАТЕЛЬНЫЙ) | "offline" (→ запасная локальная проверка)
+function KeySystem:ServerAuth(key)
+    if not (self.Config.Server and self.Config.Server.Enabled) then return "offline" end
+    local myHwid = GetHWID()
+    local url = string.format("%s/api/auth?key=%s&hwid=%s&rev=%s",
+        self.Config.Server.Url,
+        HttpService:UrlEncode(tostring(key)),
+        HttpService:UrlEncode(tostring(myHwid)),
+        tostring(BUILD_REV))
+    local ok, raw = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(raw) ~= "string" then return "offline" end
+    local okJ, data = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not okJ or type(data) ~= "table" then return "offline" end
+    if data.ok ~= true then return "hardfail", tostring(data.err or "no_key") end
+    -- срок действия токена + подпись
+    local exp = tonumber(data.exp) or 0
+    if exp <= os.time() then return "hardfail", "expired_token" end
+    local payload = string.format("ok=1|key=%s|hwid=%s|exp=%s", tostring(key), tostring(myHwid), tostring(exp))
+    if tostring(data.sig2) ~= fnv32(payload .. "|" .. tostring(self.Config.Server.AppSecret)) then
+        return "hardfail", "bad_signature"
+    end
+    -- апдейт-гейт ПРЯМО С СЕРВЕРА (MIN_REV из env На Vercel убивает старые билды)
+    local minRevServ = tonumber(data.minRev) or 0
+    if minRevServ > BUILD_REV then return "hardfail", "update_required" end
+    return true, data
+end
+
 --// Проверка ключа
 function KeySystem:ValidateKey(key)
     key = string.gsub(tostring(key), "%s+", "") -- Чистим пробелы
@@ -474,6 +518,20 @@ function KeySystem:ValidateKey(key)
         ksNotify("Key System", "🔧 Технические работы — попробуйте позже!", 3)
         return false, "maint"
     end
+
+    --// 🌐 СЕРВЕРНАЯ ПРОВЕРКА (главная): решение сервера — финальное; оффлайн → локальная база ниже
+    local sok, sres = self:ServerAuth(key)
+    if sok == true then
+        self.State.Authenticated = true
+        self.State.CurrentKey = key
+        self:LogEvent(key, myHwid, true, "server")
+        ksPrint("Server auth OK: key accepted via Vercel")
+        return true, "server"
+    elseif sok == "hardfail" then
+        self:LogEvent(key, myHwid, false, "srv:" .. tostring(sres))
+        return false, "srv_" .. tostring(sres)
+    end
+    -- "offline" → падаем на локальную проверку ниже (сервер недоступен)
 
     --// Проверка в базе
     local keyData = self.State.KeysDB[key]
@@ -965,7 +1023,17 @@ function KeySystem:CreateUserGUI()
                 end
             end
         else
-            Status.Text = "✗ Неверный ключ!"
+            local srvMsg = {
+                srv_no_key = "✗ Ключ не найден в базе!",
+                srv_banned = "🚫 Ключ ЗАБАНЕН!",
+                srv_expired = "⏰ Ключ истёк!",
+                srv_hwid_mismatch = "⛔ Ключ привязан к другому устройству!",
+                srv_activation_limit = "✋ Лимит активаций исчерпан!",
+                srv_update_required = "🔄 ОБНОВИ СКРИПТ!",
+                srv_bad_signature = "🛡 Сервер ответил с битой подписью!",
+                srv_expired_token = "⏰ Токен просрочен — повтори!",
+            }
+            Status.Text = srvMsg[tostring(keyType)] or "✗ Неверный ключ!"
             Status.TextColor3 = Color3.fromRGB(255, 80, 80)
             Input.Text = ""
             AttemptsLabel.Text = "Попытки: " .. KeySystem.State.Attempts .. "/" .. KeySystem.Config.MaxAttempts
