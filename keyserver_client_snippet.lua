@@ -15,10 +15,14 @@ local HttpService = game:GetService("HttpService")
 
 --// FNV-1a 32bit (та же самая функция, что на сервере)
 local function fnv32(s)
+    -- FIX rev47: h*16777619 напрямую превышает точность double (2^53) — солим.
+    -- 16777619 = 16777216 + 403 → перемножаем ПО ЧАСТЯМ (все промежуточные < 2^53).
+    -- Проверено: 1-в-1 совпадает с JS Math.imul на сервере.
+    local MOD = 4294967296
     local h = 2166136261
     for i = 1, #s do
         h = bit32.bxor(h, s:byte(i))
-        h = (h * 16777619) % 4294967296
+        h = ((h % 256) * 16777216 % MOD + (h * 403) % MOD) % MOD
     end
     return string.format("%08x", h)
 end
