@@ -51,6 +51,12 @@ do
             if shown >= 8 then return end
             lastMsg, lastAt, shown = m, now, shown + 1
             warn("[SpermaHub][FATAL] " .. m)
+            -- rev37: stacktrace печатаем — по чистому исходнику точно видно строку бага
+            pcall(function()
+                if st ~= "" then
+                    warn("[SpermaHub][TRACE] " .. st)
+                end
+            end)
             errToast(m)
         end)
     end)
@@ -77,7 +83,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 36
+local BUILD_REV = 37
 
 local KeySystem = {
     --// Конфигурация
@@ -2733,7 +2739,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev36 (⚡ ESP PERF: Heartbeat-троттл 20 Гц + кэши + куллиг по дистанции — лаг от ESP убит; 🔋 FPS Boost страница: тени/эффекты/Compatibility + fpscap + Render Quality)")
+print("[SpermaHub] сборка: build18 rev37 (diag: FATAL-трап печатает stacktrace [TRACE] строки — ловим nil<number точно, плюс все rev36-тормоза убраны)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
