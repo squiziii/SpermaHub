@@ -1,4 +1,4 @@
---// SPERMAHUB SAFE LOADER (rev40)
+--// SPERMAHUB SAFE LOADER (rev41)
 --// 1) полифиллы для AntiLua (gcinfo и др. могут отсутствовать на executor'е)
 --// 2) обф → pcall, сбой → чистый исходник. Юзер никогда не упрётся.
 local BRANCH = "https://raw.githubusercontent.com/squiziii/SpermaHub/arena/01a0b8ab-spermahub/"
@@ -26,7 +26,7 @@ local function get(name)
 end
 
 local function isObf(s) return #s > 1000000 end
-local function isClean(s) return #s > 500000 and s:sub(1, 3000):find("SPERMAHUB BUILD", 1, true) ~= nil end
+local function isClean(s) return #s > 500000 and s:sub(1, 3000):find("%[SpermaHub%]") ~= nil end
 
 local function runClean(reason)
     if reason then
