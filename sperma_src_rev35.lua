@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 48
+local BUILD_REV = 49
 
 local KeySystem = {
     --// Конфигурация
@@ -476,7 +476,13 @@ function KeySystem:ServerAuth(key)
     if not ok or type(raw) ~= "string" then return "offline" end
     local okJ, data = pcall(function() return HttpService:JSONDecode(raw) end)
     if not okJ or type(data) ~= "table" then return "offline" end
-    if data.ok ~= true then return "hardfail", tostring(data.err or "no_key") end
+    if data.ok ~= true then
+        local err = tostring(data.err or "no_key")
+        if err == "banned" and data.reason and #tostring(data.reason) > 0 then
+            return "hardfail", "banned_custom:" .. tostring(data.reason)
+        end
+        return "hardfail", err
+    end
     -- срок действия токена + подпись
     local exp = tonumber(data.exp) or 0
     if exp <= os.time() then return "hardfail", "expired_token" end
@@ -500,7 +506,8 @@ function KeySystem:ServerKick(reasonCode)
         update_required = "🔄 ОБНОВИ СКРИПТ — сборка устарела",
         activation_limit = "✋ ЛИМИТ АКТИВАЦИЙ ИСЧЕРПАН",
     }
-    local text = msgs[reasonCode] or ("⛔ Лицензия отозвана: " .. tostring(reasonCode))
+    local customBan = tostring(reasonCode):match("^banned_custom:(.+)")
+    local text = customBan and ("⛔ ВАШ КЛЮЧ ЗАБАНЕН: " .. customBan) or (msgs[reasonCode] or ("⛔ Лицензия отозвана: " .. tostring(reasonCode)))
     warn("[SpermaHub] ❌ серверный кик: " .. tostring(reasonCode))
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {Title = "SpermaHub", Text = text, Duration = 10})
@@ -543,7 +550,9 @@ function KeySystem:StartServerHeartbeat(key)
                     if d.ok == true then
                         -- жив: лицензия на месте
                     else
-                        self:ServerKick(tostring(d.err or "revoked"))
+                        local rc = tostring(d.err or "revoked")
+                        if rc == "banned" and d.reason and #tostring(d.reason) > 0 then rc = "banned_custom:" .. tostring(d.reason) end
+                        self:ServerKick(rc)
                         break
                     end
                 end
@@ -1115,7 +1124,11 @@ function KeySystem:CreateUserGUI()
                 srv_bad_signature = "🛡 Сервер ответил с битой подписью!",
                 srv_expired_token = "⏰ Токен просрочен — повтори!",
             }
-            Status.Text = srvMsg[tostring(keyType)] or "✗ Неверный ключ!"
+            do
+                local kt = tostring(keyType)
+                local customBan = kt:match("^srv_banned_custom:(.+)")
+                Status.Text = customBan and ("🚫 ЗАБАН: " .. customBan) or (srvMsg[kt] or "✗ Неверный ключ!")
+            end
             Status.TextColor3 = Color3.fromRGB(255, 80, 80)
             Input.Text = ""
             AttemptsLabel.Text = "Попытки: " .. KeySystem.State.Attempts .. "/" .. KeySystem.Config.MaxAttempts
