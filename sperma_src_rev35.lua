@@ -83,7 +83,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 37
+local BUILD_REV = 42
 
 local KeySystem = {
     --// Конфигурация
@@ -750,9 +750,12 @@ function KeySystem:CleanExpired()
     local now = tick()
     local removed = 0
     for key, data in pairs(self.State.KeysDB) do
-        if now > data.expires then
+        -- nil expires = pending/бессрочная запись → ВАЛИДНА (как в ValidateKey), не трогаем
+        if type(data) == "table" and data.expires ~= nil and now > data.expires then
             self.State.KeysDB[key] = nil
             removed = removed + 1
+        elseif type(data) ~= "table" then
+            -- legacy-записи старых билдов (строки/числа) — считаем бессрочными, не крешимся
         end
     end
     if removed > 0 then
