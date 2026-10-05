@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 50
+local BUILD_REV = 51
 
 local KeySystem = {
     --// Конфигурация
@@ -3279,10 +3279,9 @@ end
 -- ============ СОСТОЯНИЕ ============
 local S = {
     flying=false, noclip=false, esp=false, speed=50,
-    espBox=true, espSkeleton=true, espChams=true, espNames=true, chamStyle="Purple",
     targetEspOn=false, targetStyle="Pink", targetEspConn=nil,
     wmOn=true,
-    bv=nil, bg=nil, flyConn=nil, noclipConn=nil, espConn=nil,
+    bv=nil, bg=nil, flyConn=nil, noclipConn=nil,
     fps=60, ping=0,
     walkSpeed=16, walkSpeedOn=false, wsConn=nil,
     antiRagdoll=false, arConn=nil,
@@ -12043,23 +12042,14 @@ ESPGui.IgnoreGuiInset = true
 ESPGui.DisplayOrder = 50
 ESPGui.Parent = LP:WaitForChild("PlayerGui")
 
-local espObjects = {}
-local skeletonFrames = {}
-
--- неоновые стили подсветки (как на скриншотах)
-local CHAM_STYLES = {
-    Purple = {fill = Color3.fromRGB(170, 0, 255),  outline = Color3.fromRGB(225, 110, 255)},
-    Pink   = {fill = Color3.fromRGB(255, 0, 200),  outline = Color3.fromRGB(255, 120, 240)},
-    Red    = {fill = Color3.fromRGB(255, 40, 40),  outline = Color3.fromRGB(255, 150, 80)},
-    Green  = {fill = Color3.fromRGB(40, 255, 130), outline = Color3.fromRGB(190, 255, 190)},
-    Cyan   = {fill = Color3.fromRGB(0, 190, 255),  outline = Color3.fromRGB(150, 235, 255)},
-    Gold   = {fill = Color3.fromRGB(255, 190, 40), outline = Color3.fromRGB(255, 240, 160)},
-}
+-- rev51 FULL SKID: старый ESP (Chams / Skeleton / Gui-box / hitbox-метки) УДАЛЁН ЦЕЛИКОМ.
+-- Единственный ESP — Drawing-движок 1:1 со скрина (раздел ESP MAX ниже, GUI: Visuals > Players).
+-- Здесь остался только Target ESP (подсветка цели аимбота) — стили его пульсации:
 local TARGET_STYLES = {
-    Pink   = CHAM_STYLES.Pink,
-    Purple = CHAM_STYLES.Purple,
-    Red    = CHAM_STYLES.Red,
-    Gold   = CHAM_STYLES.Gold,
+    Pink   = {fill = Color3.fromRGB(255, 0, 200),  outline = Color3.fromRGB(255, 120, 240)},
+    Purple = {fill = Color3.fromRGB(170, 0, 255),  outline = Color3.fromRGB(225, 110, 255)},
+    Red    = {fill = Color3.fromRGB(255, 40, 40),  outline = Color3.fromRGB(255, 150, 80)},
+    Gold   = {fill = Color3.fromRGB(255, 190, 40), outline = Color3.fromRGB(255, 240, 160)},
 }
 
 local function isAlive(plr)
@@ -12068,363 +12058,6 @@ local function isAlive(plr)
     local hum = ch:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return false end
     return ch:FindFirstChild("HumanoidRootPart") ~= nil
-end
-
-local function createESP(plr)
-    if plr == LP or isTeammate(plr) then return end
-    if espObjects[plr] then return end
-    local data = {lines = {}, highlight = nil, billboard = nil, boxLines = {}}
-    espObjects[plr] = data
-
-    local ch = plr.Character
-    if ch then
-        local hl = Instance.new("Highlight")
-        hl.FillColor = Color3.fromRGB(170, 0, 255)
-        hl.OutlineColor = Color3.fromRGB(225, 110, 255)
-        hl.FillTransparency = 0.5
-        hl.OutlineTransparency = 0
-        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        hl.Adornee = ch
-        hl.Parent = ESPGui
-        data.highlight = hl
-    end
-
-    for i = 1, 4 do
-        local line = Instance.new("Frame")
-        line.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
-        line.BorderSizePixel = 0
-        line.ZIndex = 6
-        line.Visible = false
-        line.Parent = ESPGui
-        data.boxLines[i] = line
-    end
-
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "ESPName"
-    bb.Size = UDim2.new(0, 220, 0, 70)
-    bb.StudsOffset = Vector3.new(0, 3, 0)
-    bb.AlwaysOnTop = true
-    bb.Parent = ESPGui
-
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1, 0, 0, 20)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Text = plr.Name
-    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.TextSize = 14
-    nameLabel.Parent = bb
-
-    local hpLabel = Instance.new("TextLabel")
-    hpLabel.Size = UDim2.new(1, 0, 0, 16)
-    hpLabel.Position = UDim2.new(0, 0, 0, 20)
-    hpLabel.BackgroundTransparency = 1
-    hpLabel.Text = "100 HP"
-    hpLabel.TextColor3 = Color3.fromRGB(80, 255, 120)
-    hpLabel.TextStrokeTransparency = 0
-    hpLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    hpLabel.Font = Enum.Font.GothamBold
-    hpLabel.TextSize = 13
-    hpLabel.Parent = bb
-
-    local hitboxLabel = Instance.new("TextLabel")
-    hitboxLabel.Size = UDim2.new(1, 0, 0, 16)
-    hitboxLabel.Position = UDim2.new(0, 0, 0, 36)
-    hitboxLabel.BackgroundTransparency = 1
-    hitboxLabel.Text = "Hitbox: --"
-    hitboxLabel.TextColor3 = Color3.fromRGB(255, 180, 255)
-    hitboxLabel.TextStrokeTransparency = 0
-    hitboxLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    hitboxLabel.Font = Enum.Font.GothamBold
-    hitboxLabel.TextSize = 12
-    hitboxLabel.Parent = bb
-
-    data.billboard = bb
-    data.nameLabel = nameLabel
-    data.hpLabel = hpLabel
-    data.hitboxLabel = hitboxLabel
-end
-
-local function removeESP(plr)
-    local data = espObjects[plr]
-    if not data then return end
-    if data.highlight then data.highlight:Destroy() end
-    if data.billboard then data.billboard:Destroy() end
-    if data.boxLines then
-        for _, line in ipairs(data.boxLines) do
-            if line then line:Destroy() end
-        end
-    end
-    espObjects[plr] = nil
-end
-
---// ============ ESP PERF (rev36) ============
--- Лагалось потому, что на КАЖДОМ кадре дёргались ch:GetDescendants(),
--- создавались строки/Color3/UDim2 и дважды isAlive/isTeammate (update + skeleton).
--- Теперь: батч-тики на Heartbeat (по умолч. 20 Гц), кэш по игрокам,
--- HP-текст меняем только при изменении, хитбокс сканируем редко,
--- дальних игроков не рисуем вовсе.
-local espTickCache = {}    -- [plr] = {alive, team, ch, hum, hrp, head, dist, far}
-local espTickNo = 0
-local HITBOX_RESCAN_EVERY = 30 -- тиков (на 20 Гц = раз в ~1.5 сек)
-
-local R15_SKEL = {
-    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
-    {"UpperTorso","LeftUpperArm"},{"UpperTorso","RightUpperArm"},
-    {"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
-    {"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
-    {"LowerTorso","LeftUpperLeg"},{"LowerTorso","RightUpperLeg"},
-    {"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
-    {"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
-}
-local R6_SKEL = {
-    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
-    {"Torso","Left Leg"},{"Torso","Right Leg"},
-}
-
-local function espBuildCache(cam)
-    local camPos = cam.CFrame.Position
-    for plr in pairs(espObjects) do
-        local c = espTickCache[plr]
-        if not c then
-            c = {}
-            espTickCache[plr] = c
-        end
-        local ch = plr.Character
-        if ch then
-            local hum = ch:FindFirstChildOfClass("Humanoid")
-            local hrp = ch:FindFirstChild("HumanoidRootPart")
-            c.ch, c.hum, c.hrp = ch, hum, hrp
-            c.head = ch:FindFirstChild("Head")
-            c.alive = (hum ~= nil and hum.Health > 0 and hrp ~= nil)
-            c.team = isTeammate(plr)
-            if hrp then
-                c.dist = (hrp.Position - camPos).Magnitude
-            else
-                c.dist = math.huge
-            end
-        else
-            c.ch, c.hum, c.hrp, c.head = nil, nil, nil, nil
-            c.alive = false
-            c.team = false
-            c.dist = math.huge
-        end
-        c.far = c.dist > (S.espMaxDistance or 3000)
-    end
-end
-
-local function espHideAll(data, hideBox)
-    if data.highlight and data.highlight.Adornee then data.highlight.Adornee = nil end
-    if data.billboard and data.billboard.Adornee then data.billboard.Adornee = nil end
-    if hideBox and data.boxLines then
-        for _, line in ipairs(data.boxLines) do line.Visible = false end
-    end
-end
-
-local function updateESP()
-    local cam = workspace.CurrentCamera
-    for plr, data in pairs(espObjects) do
-        local c = espTickCache[plr]
-        if c and c.alive and not c.team and not c.far then
-            local head, hum, hrp = c.head, c.hum, c.hrp
-
-            if data.highlight then
-                local st = CHAM_STYLES[S.chamStyle] or CHAM_STYLES.Purple
-                data.highlight.Adornee = c.ch
-                data.highlight.FillColor = st.fill
-                data.highlight.OutlineColor = st.outline
-                data.highlight.Enabled = S.espChams
-            end
-            if data.billboard then
-                data.billboard.Enabled = S.espNames
-                if head then data.billboard.Adornee = head end
-            end
-
-            -- HP: пересчёт строки и цвета ТОЛЬКО при изменении (нет спама GC)
-            if data.hpLabel and hum then
-                local hp = math.floor(hum.Health + 0.5)
-                if data.lastHp ~= hp then
-                    data.lastHp = hp
-                    data.hpLabel.Text = hp .. " HP"
-                    local ratio = (hum.MaxHealth > 0) and (hum.Health / hum.MaxHealth) or 1
-                    data.hpLabel.TextColor3 = Color3.fromRGB(
-                        math.floor(255 * (1 - ratio)),
-                        math.floor(255 * ratio),
-                        80
-                    )
-                end
-            end
-
-            -- hitbox-детектор: редкий скан, в основном рисуем кэш
-            if data.hitboxLabel and hrp then
-                if (espTickNo % HITBOX_RESCAN_EVERY) == 0 or data.hitAvg == nil then
-                    local totalSize, count = 0, 0
-                    for _, part in ipairs(c.ch:GetChildren()) do
-                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                            totalSize = totalSize + part.Size.X
-                            count = count + 1
-                        end
-                    end
-                    data.hitAvg = (count > 0) and (totalSize / count) or nil
-                end
-                if data.hitAvg then
-                    local avgSize = data.hitAvg
-                    local big = avgSize > 2.5
-                    local txt = big and string.format("Hitbox: %.1f ⚠", avgSize) or string.format("Hitbox: %.1f", avgSize)
-                    if data.lastHitTxt ~= txt then
-                        data.lastHitTxt = txt
-                        data.hitboxLabel.Text = txt
-                        data.hitboxLabel.TextColor3 = big and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(255, 180, 255)
-                    end
-                end
-            end
-
-            if hrp and data.boxLines then
-                local headPos = head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0))
-                local footPos = hrp.Position - Vector3.new(0, 3, 0)
-                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
-                local botV, botOn = cam:WorldToViewportPoint(footPos)
-                if topOn and botOn and S.espBox then
-                    local height = math.abs(botV.Y - topV.Y)
-                    local width = height * 0.55
-                    local x = topV.X - width / 2
-                    local y = topV.Y
-                    local b = data.boxLines
-                    b[1].Size = UDim2.new(0, width, 0, 1)
-                    b[1].Position = UDim2.new(0, x, 0, y)
-                    b[2].Size = UDim2.new(0, width, 0, 1)
-                    b[2].Position = UDim2.new(0, x, 0, y + height)
-                    b[3].Size = UDim2.new(0, 1, 0, height)
-                    b[3].Position = UDim2.new(0, x, 0, y)
-                    b[4].Size = UDim2.new(0, 1, 0, height)
-                    b[4].Position = UDim2.new(0, x + width, 0, y)
-                    if not data.boxVisible then
-                        data.boxVisible = true
-                        for i = 1, 4 do b[i].Visible = true end
-                    end
-                else
-                    if data.boxVisible ~= false then
-                        data.boxVisible = false
-                        for _, line in ipairs(data.boxLines) do line.Visible = false end
-                    end
-                end
-            end
-        else
-            espHideAll(data, data.boxVisible ~= false)
-            data.boxVisible = false
-        end
-    end
-end
-local function drawSkeleton()
-    if not S.espSkeleton then
-        for _, frames in pairs(skeletonFrames) do
-            for _, f in ipairs(frames) do
-                if f then f.Visible = false end
-            end
-        end
-        return
-    end
-    local cam = workspace.CurrentCamera
-    for plr, data in pairs(espObjects) do
-        local c = espTickCache[plr]
-        if c and c.alive and not c.team and not c.far and c.ch then
-            local parts = {}
-            for _, pp in ipairs(c.ch:GetChildren()) do
-                if pp:IsA("BasePart") then parts[pp.Name] = pp end
-            end
-            local connections = parts["UpperTorso"] and R15_SKEL or R6_SKEL
-            if not skeletonFrames[plr] then skeletonFrames[plr] = {} end
-            local frames = skeletonFrames[plr]
-            for i, conn in ipairs(connections) do
-                local p1 = parts[conn[1]]
-                local p2 = parts[conn[2]]
-                if p1 and p2 then
-                    local v1, on1 = cam:WorldToViewportPoint(p1.Position)
-                    local v2, on2 = cam:WorldToViewportPoint(p2.Position)
-                    if on1 and on2 then
-                        if not frames[i] then
-                            local f = Instance.new("Frame")
-                            f.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
-                            f.BorderSizePixel = 0
-                            f.ZIndex = 5
-                            f.Parent = ESPGui
-                            frames[i] = f
-                        end
-                        local f = frames[i]
-                        local dx = v2.X - v1.X
-                        local dy = v2.Y - v1.Y
-                        f.Size = UDim2.new(0, math.sqrt(dx*dx + dy*dy), 0, 2)
-                        f.Position = UDim2.new(0, v1.X, 0, v1.Y)
-                        f.Rotation = math.deg(math.atan2(dy, dx))
-                        f.Visible = true
-                    elseif frames[i] then
-                        frames[i].Visible = false
-                    end
-                elseif frames[i] then
-                    frames[i].Visible = false
-                end
-            end
-            for i = #connections + 1, #frames do
-                frames[i].Visible = false
-            end
-        else
-            local frames = skeletonFrames[plr]
-            if frames then
-                for _, f in ipairs(frames) do
-                    if f then f.Visible = false end
-                end
-            end
-        end
-    end
-end
-local function enableESP()
-    S.esp = true
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then createESP(plr) end
-    end
-    Players.PlayerAdded:Connect(function(plr)
-        if S.esp and plr ~= LP then
-            plr.CharacterAdded:Connect(function()
-                task.wait(0.5)
-                if S.esp then removeESP(plr) createESP(plr) end
-            end)
-        end
-    end)
-    Players.PlayerRemoving:Connect(function(plr)
-        removeESP(plr)
-        skeletonFrames[plr] = nil
-    end)
-    dcc(S.espConn)
-    S.espAcc = 0
-    S.espConn = RunService.Heartbeat:Connect(function(dt)
-        if not S.esp then return end
-        -- rev36: обновляем ESP с ограниченной частотой (было: лагало с каждого кадра)
-        local interval = S.espInterval or (1 / 20)
-        S.espAcc = S.espAcc + dt
-        if S.espAcc < interval then return end
-        S.espAcc = 0
-        espTickNo = espTickNo + 1
-        local cam = workspace.CurrentCamera
-        if not cam then return end
-        espBuildCache(cam)
-        updateESP()
-        drawSkeleton()
-    end)
-end
-
-local function disableESP()
-    S.esp = false
-    if S.espConn then S.espConn:Disconnect() S.espConn = nil end
-    for plr, _ in pairs(espObjects) do removeESP(plr) end
-    espObjects = {}
-    for plr, frames in pairs(skeletonFrames) do
-        for _, f in ipairs(frames) do
-            if f then f:Destroy() end
-        end
-    end
-    skeletonFrames = {}
 end
 
 -- ============ TARGET ESP (подсветка текущей цели) ============
@@ -15019,7 +14652,7 @@ do
     end)
     addToggle(pMisc, "aimbot.teamcheck", "Team Check", false, function(state)
         S.teamCheck = state
-        if S.esp then disableESP() enableESP() end
+        -- ESP MAX читает S.teamCheck каждый тик и сам прячет свою команду
     end)
     addToggle(pMisc, "aimbot.visiblecheck", "Visible Check", false, function(state)
         S.visibleCheck = state
@@ -15243,60 +14876,11 @@ end
 -- ---------------- VISUALS ----------------
 addCategory("Visuals")
 
--- ==== Players (ESP) ====
-do
-    local pg = addPage("Visuals", "👤", "Players")
-
-    local pEsp = addPanel(pg.col1, "ESP")
-    addToggle(pEsp, "esp.enabled", "Enabled", false, function(state)
-        if state then enableESP() else disableESP() end
-    end)
-    addText(pEsp, "Детектор чужого хитбокса (⚠ если увеличен) идёт вместе с именами.")
-
-    local pPerf = addPanel(pg.col1, "⚡ ESP Perf (антило́г)")
-    addSlider(pPerf, "espperf.rate", "Частота обновления (FPS)", 5, 60, 20, 5, function(v)
-        S.espInterval = 1 / math.max(5, v)
-    end)
-    addSlider(pPerf, "espperf.maxdist", "Дальность ESP", 500, 5000, 3000, 100, function(v)
-        S.espMaxDistance = math.floor(v)
-    end)
-    addText(pPerf, "20 FPS выглядит гладко, а жрёт в 3 раза меньше. Хитскан идёт раз в ~1.5 сек, дальние игроки не рисуются вообще — оттуда и был лаг.")
-
-    local pComp = addPanel(pg.col1, "Components")
-    addToggle(pComp, "esp.chams", "Chams (неон)", true, function(state)
-        S.espChams = state
-    end)
-    addToggle(pComp, "esp.box", "Box", true, function(state)
-        S.espBox = state
-    end)
-    addToggle(pComp, "esp.skeleton", "Skeleton", true, function(state)
-        S.espSkeleton = state
-    end)
-    addToggle(pComp, "esp.names", "Name + HP", true, function(state)
-        S.espNames = state
-    end)
-
-    local pStyle = addPanel(pg.col2, "Chams Style")
-    addDropdown(pStyle, "esp.chamstyle", "Style", {"Purple", "Pink", "Red", "Green", "Cyan", "Gold"}, "Purple", function(v)
-        S.chamStyle = v
-    end)
-    addText(pStyle, "Неоновый глоу сквозь стены — как на скринах. Стиль применяется мгновенно. R6 и R15.")
-
-    local pTgt = addPanel(pg.col2, "Target ESP")
-    addToggle(pTgt, "esp.target", "Enabled", false, function(state)
-        if state then enableTargetESP() else disableTargetESP() end
-    end)
-    addDropdown(pTgt, "esp.targetstyle", "Color", {"Pink", "Purple", "Red", "Gold"}, "Pink", function(v)
-        S.targetStyle = v
-    end)
-    addText(pTgt, "Пульсирующая подсветка цели Aimbot / Silent Aim.")
-end
-
--- ============ ESP MAX («точ-в-точ» стиль со скрина) ============
+-- ============ ESP MAX — ЕДИНСТВЕННЫЙ ESP (FULL SKID 1:1 со скрина) ============
 -- чёрный тонкий бокс • НИК+HP над головой • колонка эффектов • трейс-линия
 local ESPMX = {
     running = false, frames = {}, conn = nil,
-    rate = 20, maxdist = 1200, tsize = 13,
+    rate = 20, maxdist = 3000, tsize = 13,
     origin = "Низ экрана", tracerColor = Color3.new(1, 1, 1),
     box = true, names = true, hp = true, effects = true, tracer = true, dist = false,
 }
@@ -15346,7 +14930,7 @@ local function espMaxCollectFr()
     local myChar = (LP and LP.Character) or nil
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
+        if plr ~= LP and not (S.teamCheck and isTeammate(plr)) then
             local mydist = math.huge
             local ch = plr.Character
             local root = ch and ch:FindFirstChild("HumanoidRootPart")
@@ -15513,45 +15097,51 @@ end
 Players.PlayerRemoving:Connect(function(plr) pcall(function() espMaxRm(plr) end) end)
 Players.PlayerAdded:Connect(function(plr) if ESPMX.running then pcall(function() espMaxMk(plr) end) end end)
 
--- ==== ESP MAX (точ-в-точ style pack) ====
+-- ==== Players (ESP) — FULL SKID 1:1 со скрина ====
 do
-    local pg = addPage("Visuals", "🎯", "ESP MAX")
+    local pg = addPage("Visuals", "👤", "Players")
 
-    local pMax = addPanel(pg.col1, "ESP MAX V2 (точ-в-точ)")
-    addToggle(pMax, "espmax.enabled", "Enabled", false, function(state)
+    local pEsp = addPanel(pg.col1, "ESP (1:1 skid)")
+    addToggle(pEsp, "esp.enabled", "Enabled", false, function(state)
+        S.esp = state
         if state then espMaxStart() else espMaxStop() end
     end)
-    addDropdown(pMax, "espmax.origin", "Трейс откуда", {"Низ экрана", "Верх экрана", "Центр"}, "Низ экрана", function(v)
-        ESPMX.origin = v
-    end)
-    addSlider(pMax, "espmax.maxdist", "Дальность", 100, 5000, 1200, 50, function(v)
+    addSlider(pEsp, "esp.maxdist", "Дальность", 100, 5000, 3000, 50, function(v)
         ESPMX.maxdist = math.floor(v)
     end)
-    addSlider(pMax, "espmax.rate", "Частота обновления (FPS)", 5, 60, 20, 5, function(v)
+    addSlider(pEsp, "esp.rate", "Частота обновления (FPS)", 5, 60, 20, 5, function(v)
         ESPMX.rate = math.floor(v)
     end)
-    addSlider(pMax, "espmax.tsize", "Размер текста", 10, 20, 13, 1, function(v)
+    addSlider(pEsp, "esp.tsize", "Размер текста", 10, 20, 13, 1, function(v)
         ESPMX.tsize = math.floor(v)
     end)
+    addText(pEsp, "Единственный ESP клиента: чистый Drawing-движок, стиль точ-в-точ со скрина. Team Check (вкладка Aimbot) прячет свою команду.")
 
-    local pCompM = addPanel(pg.col2, "Компоненты (1:1 со скрина)")
-    addToggle(pCompM, "espmax.box", "Чёрный тонкий Box", true, function(v) ESPMX.box = v end)
-    addToggle(pCompM, "espmax.names", "НИК над головой", true, function(v) ESPMX.names = v end)
-    addToggle(pCompM, "espmax.hp", "HP (цвет по жизни)", true, function(v)
-        ESPMX.hp = v
-    end)
-    addToggle(pCompM, "espmax.effects", "Колонка эффектов справа", true, function(v)
-        ESPMX.effects = v
-    end)
-    addToggle(pCompM, "espmax.tracer", "Tracer-линия (белая)", true, function(v)
-        ESPMX.tracer = v
-    end)
-    addToggle(pCompM, "espmax.dist", "Дистанция (N под ногами)", false, function(v)
-        ESPMX.dist = v
-    end)
+    local pComp = addPanel(pg.col1, "Components")
+    addToggle(pComp, "esp.box", "Тонкий чёрный Box", true, function(v) ESPMX.box = v end)
+    addToggle(pComp, "esp.names", "НИК над головой", true, function(v) ESPMX.names = v end)
+    addToggle(pComp, "esp.hp", "HP (цвет по жизни)", true, function(v) ESPMX.hp = v end)
+    addToggle(pComp, "esp.effects", "Эффекты справа от бокса", true, function(v) ESPMX.effects = v end)
+    addToggle(pComp, "esp.tracer", "Tracer (белая линия)", true, function(v) ESPMX.tracer = v end)
+    addToggle(pComp, "esp.dist", "Дистанция под ногами", false, function(v) ESPMX.dist = v end)
 
-    local pInfoM = addPanel(pg.col2, "Info")
-    addText(pInfoM, "Точ-в-точ со скрина: чёрный двойной бокс, НИК над головой, HP с цветом от жизни, колонка эффектов справа от бокса, белый трейс от низа экрана. Тег [F] золотой = друзья. Эффекты = tool в руке + нештатные WalkSpeed/JumpPower + атрибуты персонажа (строки как на скрине, если игра их пишет). Чистый Drawing API, отдельно от старого ESP — можно держать оба, но лучше выкл старый.")
+    local pTr = addPanel(pg.col2, "Tracer")
+    addDropdown(pTr, "esp.tracerorigin", "Линия откуда", {"Низ экрана", "Верх экрана", "Центр"}, "Низ экрана", function(v)
+        ESPMX.origin = v
+    end)
+    addText(pTr, "Тег [F] золотой = друг. Эффекты: ⚔ оружие в руке, скорость/прыжок если кручены, атрибуты персонажа — до 6 строк.")
+
+    local pTgt = addPanel(pg.col2, "Target ESP")
+    addToggle(pTgt, "esp.target", "Enabled", false, function(state)
+        if state then enableTargetESP() else disableTargetESP() end
+    end)
+    addDropdown(pTgt, "esp.targetstyle", "Color", {"Pink", "Purple", "Red", "Gold"}, "Pink", function(v)
+        S.targetStyle = v
+    end)
+    addText(pTgt, "Пульсирующая подсветка цели Aimbot / Silent Aim.")
+
+    local pInfo = addPanel(pg.col2, "Info")
+    addText(pInfo, "Полный аналог ESP из референса: чёрный двойной бокс (3px контур + 1px внутр. белый), «НИК 24HP» над головой, колонка эффектов справа от бокса, белая линия от низа экрана к боксу. Всё на Drawing API — работает даже там, где ScreenGui заблокирован.")
 end
 
 -- ==== World (Watermark) ====
@@ -16240,7 +15830,6 @@ function fullCleanupNL()
     S.guiAlive = false
     dcc(S.flyConn)
     dcc(S.noclipConn)
-    dcc(S.espConn)
     dcc(S.targetEspConn)
     dcc(S.wsConn)
     dcc(S.arConn)
@@ -16300,7 +15889,7 @@ function fullCleanupNL()
             end
         end
     end
-    pcall(disableESP)
+    pcall(function() espMaxStop() end)
     pcall(disableTargetESP)
     local heirsT = { LP.PlayerGui }
     pcall(function() if gethui then table.insert(heirsT, gethui()) end end)
