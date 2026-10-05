@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 49
+local BUILD_REV = 50
 
 local KeySystem = {
     --// Конфигурация
@@ -15290,6 +15290,268 @@ do
         S.targetStyle = v
     end)
     addText(pTgt, "Пульсирующая подсветка цели Aimbot / Silent Aim.")
+end
+
+-- ============ ESP MAX («точ-в-точ» стиль со скрина) ============
+-- чёрный тонкий бокс • НИК+HP над головой • колонка эффектов • трейс-линия
+local ESPMX = {
+    running = false, frames = {}, conn = nil,
+    rate = 20, maxdist = 1200, tsize = 13,
+    origin = "Низ экрана", tracerColor = Color3.new(1, 1, 1),
+    box = true, names = true, hp = true, effects = true, tracer = true, dist = false,
+}
+
+local function espMaxMk(plr)
+    local boxOut = Drawing.new("Square")
+    boxOut.Filled = false boxOut.Thickness = 3 boxOut.Color = Color3.new(0, 0, 0) boxOut.ZIndex = 2 boxOut.Visible = false
+    local boxIn = Drawing.new("Square")
+    boxIn.Filled = false boxIn.Thickness = 1 boxIn.Color = Color3.new(1, 1, 1) boxIn.Transparency = 0.7 boxIn.ZIndex = 2 boxIn.Visible = false
+    local nameT = Drawing.new("Text")
+    nameT.Center = true nameT.Outline = true nameT.ZIndex = 3 nameT.Visible = false
+    local hpT = Drawing.new("Text")
+    hpT.Center = false hpT.Outline = true hpT.ZIndex = 3 hpT.Visible = false
+    local distT = Drawing.new("Text")
+    distT.Center = true distT.Outline = true distT.Color = Color3.fromRGB(190, 190, 200) distT.ZIndex = 3 distT.Visible = false
+    local eff = {}
+    for i = 1, 6 do
+        local t = Drawing.new("Text")
+        t.Center = false t.Outline = true t.ZIndex = 3 t.Visible = false
+        eff[i] = t
+    end
+    local tracer = Drawing.new("Line")
+    tracer.Thickness = 1 tracer.ZIndex = 1 tracer.Visible = false
+    ESPMX.frames[plr] = {boxOut = boxOut, boxIn = boxIn, nameT = nameT, hpT = hpT, distT = distT, eff = eff, tracer = tracer}
+end
+
+local function espMaxRm(plr)
+    local fr = ESPMX.frames[plr]
+    if not fr then return end
+    for _, d in pairs(fr) do
+        if type(d) == "table" then
+            for _, t in ipairs(d) do pcall(function() t:Remove() end) end
+        else pcall(function() d:Remove() end) end
+    end
+    ESPMX.frames[plr] = nil
+end
+
+local function espMaxHide(fr)
+    fr.boxOut.Visible = false fr.boxIn.Visible = false fr.nameT.Visible = false
+    fr.hpT.Visible = false fr.distT.Visible = false fr.tracer.Visible = false
+    for _, t in ipairs(fr.eff) do t.Visible = false end
+end
+
+local function espMaxCollectFr()
+
+    local out = {}
+    local myChar = (LP and LP.Character) or nil
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local mydist = math.huge
+            local ch = plr.Character
+            local root = ch and ch:FindFirstChild("HumanoidRootPart")
+            if myRoot and root then mydist = (myRoot.Position - root.Position).Magnitude end
+            if ch and mydist <= ESPMX.maxdist then
+                table.insert(out, {plr = plr, char = ch, root = root, d = mydist})
+            end
+        end
+    end
+    return out
+end
+
+local function espMaxEffects(plr, char)
+    local lines = {}
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then table.insert(lines, {"⚔ " .. tostring(tool.Name), Color3.fromRGB(255, 215, 0)}) end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local ws = hum.WalkSpeed
+        if math.abs(ws - 16) > 0.5 then table.insert(lines, {"Скорость " .. tostring(math.floor(ws + 0.5)), Color3.fromRGB(160, 220, 255)}) end
+        local jp = hum.JumpPower
+        if math.abs(jp - 50) > 0.5 then table.insert(lines, {"Прыжок " .. tostring(math.floor(jp + 0.5)), Color3.fromRGB(160, 220, 255)}) end
+    end
+    local okA, attrs = pcall(function() return char:GetAttributes() end)
+    if okA and type(attrs) == "table" then
+        local names = {}
+        for n in pairs(attrs) do table.insert(names, n) end
+        table.sort(names)
+        for _, n in ipairs(names) do
+            if #lines >= 6 then break end
+            local nl = tostring(n):lower()
+            if type(n) == "string" and #n <= 28
+                and not nl:find("sperma") and not nl:find("respawn") and not nl:find("invincib") then
+                local v = attrs[n]
+                if type(v) == "number" then v = math.floor(v * 100 + 0.5) / 100 end
+                local line = tostring(n)
+                if type(v) ~= "boolean" then line = line .. " " .. tostring(v) end
+                table.insert(lines, {line, Color3.fromRGB(200, 200, 220)})
+            end
+        end
+    end
+    return lines
+end
+
+local function espMaxTick()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local vp = cam.ViewportSize
+    for _, pack in ipairs(espMaxCollectFr()) do
+        local plr, char, root, dist = pack.plr, pack.char, pack.root, pack.d
+        local fr = ESPMX.frames[plr]
+        if not fr then espMaxMk(plr) fr = ESPMX.frames[plr] end
+        if not root then
+            espMaxHide(fr)
+        else
+        local ts = ESPMX.tsize
+        fr.nameT.Size = ts fr.hpT.Size = ts fr.distT.Size = ts - 2
+        for _, t in ipairs(fr.eff) do t.Size = ts - 2 end
+
+        local posTop = root.Position + Vector3.new(0, 3, 0)
+        local posBot = root.Position + Vector3.new(0, -3.5, 0)
+        local sTop, visTop = cam:WorldToViewportPoint(posTop)
+        local sBot = nil
+        local _vis2
+        local sTop2
+        local sBotV = cam:WorldToViewportPoint(posBot)
+        sBot = select(1, sBotV)
+        if not visTop then espMaxHide(fr) else
+        local cx, topY, botY = sTop.X, sTop.Y, sBot.Y
+        local h = math.abs(botY - topY)
+        if h < 6 then espMaxHide(fr) else
+        local w = h * 0.62
+        local x, y = cx - w / 2, topY
+
+        -- 1) БОКС (чёрный двойной — 1:1)
+        if ESPMX.box then
+            local fr = fr
+            fr.boxOut.Position = Vector2.new(x, y) fr.boxOut.Size = Vector2.new(w, h) fr.boxOut.Visible = true
+            fr.boxIn.Position = Vector2.new(x, y) fr.boxIn.Size = Vector2.new(w, h) fr.boxIn.Visible = true
+        else fr.boxOut.Visible = false fr.boxIn.Visible = false end
+
+        -- 2) ИМЯ + HP над головой
+        if ESPMX.names then
+            local tag = ""
+            local tagCol = Color3.new(1, 1, 1)
+            local okF, isF = pcall(function() return LP:IsFriendsWith(plr.UserId) end)
+            if okF and isF then tag = "[F] " tagCol = Color3.fromRGB(255, 200, 90) end
+            fr.nameT.Text = tag .. plr.Name
+            fr.nameT.Color = tagCol
+            fr.nameT.Position = Vector2.new(cx, topY - ts - 4)
+            fr.nameT.Visible = true
+            if ESPMX.hp then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local hp = hum and hum.Health or 0
+                local mx = hum and math.max(hum.MaxHealth, 1) or 100
+                local k = math.clamp(hp / mx, 0, 1)
+                fr.hpT.Text = tostring(math.floor(hp + 0.5)) .. "HP"
+                fr.hpT.Color = Color3.new(1 - k, k * 0.9, 0.15)
+                local nameW = fr.nameT.TextBounds.X
+                fr.hpT.Position = Vector2.new(cx + nameW / 2 + 6, topY - ts - 4)
+                fr.hpT.Visible = true
+            else fr.hpT.Visible = false end
+        else fr.nameT.Visible = false fr.hpT.Visible = false end
+
+        -- 3) ЭФФЕКТЫ справа от бокса (1:1 колонка)
+        if ESPMX.effects then
+            local lines = espMaxEffects(plr, char)
+            for i, t in ipairs(fr.eff) do
+                local ln = lines[i]
+                if ln then
+                    t.Text = ln[1] t.Color = ln[2]
+                    t.Position = Vector2.new(x + w + 4, topY + (i - 1) * (ts - 1))
+                    t.Visible = true
+                else t.Visible = false end
+            end
+        else for _, t in ipairs(fr.eff) do t.Visible = false end end
+
+        -- 4) ТРЕЙС (от низа экрана — 1:1)
+        if ESPMX.tracer then
+            local ox = (ESPMX.origin == "Низ экрана") and vp.Y or (ESPMX.origin == "Верх экрана") and 0 or vp.Y / 2
+            fr.tracer.From = Vector2.new(vp.X / 2, ox)
+            fr.tracer.To = Vector2.new(cx, botY)
+            fr.tracer.Color = ESPMX.tracerColor
+            fr.tracer.Visible = true
+        else fr.tracer.Visible = false end
+
+        -- 5) Дистанция (опционально)
+        if ESPMX.dist then
+            fr.distT.Text = tostring(math.floor(dist)) .. "m"
+            fr.distT.Position = Vector2.new(cx, botY + 2)
+            fr.distT.Visible = true
+        else fr.distT.Visible = false end
+        end -- h>=6
+        end -- visTop
+        end -- root
+    end
+end
+
+local function espMaxStart()
+    if ESPMX.running then return end
+    if not (Drawing and Drawing.new) then warn("[SpermaHub] Drawing API недоступен — ESP MAX выключен") return end
+    local ok = pcall(function()
+        for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then espMaxMk(plr) end end
+    end)
+    if not ok then warn("[SpermaHub] Drawing API: объект не создался — ESP MAX выключен") return end
+    ESPMX.running = true
+    task.spawn(function()
+        while ESPMX.running do
+            local okT = pcall(function() espMaxTick() end)
+            if not okT then
+                for _, fr in pairs(ESPMX.frames) do pcall(function() espMaxHide(fr) end) end
+            end
+            task.wait(1 / math.max(5, ESPMX.rate))
+        end
+    end)
+end
+
+local function espMaxStop()
+    ESPMX.running = false
+    task.wait(0.05)
+    for plr, fr in pairs(ESPMX.frames) do espMaxHide(fr) espMaxRm(plr) end
+end
+
+Players.PlayerRemoving:Connect(function(plr) pcall(function() espMaxRm(plr) end) end)
+Players.PlayerAdded:Connect(function(plr) if ESPMX.running then pcall(function() espMaxMk(plr) end) end end)
+
+-- ==== ESP MAX (точ-в-точ style pack) ====
+do
+    local pg = addPage("Visuals", "🎯", "ESP MAX")
+
+    local pMax = addPanel(pg.col1, "ESP MAX V2 (точ-в-точ)")
+    addToggle(pMax, "espmax.enabled", "Enabled", false, function(state)
+        if state then espMaxStart() else espMaxStop() end
+    end)
+    addDropdown(pMax, "espmax.origin", "Трейс откуда", {"Низ экрана", "Верх экрана", "Центр"}, "Низ экрана", function(v)
+        ESPMX.origin = v
+    end)
+    addSlider(pMax, "espmax.maxdist", "Дальность", 100, 5000, 1200, 50, function(v)
+        ESPMX.maxdist = math.floor(v)
+    end)
+    addSlider(pMax, "espmax.rate", "Частота обновления (FPS)", 5, 60, 20, 5, function(v)
+        ESPMX.rate = math.floor(v)
+    end)
+    addSlider(pMax, "espmax.tsize", "Размер текста", 10, 20, 13, 1, function(v)
+        ESPMX.tsize = math.floor(v)
+    end)
+
+    local pCompM = addPanel(pg.col2, "Компоненты (1:1 со скрина)")
+    addToggle(pCompM, "espmax.box", "Чёрный тонкий Box", true, function(v) ESPMX.box = v end)
+    addToggle(pCompM, "espmax.names", "НИК над головой", true, function(v) ESPMX.names = v end)
+    addToggle(pCompM, "espmax.hp", "HP (цвет по жизни)", true, function(v)
+        ESPMX.hp = v
+    end)
+    addToggle(pCompM, "espmax.effects", "Колонка эффектов справа", true, function(v)
+        ESPMX.effects = v
+    end)
+    addToggle(pCompM, "espmax.tracer", "Tracer-линия (белая)", true, function(v)
+        ESPMX.tracer = v
+    end)
+    addToggle(pCompM, "espmax.dist", "Дистанция (N под ногами)", false, function(v)
+        ESPMX.dist = v
+    end)
+
+    local pInfoM = addPanel(pg.col2, "Info")
+    addText(pInfoM, "Точ-в-точ со скрина: чёрный двойной бокс, НИК над головой, HP с цветом от жизни, колонка эффектов справа от бокса, белый трейс от низа экрана. Тег [F] золотой = друзья. Эффекты = tool в руке + нештатные WalkSpeed/JumpPower + атрибуты персонажа (строки как на скрине, если игра их пишет). Чистый Drawing API, отдельно от старого ESP — можно держать оба, но лучше выкл старый.")
 end
 
 -- ==== World (Watermark) ====
