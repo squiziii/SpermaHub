@@ -92,9 +92,9 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 52
+BUILD_REV = 53
 
-local KeySystem = {
+KeySystem = {
     --// Конфигурация
     Config = {
         AdminPassword = "1337",        -- Пароль от админки
@@ -143,13 +143,13 @@ local KeySystem = {
     }
 }
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local HttpService = game:GetService("HttpService")
-local CoreGuiSvc = game:GetService("CoreGui")
+Players = game:GetService("Players")
+LocalPlayer = Players.LocalPlayer
+HttpService = game:GetService("HttpService")
+CoreGuiSvc = game:GetService("CoreGui")
 
 --// HWID устройства (gethwid → fallback UserId)
-local function GetHWID()
+function GetHWID()
     local ok, h = pcall(function()
         if gethwid then return gethwid() end
         return LocalPlayer.UserId
@@ -162,13 +162,13 @@ end
 pcall(function() math.randomseed(tick() % 1 * 1e6 + os.clock() * 1e3) end)
 
 --// Хелперы
-local function ksPrint(msg)
+function ksPrint(msg)
     if KeySystem.Config.Debug then
         print("[SpermaHub Key] " .. msg)
     end
 end
 
-local function ksNotify(title, msg, duration)
+function ksNotify(title, msg, duration)
     if toastImpl then
         pcall(toastImpl, title, msg)
     else
@@ -177,7 +177,7 @@ local function ksNotify(title, msg, duration)
 end
 
 --// Парс срока «6h»/«3d»/«2w»/«90m» → секунды (rev33)
-local function ParseDuration(str)
+function ParseDuration(str)
     str = tostring(str or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     local num, unit = str:match("^(%d+)([hdwm])$")
     if not num then return nil end
@@ -186,7 +186,7 @@ local function ParseDuration(str)
 end
 
 --// Генерация случайного ключа
-local function GenerateKeyString(length)
+function GenerateKeyString(length)
     length = length or 16
     local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     local result = {}
@@ -449,7 +449,7 @@ function KeySystem:GenerateKey(keyTypeIndex, customKey, opts)
 end
 
 --// FNV-1a 32bit — та же подпись, что на сервере (нужна для проверки sig2)
-local function fnv32(s)
+function fnv32(s)
     -- FIX rev47: h*16777619 напрямую превышает точность double (2^53) — солим.
     -- 16777619 = 16777216 + 403 → перемножаем ПО ЧАСТЯМ (все промежуточные < 2^53).
     -- Проверено: 1-в-1 совпадает с JS Math.imul на сервере.
@@ -3130,11 +3130,11 @@ if type(task) ~= "table" or type(task.spawn) ~= "function" then
 end
 
 -- бут-окно: если меню НЕ появилось, на экране останется шаг, на котором упало
-local BootGui = Instance.new("ScreenGui")
+BootGui = Instance.new("ScreenGui")
 BootGui.Name = "SpermaHubBoot"
 BootGui.ResetOnSpawn = false
 BootGui.DisplayOrder = 999
-local BootLabel = Instance.new("TextLabel")
+BootLabel = Instance.new("TextLabel")
 do
     local plr = game:GetService("Players").LocalPlayer
     BootGui.Parent = plr:WaitForChild("PlayerGui")
@@ -3150,7 +3150,7 @@ do
     BootLabel.Parent = BootGui
     Instance.new("UICorner", BootLabel).CornerRadius = UDim.new(0, 5)
 end
-local function bootStep(s)
+function bootStep(s)
     BootLabel.Text = "SpermaHub: " .. s
     print("[SpermaHub] " .. s)
 end
@@ -3158,12 +3158,12 @@ bootStep("старт")
 -- boot-плашка живёт максимум 15 сек: если скрипт упадёт/повиснет — она не останется "старым худом"
 task.delay(15, function() pcall(function() BootGui:Destroy() end) end)
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
-local Stats = game:GetService("Stats")
-local GuiService = game:GetService("GuiService")
-local LP = Players.LocalPlayer
+Players = game:GetService("Players")
+RunService = game:GetService("RunService")
+UIS = game:GetService("UserInputService")
+Stats = game:GetService("Stats")
+GuiService = game:GetService("GuiService")
+LP = Players.LocalPlayer
 
 -- ============ ОЧИСТКА СТАРЫХ ВЕРСИЙ ============
 for _, n in ipairs({
@@ -3263,8 +3263,8 @@ pcall(function()
 end)
 
 -- ============ УВЕДОМЛЕНИЯ (тосты; до построения UI — в консоль) ============
-local toastImpl = nil
-local function notify(title, content)
+toastImpl = nil
+function notify(title, content)
     if toastImpl then
         toastImpl(title, content)
     else
@@ -3277,7 +3277,7 @@ function dcc(c)
 end
 
 -- ============ СОСТОЯНИЕ ============
-local S = {
+S = {
     flying=false, noclip=false, esp=false, speed=50,
     targetEspOn=false, targetStyle="Pink", targetEspConn=nil,
     wmOn=true,
@@ -3356,18 +3356,18 @@ local S = {
 -- ============================================================
 
 -- ============ TEAM CHECK / VISIBLE CHECK ============
-local function isTeammate(plr)
+function isTeammate(plr)
     if not S.teamCheck then return false end
     if not plr or plr == LP then return false end
     if not plr.Team or not LP.Team then return false end
     return plr.Team == LP.Team
 end
 
-local visCheckParams = RaycastParams.new()
+visCheckParams = RaycastParams.new()
 visCheckParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- true, если от камеры до части нет препятствий (wallcheck)
-local function isVisible(part)
+function isVisible(part)
     if not S.visibleCheck then return true end
     if not part then return false end
     local cam = workspace.CurrentCamera
@@ -3383,14 +3383,14 @@ local function isVisible(part)
 end
 
 -- ============ FOV CIRCLE ============
-local FovGui = Instance.new("ScreenGui")
+FovGui = Instance.new("ScreenGui")
 FovGui.Name = "SpermaHubFov"
 FovGui.ResetOnSpawn = false
 FovGui.IgnoreGuiInset = true
 FovGui.DisplayOrder = 60
 FovGui.Parent = LP:WaitForChild("PlayerGui")
 
-local FovCircle = Instance.new("Frame")
+FovCircle = Instance.new("Frame")
 FovCircle.Name = "FovCircle"
 FovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 FovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -3401,11 +3401,11 @@ FovCircle.Visible = false
 FovCircle.ZIndex = 100
 FovCircle.Parent = FovGui
 
-local FovCircleCorner = Instance.new("UICorner")
+FovCircleCorner = Instance.new("UICorner")
 FovCircleCorner.CornerRadius = UDim.new(1, 0)
 FovCircleCorner.Parent = FovCircle
 
-local FovCircleStroke = Instance.new("UIStroke")
+FovCircleStroke = Instance.new("UIStroke")
 FovCircleStroke.Color = Color3.fromRGB(255, 80, 80)
 FovCircleStroke.Thickness = 2
 FovCircleStroke.Transparency = 0.2
@@ -3414,7 +3414,7 @@ FovCircleStroke.Parent = FovCircle
 S.fovCircle = FovCircle
 
 -- FOV-круг для Silent Aim
-local SilentFovCircle = Instance.new("Frame")
+SilentFovCircle = Instance.new("Frame")
 SilentFovCircle.Name = "SilentFovCircle"
 SilentFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 SilentFovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -3425,11 +3425,11 @@ SilentFovCircle.Visible = false
 SilentFovCircle.ZIndex = 99
 SilentFovCircle.Parent = FovGui
 
-local SilentFovCircleCorner = Instance.new("UICorner")
+SilentFovCircleCorner = Instance.new("UICorner")
 SilentFovCircleCorner.CornerRadius = UDim.new(1, 0)
 SilentFovCircleCorner.Parent = SilentFovCircle
 
-local SilentFovCircleStroke = Instance.new("UIStroke")
+SilentFovCircleStroke = Instance.new("UIStroke")
 SilentFovCircleStroke.Color = Color3.fromRGB(100, 100, 255)
 SilentFovCircleStroke.Thickness = 2
 SilentFovCircleStroke.Transparency = 0.2
@@ -3437,7 +3437,7 @@ SilentFovCircleStroke.Parent = SilentFovCircle
 
 S.silentAimFovCircle = SilentFovCircle
 
-local function updateFovCircle()
+function updateFovCircle()
     if S.fovCircle then
         local size = S.aimbotFov * 2
         S.fovCircle.Size = UDim2.new(0, size, 0, size)
@@ -3445,7 +3445,7 @@ local function updateFovCircle()
     end
 end
 
-local function updateSilentFovCircle()
+function updateSilentFovCircle()
     if S.silentAimFovCircle then
         local size = S.silentAimFov * 2
         S.silentAimFovCircle.Size = UDim2.new(0, size, 0, size)
@@ -3454,8 +3454,8 @@ local function updateSilentFovCircle()
 end
 
 -- Временный показ круга при настройке FOV слайдером (аналог открытой панели)
-local fovFlash = {aimbot = 0, silent = 0}
-local function flashFovCircle(kind, circle, isOn)
+fovFlash = {aimbot = 0, silent = 0}
+function flashFovCircle(kind, circle, isOn)
     fovFlash[kind] = fovFlash[kind] + 1
     local token = fovFlash[kind]
     if not isOn() and S.fovVisualize then circle.Visible = true end
@@ -3467,7 +3467,7 @@ local function flashFovCircle(kind, circle, isOn)
 end
 
 -- ============ AIMBOT ЛОГИКА ============
-local function aimBonePart(ch)
+function aimBonePart(ch)
     if S.aimBone == "Torso" then
         return ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
             or ch:FindFirstChild("HumanoidRootPart")
@@ -3478,7 +3478,7 @@ local function aimBonePart(ch)
     return ch:FindFirstChild("Head")
 end
 
-local function getClosestTarget()
+function getClosestTarget()
     local cam = workspace.CurrentCamera
     local closest = nil
     local closestDist = S.aimbotFov
@@ -3506,7 +3506,7 @@ local function getClosestTarget()
     return closest
 end
 
-local function aimKeyPressed()
+function aimKeyPressed()
     if S.aimKey == "Always" then return true end
     if S.aimKey == "Hold E" then
         return UIS:IsKeyDown(Enum.KeyCode.E)
@@ -3515,7 +3515,7 @@ local function aimKeyPressed()
     return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 end
 
-local function enableAimbot()
+function enableAimbot()
     S.aimbotOn = true
     if S.aimbotConn then
         RunService:UnbindFromRenderStep("SpermaHubAimbot")
@@ -3543,7 +3543,7 @@ local function enableAimbot()
     end)
 end
 
-local function disableAimbot()
+function disableAimbot()
     S.aimbotOn = false
     if S.aimbotConn then
         RunService:UnbindFromRenderStep("SpermaHubAimbot")
@@ -3552,7 +3552,7 @@ local function disableAimbot()
 end
 
 -- ============ SILENT AIM ЛОГИКА (Real-compatible) ============
-local function findSilentTarget()
+function findSilentTarget()
     local cam = workspace.CurrentCamera
     local closest = nil
     local closestDist = S.silentAimFov
@@ -3580,7 +3580,7 @@ local function findSilentTarget()
     return closest
 end
 
-local function checkSilentAimSupport()
+function checkSilentAimSupport()
     local hasHook, hasMeta, hasSetReadonly, hasNewcclosure = false, false, false, false
     pcall(function() hasHook = type(hookfunction) == "function" end)
     pcall(function() hasMeta = type(getrawmetatable) == "function" end)
@@ -3591,7 +3591,7 @@ end
 
 -- ============ SILENT AIM — режимы Universal / Fortline / Network ============
 -- код сервисов как в Fortline-сниппете (cloneref-защита), с фолбэком без cloneref
-local function makeSilentServices()
+function makeSilentServices()
     local cR = (type(cloneref) == "function") and cloneref or function(x) return x end
     return {
         ReplicatedStorage = cR(game:GetService("ReplicatedStorage")),
@@ -3604,7 +3604,7 @@ end
 
 -- FORTLINE STYLE: камера сама лочится на голову цели, пока зажата кнопка огня (ЛКМ/ПКМ).
 -- Работает на executor без хуков (Xeno): пули летят по центру камеры.
-local function enableSilentFortline()
+function enableSilentFortline()
     print("[SpermaHub] Silent Aim: режим Fortline (camera lock while firing)")
     notify("Silent Aim", "Режим Fortline: камера лочится пока зажат огонь", 3, "info")
     local svc = makeSilentServices()
@@ -3629,7 +3629,7 @@ end
 
 -- NETWORK STYLE: перенаправление FireServer оружейных ремоутов на голову цели
 -- (требует метатабличные хуки executor'а; на Xeno недоступно)
-local function enableSilentNetwork()
+function enableSilentNetwork()
     if not checkSilentAimSupport() then
         warn("[SpermaHub] Silent Aim Network: нет хуков на этом executor")
         notify("Silent Aim", "Network нуждается в hookfunction/getrawmetatable", 5, "alert-triangle")
@@ -3719,7 +3719,7 @@ local function enableSilentNetwork()
     end
 end
 
-local function enableSilentAim()
+function enableSilentAim()
     S.silentAimOn = true
     if S.silentMode == "Fortline" then
         enableSilentFortline()
@@ -3808,7 +3808,7 @@ local function enableSilentAim()
     end
 end
 
-local function disableSilentAim()
+function disableSilentAim()
     S.silentAimOn = false
     if S.silentAimConn then
         pcall(function() S.silentAimConn:Disconnect() end)
@@ -3856,7 +3856,7 @@ end
 
 -- ============ AUTO CLICKER ЛОГИКА ============
 -- Клик через VirtualInputManager (резерв, если нет функций executor'а)
-local function vimClick(b) -- b: 0 = ЛКМ, 1 = ПКМ
+function vimClick(b) -- b: 0 = ЛКМ, 1 = ПКМ
     pcall(function()
         local VIM = game:GetService("VirtualInputManager")
         local loc = UIS:GetMouseLocation()
@@ -3867,7 +3867,7 @@ local function vimClick(b) -- b: 0 = ЛКМ, 1 = ПКМ
 end
 
 -- button: 1 = ЛКМ, 2 = ПКМ
-local function clickMouse(button)
+function clickMouse(button)
     if button == 1 then
         if type(mouse1click) == "function" then pcall(mouse1click)
         elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
@@ -3886,10 +3886,10 @@ local function clickMouse(button)
 end
 
 -- Клик разрешён только "в игре": не в чате и не когда курсор над любым GUI
-local hudIgnore = {
+hudIgnore = {
     SpermaHubESP=true, SpermaHubHUD=true, SpermaHubFov=true, SpermaHubWatermark=true, SpermaHubBinds=true, SpermaHubTHud=true, -- декоративные элементы скрипта не считаем
 }
-local function canClickInGame()
+function canClickInGame()
     if UIS:GetFocusedTextBox() then return false end -- чат / поле ввода
     local loc = UIS:GetMouseLocation()
     local ok, objs = pcall(function()
@@ -3909,7 +3909,7 @@ local function canClickInGame()
     return true
 end
 
-local function enableAutoClicker()
+function enableAutoClicker()
     S.autoClickOn = false
     S.autoClickGen = S.autoClickGen + 1 -- останавливаем прошлый цикл
     S.autoClickOn = true
@@ -3930,15 +3930,15 @@ local function enableAutoClicker()
     end)
 end
 
-local function disableAutoClicker()
+function disableAutoClicker()
     S.autoClickOn = false
     S.autoClickGen = S.autoClickGen + 1
 end
 
 -- ============ HITBOX EXPANDER ЛОГИКА ============
-local hitboxOriginalSizes = {}
+hitboxOriginalSizes = {}
 
-local function applyHitbox()
+function applyHitbox()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LP then
             local ch = plr.Character
@@ -3959,7 +3959,7 @@ local function applyHitbox()
     end
 end
 
-local function restoreHitbox()
+function restoreHitbox()
     for part, size in pairs(hitboxOriginalSizes) do
         if typeof(part) == "Instance" and part.Parent then
             pcall(function()
@@ -3973,7 +3973,7 @@ local function restoreHitbox()
     hitboxOriginalSizes = {}
 end
 
-local function enableHitbox()
+function enableHitbox()
     S.hitboxOn = true
     applyHitbox()
     dcc(S.hitboxConn)
@@ -3983,14 +3983,14 @@ local function enableHitbox()
     end)
 end
 
-local function disableHitbox()
+function disableHitbox()
     S.hitboxOn = false
     if S.hitboxConn then S.hitboxConn:Disconnect() S.hitboxConn = nil end
     restoreHitbox()
 end
 
 -- ============ KILL PLAYER ЛОГИКА ============
-local function killPlayer(targetPlayer)
+function killPlayer(targetPlayer)
     if not targetPlayer then return end
     local myChar = LP.Character
     if not myChar then return end
@@ -4043,7 +4043,7 @@ local function killPlayer(targetPlayer)
 end
 
 -- ============ TP PLAYER ЛОГИКА ============
-local function tpToPlayer(targetPlayer)
+function tpToPlayer(targetPlayer)
     local myChar = LP.Character
     if not myChar then return end
     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
@@ -4058,7 +4058,7 @@ local function tpToPlayer(targetPlayer)
 end
 
 -- ============ FLY ============
-local function startFly()
+function startFly()
     local ch = LP.Character
     if not ch then return end
     local root = ch:FindFirstChild("HumanoidRootPart")
@@ -4091,7 +4091,7 @@ local function startFly()
     end)
 end
 
-local function stopFly()
+function stopFly()
     S.flying = false
     if S.flyConn then S.flyConn:Disconnect() S.flyConn = nil end
     if S.bv then S.bv:Destroy() S.bv = nil end
@@ -4104,7 +4104,7 @@ local function stopFly()
 end
 
 -- ============ NOCLIP ============
-local function enableNoclip()
+function enableNoclip()
     S.noclip = true
     dcc(S.noclipConn)
     S.noclipConn = RunService.Stepped:Connect(function()
@@ -4117,7 +4117,7 @@ local function enableNoclip()
     end)
 end
 
-local function disableNoclip()
+function disableNoclip()
     S.noclip = false
     if S.noclipConn then S.noclipConn:Disconnect() S.noclipConn = nil end
     local ch = LP.Character
@@ -4129,7 +4129,7 @@ local function disableNoclip()
 end
 
 -- ============ CLICK TP ============
-local function enableClickTp()
+function enableClickTp()
     S.clickTpOn = true
     dcc(S.clickTpConn)
     S.clickTpConn = UIS.InputBegan:Connect(function(input, gpe)
@@ -4150,17 +4150,17 @@ local function enableClickTp()
     end)
 end
 
-local function disableClickTp()
+function disableClickTp()
     S.clickTpOn = false
     if S.clickTpConn then S.clickTpConn:Disconnect() S.clickTpConn = nil end
 end
 
 -- ============ JESUS (ходьба по воде) ============
-local jesusRayParams = RaycastParams.new()
+jesusRayParams = RaycastParams.new()
 jesusRayParams.FilterType = Enum.RaycastFilterType.Exclude
 jesusRayParams.IgnoreWater = false -- чтобы рейкаст "видел" поверхность воды
 
-local function enableJesus()
+function enableJesus()
     S.jesusOn = true
     if not S.jesusPlatform or not S.jesusPlatform.Parent then
         local p = Instance.new("Part")
@@ -4194,14 +4194,14 @@ local function enableJesus()
     end)
 end
 
-local function disableJesus()
+function disableJesus()
     S.jesusOn = false
     if S.jesusConn then S.jesusConn:Disconnect() S.jesusConn = nil end
     if S.jesusPlatform then S.jesusPlatform.Position = Vector3.new(0, -1e5, 0) end
 end
 
 -- ============ SPIN (вращение персонажа) ============
-local function enableSpin()
+function enableSpin()
     S.spinOn = true
     dcc(S.spinConn)
     S.spinAngle = 0
@@ -4246,7 +4246,7 @@ local function enableSpin()
     end)
 end
 
-local function disableSpin()
+function disableSpin()
     S.spinOn = false
     if S.spinConn then S.spinConn:Disconnect() S.spinConn = nil end
     -- спина выпрямляется обратно
@@ -4256,7 +4256,7 @@ local function disableSpin()
 end
 
 -- ============ GOD MODE (лок HP) ============
-local function enableGod()
+function enableGod()
     S.godOn = true
     dcc(S.godConn)
     S.godConn = RunService.Heartbeat:Connect(function()
@@ -4270,13 +4270,13 @@ local function enableGod()
     end)
 end
 
-local function disableGod()
+function disableGod()
     S.godOn = false
     if S.godConn then S.godConn:Disconnect() S.godConn = nil end
 end
 
 -- ============ FLING ============
-local function flingPlayer(target)
+function flingPlayer(target)
     local ch = LP.Character
     if not ch then return end
     local root = ch:FindFirstChild("HumanoidRootPart")
@@ -4309,7 +4309,7 @@ end
 -- ============ FLING 2.0 (Stick TP — из твоего сниппета) ============
 -- клей: каждый кадр персонаж привязан к цели с Velocity (0, 100000, 0);
 -- по таймеру рвём и возвращаемся в исходную точку 50 раз подряд (как в коде).
-local function flingStickyPlayer(target, dur)
+function flingStickyPlayer(target, dur)
     local ch = LP.Character
     if not ch then return end
     local root = ch:FindFirstChild("HumanoidRootPart")
@@ -4343,16 +4343,16 @@ local function flingStickyPlayer(target, dur)
 end
 
 -- ============ BULLET TRACERS + HITMARKER ============
-local HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
+HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
 
-local FxGui = Instance.new("ScreenGui")
+FxGui = Instance.new("ScreenGui")
 FxGui.Name = "SpermaHubFx"
 FxGui.ResetOnSpawn = false
 FxGui.IgnoreGuiInset = true
 FxGui.DisplayOrder = 102
 FxGui.Parent = LP:WaitForChild("PlayerGui")
 
-local function drawTracer(from3D, to3D)
+function drawTracer(from3D, to3D)
     local cam = workspace.CurrentCamera
     local v1, on1 = cam:WorldToViewportPoint(from3D)
     local v2, on2 = cam:WorldToViewportPoint(to3D)
@@ -4379,7 +4379,7 @@ local function drawTracer(from3D, to3D)
     task.delay(0.35, function() pcall(function() f:Destroy() end) end)
 end
 
-local function showHitmarker()
+function showHitmarker()
     for _, ang in ipairs({45, -45}) do
         local bar = Instance.new("Frame")
         bar.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -4410,7 +4410,7 @@ local function showHitmarker()
     end
 end
 
-local function onShotTracer()
+function onShotTracer()
     if not S.tracersOn then return end
     local ch = LP.Character
     if not ch then return end
@@ -4431,7 +4431,7 @@ local function onShotTracer()
     if to then drawTracer(fromPart.Position, to) end
 end
 
-local function onShotHitmarker()
+function onShotHitmarker()
     if not S.hitmarkerOn then return end
     local hit = false
     if S.silentAimOn then
@@ -4467,14 +4467,14 @@ end)
 --  * pitch: тело опускается к земле и обнуляется угловая скорость,
 --    чтобы капсула спокойно лежала, а не отпрыгивала.
 -- ============ ANTI-AIM (ENI Suite: Spin / Jitter / Desync / Random + Fake Visualize) ============
-local aaState = {CurrentAngle = 0, LastTick = tick(), FakeCharacter = nil}
+aaState = {CurrentAngle = 0, LastTick = tick(), FakeCharacter = nil}
 
-local function aaGetRoot()
+function aaGetRoot()
     local ch = LP.Character
     return ch and ch:FindFirstChild("HumanoidRootPart")
 end
 
-local function aaCreateFake()
+function aaCreateFake()
     if aaState.FakeCharacter then
         pcall(function() aaState.FakeCharacter:Destroy() end)
         aaState.FakeCharacter = nil
@@ -4500,7 +4500,7 @@ local function aaCreateFake()
     aaState.FakeCharacter = fake
 end
 
-local function aaDestroyFake()
+function aaDestroyFake()
     if aaState.FakeCharacter then
         pcall(function() aaState.FakeCharacter:Destroy() end)
         aaState.FakeCharacter = nil
@@ -4508,7 +4508,7 @@ local function aaDestroyFake()
 end
 
 -- фейковое тело показывает, куда "смотрит" подменённый рут
-local function aaUpdateFake(angle)
+function aaUpdateFake(angle)
     if not S.aaVisualize then return end
     local fake = aaState.FakeCharacter
     if not fake or not fake.Parent then return end
@@ -4529,7 +4529,7 @@ local function aaUpdateFake(angle)
     end
 end
 
-local function enableAntiAim()
+function enableAntiAim()
     S.aaOn = true
     dcc(S.aaConn)
     aaState.LastTick = tick()
@@ -4587,7 +4587,7 @@ local function enableAntiAim()
     end)
 end
 
-local function disableAntiAim()
+function disableAntiAim()
     S.aaOn = false
     dcc(S.aaConn)
     S.aaConn = nil
@@ -4607,7 +4607,7 @@ LP.CharacterAdded:Connect(function()
 end)
 
 -- ============ BHOP (авто-прыжки) ============
-local function enableBhop()
+function enableBhop()
     S.bhopOn = true
     dcc(S.bhopConn)
     S.bhopConn = RunService.Heartbeat:Connect(function()
@@ -4631,13 +4631,13 @@ local function enableBhop()
     end)
 end
 
-local function disableBhop()
+function disableBhop()
     S.bhopOn = false
     if S.bhopConn then S.bhopConn:Disconnect() S.bhopConn = nil end
 end
 
 -- ============ ANTI FLING (защита от флинга) ============
-local function enableAntiFling()
+function enableAntiFling()
     S.afOn = true
     dcc(S.afConn)
     S.afConn = RunService.Stepped:Connect(function()
@@ -4661,13 +4661,13 @@ local function enableAntiFling()
     end)
 end
 
-local function disableAntiFling()
+function disableAntiFling()
     S.afOn = false
     if S.afConn then S.afConn:Disconnect() S.afConn = nil end
 end
 
 -- ============ AUTO STRAFE (усиление bhop) ============
-local function enableStrafe()
+function enableStrafe()
     S.strafeOn = true
     dcc(S.strafeConn)
     S.strafeConn = RunService.Heartbeat:Connect(function()
@@ -4691,20 +4691,20 @@ local function enableStrafe()
     end)
 end
 
-local function disableStrafe()
+function disableStrafe()
     S.strafeOn = false
     if S.strafeConn then S.strafeConn:Disconnect() S.strafeConn = nil end
 end
 
 -- ============ SPECTATE (с мини-окном) ============
-local SpecGui = Instance.new("ScreenGui")
+SpecGui = Instance.new("ScreenGui")
 SpecGui.Name = "SpermaHubSpec"
 SpecGui.ResetOnSpawn = false
 SpecGui.IgnoreGuiInset = true
 SpecGui.DisplayOrder = 90
 SpecGui.Parent = LP:WaitForChild("PlayerGui")
 
-local SpecWin = Instance.new("Frame")
+SpecWin = Instance.new("Frame")
 SpecWin.Size = UDim2.new(0, 220, 0, 78)
 SpecWin.Position = UDim2.new(0.5, -110, 1, -120)
 SpecWin.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
@@ -4719,7 +4719,7 @@ do
     local s = Instance.new("UIStroke") s.Color = Color3.fromRGB(120, 60, 200) s.Thickness = 1 s.Transparency = 0.3 s.Parent = SpecWin
 end
 
-local SpecTitle = Instance.new("TextLabel")
+SpecTitle = Instance.new("TextLabel")
 SpecTitle.Size = UDim2.new(1, -70, 0, 26)
 SpecTitle.Position = UDim2.new(0, 10, 0, 4)
 SpecTitle.BackgroundTransparency = 1
@@ -4730,7 +4730,7 @@ SpecTitle.TextSize = 13
 SpecTitle.TextXAlignment = Enum.TextXAlignment.Left
 SpecTitle.Parent = SpecWin
 
-local SpecExit = Instance.new("TextButton")
+SpecExit = Instance.new("TextButton")
 SpecExit.Size = UDim2.new(0, 62, 0, 20)
 SpecExit.Position = UDim2.new(1, -70, 0, 6)
 SpecExit.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
@@ -4745,7 +4745,7 @@ do
     local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = SpecExit
 end
 
-local SpecInfo = Instance.new("TextLabel")
+SpecInfo = Instance.new("TextLabel")
 SpecInfo.Size = UDim2.new(1, -20, 0, 34)
 SpecInfo.Position = UDim2.new(0, 10, 0, 36)
 SpecInfo.BackgroundTransparency = 1
@@ -4757,7 +4757,7 @@ SpecInfo.TextXAlignment = Enum.TextXAlignment.Left
 SpecInfo.TextYAlignment = Enum.TextYAlignment.Top
 SpecInfo.Parent = SpecWin
 
-local function exitSpectate()
+function exitSpectate()
     if not S.specOn then
         SpecWin.Visible = false
         return
@@ -4775,7 +4775,7 @@ end
 
 SpecExit.MouseButton1Click:Connect(exitSpectate)
 
-local function startSpectate(plr)
+function startSpectate(plr)
     local tch = plr and plr.Character
     local thum = tch and tch:FindFirstChildOfClass("Humanoid")
     if not thum then
@@ -4810,12 +4810,12 @@ end
 -- ============ ANTI-CHEAT BYPASS (честный) ============
 -- Клиентские античиты живут в LocalScript/ModuleScript игрока — их можно убить.
 -- Серверный античит клиентом не обходится в принципе (ни один чит не умеет).
-local AC_PATTERNS = {
+AC_PATTERNS = {
     "adonis", "anticheat", "anti-cheat", "anti cheat", "antihack", "anti-hack",
     "anticheatclient", "exploitdetector", "cheatdetector", "watchdog", "banhammer",
 }
 
-local function neuterAntiCheatScripts(dryRun)
+function neuterAntiCheatScripts(dryRun)
     local killed = 0
     local roots = {
         LP:FindFirstChild("PlayerGui"),
@@ -4844,7 +4844,7 @@ local function neuterAntiCheatScripts(dryRun)
     return killed
 end
 
-local function acHooksSupported()
+function acHooksSupported()
     return type(getrawmetatable) == "function"
         and type(newcclosure) == "function"
         and type(setreadonly) == "function"
@@ -4852,7 +4852,7 @@ local function acHooksSupported()
 end
 
 -- Anti Kick: перехват Namecall Kick (если экзекьютор умеет хуки)
-local function enableAntiKick()
+function enableAntiKick()
     if S.akOn then return true end
     if not acHooksSupported() then
         notify("Bypass", "Anti Kick недоступен: у экзекьютора нет хуков (на Xeno не работает)")
@@ -4881,7 +4881,7 @@ local function enableAntiKick()
     return ok
 end
 
-local function disableAntiKick()
+function disableAntiKick()
     if not S.akOn then return end
     pcall(function()
         local mt = getrawmetatable(game)
@@ -4893,7 +4893,7 @@ local function disableAntiKick()
     S.akOriginal = nil
 end
 
-local function applyBypassMode(mode)
+function applyBypassMode(mode)
     local prev = S.bypassMode
     S.bypassMode = mode
     if mode == "Off" then
@@ -4923,7 +4923,7 @@ task.spawn(function()
     end
 end)
 
-local TeleportService = game:GetService("TeleportService")
+TeleportService = game:GetService("TeleportService")
 
 -- ============ SMOOTH CAMERA (плавное движение камеры) ============
 -- кастомный камера-контроллер: CameraType=Scriptable, yaw/pitch сглаживаются
@@ -5720,7 +5720,7 @@ function setInvisible(state)
 end
 
 -- ============ WALK SPEED (CFrame-доводка, античит не флагит WalkSpeed) ============
-local function applyWalkSpeed()
+function applyWalkSpeed()
     local ch = LP.Character
     if not ch then return end
     local hum = ch:FindFirstChildOfClass("Humanoid")
@@ -5747,7 +5747,7 @@ S.wsConn = RunService.Heartbeat:Connect(function(dt)
 end)
 
 -- ============ ANTI RAGDOLL (не падаешь, двигаешься) ============
-local AR_STATES = {
+AR_STATES = {
     [Enum.HumanoidStateType.FallingDown] = true,
     [Enum.HumanoidStateType.Ragdoll] = true,
     [Enum.HumanoidStateType.Physics] = true,
@@ -5766,7 +5766,7 @@ end)
 bootStep("логика OK")
 
 -- ============ ESP ============
-local ESPGui = Instance.new("ScreenGui")
+ESPGui = Instance.new("ScreenGui")
 ESPGui.Name = "SpermaHubESP"
 ESPGui.ResetOnSpawn = false
 ESPGui.IgnoreGuiInset = true
@@ -5776,14 +5776,14 @@ ESPGui.Parent = LP:WaitForChild("PlayerGui")
 -- rev51 FULL SKID: старый ESP (Chams / Skeleton / Gui-box / hitbox-метки) УДАЛЁН ЦЕЛИКОМ.
 -- Единственный ESP — Drawing-движок 1:1 со скрина (раздел ESP MAX ниже, GUI: Visuals > Players).
 -- Здесь остался только Target ESP (подсветка цели аимбота) — стили его пульсации:
-local TARGET_STYLES = {
+TARGET_STYLES = {
     Pink   = {fill = Color3.fromRGB(255, 0, 200),  outline = Color3.fromRGB(255, 120, 240)},
     Purple = {fill = Color3.fromRGB(170, 0, 255),  outline = Color3.fromRGB(225, 110, 255)},
     Red    = {fill = Color3.fromRGB(255, 40, 40),  outline = Color3.fromRGB(255, 150, 80)},
     Gold   = {fill = Color3.fromRGB(255, 190, 40), outline = Color3.fromRGB(255, 240, 160)},
 }
 
-local function isAlive(plr)
+function isAlive(plr)
     local ch = plr.Character
     if not ch then return false end
     local hum = ch:FindFirstChildOfClass("Humanoid")
@@ -5792,14 +5792,14 @@ local function isAlive(plr)
 end
 
 -- ============ TARGET ESP (подсветка текущей цели) ============
-local TargetHL = Instance.new("Highlight")
+TargetHL = Instance.new("Highlight")
 TargetHL.FillTransparency = 0.35
 TargetHL.OutlineTransparency = 0
 TargetHL.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 TargetHL.Enabled = false
 TargetHL.Parent = ESPGui
 
-local function currentEspTarget()
+function currentEspTarget()
     if S.silentAimOn then
         local p = findSilentTarget()
         if p then return p end
@@ -5814,7 +5814,7 @@ local function currentEspTarget()
     return nil
 end
 
-local function enableTargetESP()
+function enableTargetESP()
     S.targetEspOn = true
     dcc(S.targetEspConn)
     S.targetEspConn = RunService.RenderStepped:Connect(function()
@@ -5834,7 +5834,7 @@ local function enableTargetESP()
     end)
 end
 
-local function disableTargetESP()
+function disableTargetESP()
     S.targetEspOn = false
     if S.targetEspConn then S.targetEspConn:Disconnect() S.targetEspConn = nil end
     TargetHL.Enabled = false
@@ -5845,14 +5845,14 @@ bootStep("ESP OK")
 
 bootStep("Watermark OK")
 
-local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
+TweenService = game:GetService("TweenService")
+HttpService = game:GetService("HttpService")
 
 -- ============================================================
 -- ============ GUI MODE: SpermaClick (единственный движок, 1:1 skid) ========
 -- ============================================================
 -- ---------- ТЕМА (как на референсе) ----------
-local CT = {
+CT = {
     panel   = Color3.fromRGB(16, 16, 28),
     header  = Color3.fromRGB(22, 22, 38),
     row     = Color3.fromRGB(26, 27, 44),
@@ -5865,20 +5865,20 @@ local CT = {
 
 -- ---------- ХЕЛПЕРЫ ----------
 -- убрать 4-байтовые UTF-8 символы (эмодзи) — в шрифтах их нет
-local function cleanText(s)
+function cleanText(s)
     return (tostring(s):gsub("[\240-\244][\128-\191][\128-\191][\128-\191]", ""))
 end
 
-local function cgNew(class, props, parent)
+function cgNew(class, props, parent)
     local obj = Instance.new(class)
     for k, v in pairs(props or {}) do pcall(function() obj[k] = v end) end
     obj.Parent = parent
     return obj
 end
-local function cgCorner(r, parent)
+function cgCorner(r, parent)
     cgNew("UICorner", {CornerRadius = UDim.new(0, r or 4)}, parent)
 end
-local function listLayout(parent, pad, order)
+function listLayout(parent, pad, order)
     local l = cgNew("UIListLayout", {
         Padding = UDim.new(0, pad or 2),
         SortOrder = Enum.SortOrder.LayoutOrder,
@@ -5887,7 +5887,7 @@ local function listLayout(parent, pad, order)
 end
 
 -- ---------- ТОСТЫ (свои, без сторонних либ) ----------
-local ToastHolder = nil
+ToastHolder = nil
 do
     local sg = cgNew("ScreenGui", {
         Name = "SpermaHubToast",
@@ -5906,7 +5906,7 @@ do
     lay.HorizontalAlignment = Enum.HorizontalAlignment.Right
 end
 
-local function cgToastDismiss(frame)
+function cgToastDismiss(frame)
     task.delay(2.6, function()
         pcall(function()
             TweenService:Create(frame, TweenInfo.new(0.25), {BackgroundTransparency = 1}):Play()
@@ -5962,27 +5962,27 @@ end
 Categories = {}
 Pages = {}
 CatSelected = nil
-local Cfg = {}
+Cfg = {}
 
 -- ---------- КОРЕНЬ GUI ----------
 -- Voidware/WindUI/Rayfield/Linoria УДАЛЕНЫ НАСОВСЕМ (rev52: SpermaClick — единственная оболочка)
-local CGGui = nil     -- SpermaClick ScreenGui (создаётся в SPERMACLICK-рендере)
-local CG_OPEN = false -- меню сейчас открыто?
-local rootF = nil     -- корень окна (compat: Library.UI.MainUI)
+CGGui = nil     -- SpermaClick ScreenGui (создаётся в SPERMACLICK-рендере)
+CG_OPEN = false -- меню сейчас открыто?
+rootF = nil     -- корень окна (compat: Library.UI.MainUI)
 
-local MODULES = {} -- все модули
+MODULES = {} -- все модули
 
 -- ---------- КАТЕГОРИЯ → панель ----------
-local CAT_ORDER = { Combat=1, Movement=2, Visuals=3, Player=4, Server=5, Miscellaneous=6 }
-local curModule = nil
+CAT_ORDER = { Combat=1, Movement=2, Visuals=3, Player=4, Server=5, Miscellaneous=6 }
+curModule = nil
 
-local function addCategoryImpl(title)
+function addCategoryImpl(title)
     return {key = title, scroll = nil} -- категории-колонки рисует SpermaClick
 end
 
-local function updModHeader(m) end
+function updModHeader(m) end
 
-local function addPageImpl(cat, icon, title)
+function addPageImpl(cat, icon, title)
     local catEntry = nil
     for _, c in ipairs(Categories) do if c.key == cat then catEntry = c break end end
     if not catEntry then addCategoryImpl(cat) for _, c in ipairs(Categories) do if c.key == cat then catEntry = c break end end end
@@ -5996,19 +5996,19 @@ local function addPageImpl(cat, icon, title)
     return {__module = m, col1 = {__module = m}, col2 = {__module = m}}
 end
 
-local function addPanelImpl(col, title)
+function addPanelImpl(col, title)
     local sec = {title = cleanText(title), module = col.__module, __module = col.__module}
     table.insert(col.__module.elements, {kind = "section", title = sec.title})
     return sec
 end
 
-local function selectCategory(_) end
-local function selectPage(_) end
+function selectCategory(_) end
+function selectPage(_) end
 
 -- ---------- ЭЛЕМЕНТЫ (capture; рисуем лениво) ----------
-local keyCaptureEl = nil
+keyCaptureEl = nil
 -- список игроков — capture; рендерится при открытии настроек модуля
-local function getPlayerListData()
+function getPlayerListData()
     local out = {}
     local myChar = LP.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -6064,7 +6064,7 @@ end
 
 -- ---------- ДИАГНОСТИКА/ВПЕРЁДНЫЕ ССЫЛКИ ----------
 GSBuildErrors = 0
-local function uiCall(kind, label, f, ...)
+function uiCall(kind, label, f, ...)
     local args = table.pack(...)
     local ok, res = xpcall(function()
         return f(table.unpack(args, 1, args.n))
@@ -6077,7 +6077,7 @@ local function uiCall(kind, label, f, ...)
     return res
 end
 
-local dummyCtl
+dummyCtl = nil
 do
     local t = setmetatable({}, {
         __index = function() return function() end end,
@@ -6088,11 +6088,11 @@ do
     }
 end
 
-local function addCategory(title)
+function addCategory(title)
     return uiCall("addCategory", title, addCategoryImpl, title)
 end
 
-local function addPage(cat, icon, title)
+function addPage(cat, icon, title)
     local r = uiCall("addPage", tostring(cat) .. "." .. tostring(title), addPageImpl, cat, icon, title)
     if r == nil then
         local m = {cat = cat, title = tostring(title), elements = {}, enableKey = nil,
@@ -6103,10 +6103,10 @@ local function addPage(cat, icon, title)
     return r
 end
 
-local HOIST_CATS = { Combat = true, Movement = true, Visuals = true }
+HOIST_CATS = { Combat = true, Movement = true, Visuals = true }
 -- эти панели НЕ вытаскивать отдельными строками — они остаются внутри своего модуля
-local NON_HOIST = { ["Target"] = true, ["Info"] = true, ["Silent Aura (1.8 Arena)"] = true, ["Mode Settings"] = true }
-local function addPanel(col, title)
+NON_HOIST = { ["Target"] = true, ["Info"] = true, ["Silent Aura (1.8 Arena)"] = true, ["Mode Settings"] = true }
+function addPanel(col, title)
     local m = col and col.__module
     if m == nil then return {module = nil, __module = nil, dim = true} end
     local t = cleanText(title)
@@ -6132,7 +6132,7 @@ local function addPanel(col, title)
     return {module = m, __module = m, sec = {title = t}}
 end
 
-local function addToggle(panel, key, label, default, cb)
+function addToggle(panel, key, label, default, cb)
     local el = {panel = panel, key = key, label = label, default = default, cb = cb}
     local r = uiCall("addToggle", label, function()
         local m = panel.__module
@@ -6168,7 +6168,7 @@ local function addToggle(panel, key, label, default, cb)
     }
 end
 
-local function addSlider(panel, key, label, minV, maxV, default, step, cb)
+function addSlider(panel, key, label, minV, maxV, default, step, cb)
     local r = uiCall("addSlider", label, function()
         local m = panel.__module
         local e = {kind = "slider", label = cleanText(label), min = minV, max = maxV,
@@ -6196,7 +6196,7 @@ local function addSlider(panel, key, label, minV, maxV, default, step, cb)
     }
 end
 
-local function addDropdown(panel, key, label, options, default, cb)
+function addDropdown(panel, key, label, options, default, cb)
     local r = uiCall("addDropdown", label, function()
         local m = panel.__module
         local e = {kind = "dropdown", label = cleanText(label), options = options,
@@ -6224,7 +6224,7 @@ local function addDropdown(panel, key, label, options, default, cb)
     }
 end
 
-local function addKeybind(panel, key, label, defaultName, cb)
+function addKeybind(panel, key, label, defaultName, cb)
     local r = uiCall("addKeybind", label, function()
         local m = panel.__module
         local defKey = nil
@@ -6254,28 +6254,28 @@ local function addKeybind(panel, key, label, defaultName, cb)
     return {get = r.safeGet}
 end
 
-local function addButton(panel, label, cb, color, hover)
+function addButton(panel, label, cb, color, hover)
     return uiCall("addButton", label, function()
         local m = panel.__module
         table.insert(m.elements, {kind = "button", label = cleanText(label), cb = cb, module = m})
     end)
 end
 
-local function addText(panel, text)
+function addText(panel, text)
     return uiCall("addText", tostring(text):sub(1, 32), function()
         local m = panel.__module
         table.insert(m.elements, {kind = "text", text = cleanText(text)})
     end)
 end
 
-local function addBindRow(panel, entry)
+function addBindRow(panel, entry)
     return uiCall("addBindRow", tostring(entry.label), function()
         local m = panel.__module
         table.insert(m.elements, {kind = "bindrow", entry = entry})
     end)
 end
 
-local function makePlayerList(panel, height)
+function makePlayerList(panel, height)
     local r = uiCall("makePlayerList", tostring(panel), function()
         local m = panel.__module
         local el = {kind = "plist", height = height or 140, data = {}, selected = nil,
@@ -6473,7 +6473,7 @@ end)()
 -- ================ СТРАНИЦЫ (все вкладки) ====================
 -- ============================================================
 -- обёрнуто в do...end: ~130 локалов страниц освобождаются в конце секции (лимит Luau = 200)
-local doLoad, flingListCtl, killListCtl, specListCtl, tpListCtl
+doLoad, flingListCtl, killListCtl, specListCtl, tpListCtl = nil, nil, nil, nil, nil
 ; pcall(function(...) -- IIFE под pcall: крэш секции страниц не убивает меню Rayfield
 
 -- храним ссылки на контролы, которые нужно синкать извне
