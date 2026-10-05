@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-BUILD_REV = 53
+BUILD_REV = 54
 
 KeySystem = {
     --// Конфигурация
@@ -10472,7 +10472,7 @@ do
         end
     end
     S.rsToggleConn = UIS.InputBegan:Connect(function(input, gpe)
-        if input.KeyCode == Enum.KeyCode.RightShift and not gpe then
+        if (input.KeyCode == Enum.KeyCode.RightShift or input.KeyCode == Enum.KeyCode.Insert) and not gpe then
             setGuiOpen(not CG_OPEN)
             return
         end
@@ -10491,7 +10491,11 @@ do
         if input.KeyCode == Enum.KeyCode.G then strip.Visible = false end
     end)
 
-    print("[SpermaHub] SpermaClick готов: RightShift — меню, ... — настройки модуля, Ctrl+G — доп. опции")
+    print("[SpermaHub] SpermaClick готов: RightShift/Insert — меню, ... — настройки модуля, Ctrl+G — доп. опции")
+    -- rev54: авто-открытие при загрузке (раньше меню стартовало скрытым — юзер думал, что оно не живое)
+    task.delay(0.4, function()
+        pcall(function() setGuiOpen(true) end)
+    end)
 end
 
 -- финальная инициализация (viewport-коннекты; watermark заглушен)
@@ -10520,7 +10524,7 @@ bootStep("финал OK")
 pcall(function() BootGui:Destroy() end)
 print("[SpermaHub] gui: рендер завершён")
 
-toastImpl("SpermaHub", "SpermaHub загружен!")
+toastImpl("SpermaHub", "SpermaHub загружен! RightShift/Insert — меню")
 print("✦ SpermaHub загружен!")
 print("Combat: Legitbot | Hitbox | Kill | Fling | Spectate | Anti-Aim | AutoClicker + AntiFling/AutoStrafe")
 print("Visuals + Movement + Player + Server (Bypass/Server) | Misc")
