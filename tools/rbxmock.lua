@@ -2,6 +2,9 @@
 -- хранится в репо: tools/rbxmock.lua
 local M = {pool = {}, _evNames = {}}
 
+-- форвард-декларации дататипов (newInst использует их до строк определений)
+local V3, CF
+
 -- планировщик: task.spawn в pool, task.wait = yield
 local function scheduleCo(co, ...)
     table.insert(M.pool, co)
@@ -87,6 +90,16 @@ local function newInst(class)
     end
     setmetatable(t, mt)
 
+    -- универсальные поля физики (BasePart-стиль; перезаписывается UI, ничего не ломает)
+    t.Position = V3(0, 0, 0)
+    t.Velocity = V3(0, 0, 0)
+    t.AssemblyLinearVelocity = V3(0, 0, 0)
+    t.RotVelocity = V3(0, 0, 0)
+    t.AssemblyAngularVelocity = V3(0, 0, 0)
+    t.CFrame = CF.new()
+    t.WalkSpeed = nil
+    t.MoveDirection = V3(0, 0, 0)
+
     t.GetChildren = function(self) return children end
     t.GetDescendants = function(self)
         local out = {}
@@ -104,6 +117,10 @@ local function newInst(class)
         for _, c in ipairs(children) do if c.ClassName == cls then return c end end
         return nil
     end
+    t.FindFirstChildWhichIsA = function(self, cls)
+        for _, c in ipairs(children) do if c:IsA(cls) then return c end end
+        return nil
+    end
     t.WaitForChild = function(self, name) return self:FindFirstChild(name) end
     t.Connect = function(self, f)
         -- низкоуровневое назначение (SetCore-styles; у настоящих сервисов Connect есть на _ev-объектах)
@@ -118,7 +135,16 @@ local function newInst(class)
         self.Parent = nil
     end
     t.GetPropertyChangedSignal = function(self, prop) return newInst("Event") end
-    t.IsA = function(self, cls) return self.ClassName == cls end
+    t.IsA = function(self, cls)
+        if cls == "BasePart" and (self.ClassName == "Part" or self.ClassName == "SpawnLocation"
+            or self.ClassName == "Attachment" or self.ClassName == "MeshPart" or self.ClassName == "WedgePart") then
+            return true
+        end
+        if cls == "GuiObject" and (self.ClassName == "Frame" or self.ClassName == "TextLabel" or self.ClassName == "TextButton" or self.ClassName == "ImageLabel" or self.ClassName == "ScrollingFrame" or self.ClassName == "TextBox" or self.ClassName == "CanvasGroup") then
+            return true
+        end
+        return self.ClassName == cls
+    end
     t.Clone = function(self) return newInst(self.ClassName) end
     t.SetAttribute = function() end
     t.GetAttribute = function() return nil end
@@ -162,14 +188,28 @@ local enumMT = {
 local Enum = setmetatable({}, {__index = function(_, k) return setmetatable({}, enumMT) end})
 
 -- дататайпы
-local function V3(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, {
+V3 = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, {
     __add = function(a, b) return V3(a.X + b.X, a.Y + b.Y, a.Z + b.Z) end,
     __sub = function(a, b) return V3(a.X - b.X, a.Y - b.Y, a.Z - b.Z) end,
     __mul = function(a, b) return type(a) == "number" and V3(a * b.X, a * b.Y, a * b.Z) or V3(a.X * b, a.Y * b, a.Z * b) end,
     __index = function(self, k) if k == "Magnitude" then return math.sqrt(self.X ^ 2 + self.Y ^ 2 + self.Z ^ 2) end end,
 }) end
-local CF = {new = function(...) return setmetatable({Position = V3(0, 0, 0)}, {}) end,
-            Angles = function() return setmetatable({Position = V3(0, 0, 0)}, {}) end}
+local CFMT = {
+    __mul = function(a, b) return a._ctr() end,
+    __add = function(a, b) return a._ctr() end,
+}
+CF = {
+    new = function(...)
+        local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT)
+        t._ctr = function() return setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT) end
+        return t
+    end,
+    Angles = function(...)
+        local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT)
+        t._ctr = function() return setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT) end
+        return t
+    end,
+}
 local UDim = {new = function(s, o) return {Scale = s, Offset = o} end}
 local UDim2 = {
     new = function(a, b, c, d) return {} end,
@@ -207,6 +247,17 @@ local function mkChar(name)
     local hum = newInst("Humanoid") hum.Name = "Humanoid" hum.Health = 100 hum.MaxHealth = 100
     hum.StateChanged = hum -- Connect-метод уже есть
     hum.Running = hum
+    hum.MoveDirection = V3(0, 0, 0)
+    hum.WalkSpeed = 16
+    hum.Sit = false
+    hum.PlatformStand = false
+    hum.AutoRotate = true
+    hum.RootPart = hrp
+    hum.RootPart.Name = "HumanoidRootPart"
+    hum.JumpPower = 50
+    hum.Sit = false
+    hum.SetStateEnabled = function(_, _, _) end
+    hum.ChangeState = function(_, _) end
     table.insert(guess:GetChildren(), hrp)
     table.insert(guess:GetChildren(), head)
     table.insert(guess:GetChildren(), hum)

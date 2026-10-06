@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-BUILD_REV = 56
+BUILD_REV = 57
 
 KeySystem = {
     --// Конфигурация
@@ -3103,7 +3103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev56 (Player-раскладка 7 страниц + Target HUD скид по фото)")
+print("[SpermaHub] сборка: build18 rev57 (Fling v3: Skid Fling из KILASIK Multi-Fling — velocity 9e7x10+rotv 9e8, FPDH NaN, Auto Fling loop по Selected/All Lobby)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -3312,7 +3312,8 @@ S = {
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
     silentMode="Universal",
-    flingMode="Velocity Burst", flingDur=5,
+    flingMode="Skid Fling", flingDur=5, skidDur=2, flingScope="Selected", flingSelName=nil,
+    autoFlingOn=false, flingCycleDelay=0.5, skidOldPos=nil, skidFPDH=nil,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
@@ -4342,6 +4343,145 @@ function flingStickyPlayer(target, dur)
     end)
 end
 
+-- ============ SKID FLING (rev57: port zqyDSUWX / KILASIK Multi-Fling 1:1) ============
+-- Техника: впечатываемся в цель 2с — Velocity 9e7 (вертикаль x10), RotVelocity 9e8,
+-- сверху/снизу с нарастающим Angle, предикт по MoveDirection; FPDH=NaN (иммунитет к падению
+-- под карту), BodyVelocity-фиксация, Seated off; финал — возврат на старую точку склейкой.
+function skidFling(target, respectAuto)
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    local tChar = target and target.Character
+    if not (root and tChar) then return false, "нет своего/чужого персонажа" end
+    local tHum = tChar:FindFirstChildOfClass("Humanoid")
+    local tRoot = tHum and tHum.RootPart
+    local tHead = tChar:FindFirstChild("Head")
+    local acc = tChar:FindFirstChildOfClass("Accessory")
+    local handle = acc and acc:FindFirstChild("Handle")
+    if tHum and tHum.Sit then return false, "цель сидит" end
+    if not tChar:FindFirstChildWhichIsA("BasePart") then return false, "у цели нет пар-тов" end
+    if root.Velocity.Magnitude < 50 then
+        S.skidOldPos = root.CFrame -- аналог getgenv().OldPos
+    end
+    local cam = workspace.CurrentCamera
+    local prevSubject = cam and cam.CameraSubject
+    if tHead then
+        cam.CameraSubject = tHead
+    elseif handle then
+        cam.CameraSubject = handle
+    elseif tHum and tRoot then
+        cam.CameraSubject = tHum
+    end
+    local BasePart = tRoot or tHead or handle
+    if not BasePart then return false, "нет части для домашки" end
+
+    local function FPos(part, pos, ang)
+        root.CFrame = CFrame.new(part.Position) * pos * ang
+        pcall(function() ch:SetPrimaryPartCFrame(CFrame.new(part.Position) * pos * ang) end)
+        root.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+        root.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+    end
+
+    S.skidFPDH = workspace.FallenPartsDestroyHeight
+    workspace.FallenPartsDestroyHeight = 0/0 -- NaN: падение под мир не убивает
+    S.skidActive = true -- чтобы свой Anti Fling не резал наш Velocity 9e7
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity = Vector3.new(0, 0, 0)
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Parent = root
+    pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false) end)
+
+    local TimeToWait = tonumber(S.skidDur) or 2
+    local t0 = tick()
+    local Angle = 0
+    repeat
+        if not (root.Parent and tHum and tHum.Parent and hum.Parent) then break end
+        if BasePart.Velocity.Magnitude < 50 then
+            Angle = Angle + 100
+            local md = tHum.MoveDirection
+            local pred = md * BasePart.Velocity.Magnitude / 1.25
+            FPos(BasePart, CFrame.new(0, 1.5, 0) + pred, CFrame.Angles(math.rad(Angle), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0) + pred, CFrame.Angles(math.rad(Angle), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, 1.5, 0) + pred, CFrame.Angles(math.rad(Angle), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0) + pred, CFrame.Angles(math.rad(Angle), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, 1.5, 0) + md, CFrame.Angles(math.rad(Angle), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0) + md, CFrame.Angles(math.rad(Angle), 0, 0)) task.wait()
+        else
+            local ws = tHum.WalkSpeed or 16
+            FPos(BasePart, CFrame.new(0, 1.5, ws), CFrame.Angles(math.rad(90), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, -ws), CFrame.Angles(0, 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, 1.5, ws), CFrame.Angles(math.rad(90), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0)) task.wait()
+            FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0)) task.wait()
+        end
+    until t0 + TimeToWait < tick() or (respectAuto and not S.autoFlingOn)
+
+    pcall(function() bv:Destroy() end)
+    pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Seated, true) end)
+    if cam then cam.CameraSubject = prevSubject or hum end
+    pcall(function()
+        workspace.FallenPartsDestroyHeight = S.skidFPDH or -500
+    end)
+    -- сброс: возврат на старую точку, как в оригинале
+    local old = S.skidOldPos
+    if old and root.Parent then
+        local n = 0
+        repeat
+            if not root.Parent then break end
+            root.CFrame = old * CFrame.new(0, 0.5, 0)
+            pcall(function() ch:SetPrimaryPartCFrame(old * CFrame.new(0, 0.5, 0)) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            for _, part in pairs(ch:GetChildren()) do
+                if part:IsA("BasePart") then
+                    part.Velocity = Vector3.new()
+                    part.RotVelocity = Vector3.new()
+                end
+            end
+            task.wait()
+            n = n + 1
+        until not root.Parent or (root.Position - old.p).Magnitude < 25 or n > 60
+    end
+    S.skidActive = false
+    return true
+end
+
+-- авто-цикл по выбранным/всем — START FLING / STOP FLING = тогл (как у Kilasik)
+function setAutoFling(b)
+    S.autoFlingOn = b and true or false
+    if not S.autoFlingOn then return end
+    task.spawn(function()
+        while S.autoFlingOn do
+            local targets = {}
+            if S.flingScope == "All Lobby" then
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr ~= LP then table.insert(targets, plr) end
+                end
+            else
+                local plr = S.flingSelName and Players:FindFirstChild(S.flingSelName)
+                if plr then table.insert(targets, plr) end
+            end
+            if #targets == 0 then
+                toastImpl("Fling", "Нет целей: выбери игрока в списке или Scope = All Lobby")
+                S.autoFlingOn = false
+                local c = Cfg["fling.auto"] if c then c.set(false) end
+                break
+            end
+            for _, plr in ipairs(targets) do
+                if not S.autoFlingOn then break end
+                if plr and plr.Parent then
+                    pcall(skidFling, plr, true)
+                end
+                if not S.autoFlingOn then break end
+                task.wait(0.1)
+            end
+            if not S.autoFlingOn then break end
+            task.wait(tonumber(S.flingCycleDelay) or 0.5)
+        end
+    end)
+end
+
 -- ============ BULLET TRACERS + HITMARKER ============
 HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
 
@@ -4644,6 +4784,7 @@ function enableAntiFling()
         if not S.afOn then return end
         if S.flying then return end -- Fly сам управляет скоростью
         if S.flingConn then return end -- свой флинг не трогаем
+        if S.skidActive then return end  -- свой skid-флинг тоже не трогаем
         local ch = LP.Character
         if not ch then return end
         for _, p in ipairs(ch:GetDescendants()) do
@@ -8628,11 +8769,20 @@ do
     addButton(pTarget, "Refresh List", function()
         flingList.rebuild(getPlayerListData())
     end)
-    addDropdown(pTarget, "fling.mode", "Mode", {"Velocity Burst", "Stick TP"}, "Velocity Burst", function(v)
+    addDropdown(pTarget, "fling.mode", "Mode", {"Velocity Burst", "Stick TP", "Skid Fling"}, "Skid Fling", function(v)
         S.flingMode = v
+    end)
+    addDropdown(pTarget, "fling.scope", "Scope (Auto Fling)", {"Selected", "All Lobby"}, "Selected", function(v)
+        S.flingScope = v
     end)
     addSlider(pTarget, "fling.duration", "Stick Duration", 3, 10, 5, 1, function(v)
         S.flingDur = math.floor(v)
+    end)
+    addSlider(pTarget, "fling.skiddur", "Skid Duration (с на цель)", 0.5, 4, 2, 0.5, function(v)
+        S.skidDur = v
+    end)
+    addSlider(pTarget, "fling.cycledelay", "Auto Fling Cycle Delay", 0.2, 2, 0.5, 0.1, function(v)
+        S.flingCycleDelay = v
     end)
     addButton(pTarget, "Fling Target", function()
         local plr = flingSel and Players:FindFirstChild(flingSel)
@@ -8640,17 +8790,30 @@ do
             if S.flingMode == "Stick TP" then
                 flingStickyPlayer(plr, S.flingDur)
                 toastImpl("Fling", "Стик-флинг (" .. tostring(S.flingDur) .. " сек): " .. plr.Name)
-            else
+            elseif S.flingMode == "Velocity Burst" then
                 flingPlayer(plr)
                 toastImpl("Fling", "Флингую: " .. plr.Name)
+            else
+                toastImpl("Fling", "SKID-флинг (" .. tostring(S.skidDur) .. " с): " .. plr.Name)
+                task.spawn(function() skidFling(plr, false) end)
             end
         else
             toastImpl("Fling", "Сначала выбери цель!")
         end
     end, C_RED, C_RED_H)
+    addToggle(pTarget, "fling.auto", "START FLING (Auto, по Scope)", false, function(state)
+        setAutoFling(state)
+        if state then
+            toastImpl("Fling", "Auto Fling STARTED — Scope: " .. tostring(S.flingScope))
+        else
+            toastImpl("Fling", "Auto Fling STOPPED")
+        end
+    end)
 
     local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "Velocity Burst — старый: налет с Velocity ~0.8с. Stick TP (твой сниппет): телепорт на цель + клей каждый кадр с Velocity (0, 100000, 0) N секунд, сервер видит тебя внутри цели с гигантской скоростью => её откидывает; затем возврат 50-циклами с нулевой скоростью.")
+    addText(pInfo, "Skid Fling — порт KILASIK/zqyDSUWX 1:1: на N сек впечатываемся в цель (Velocity 9e7/Yx10, RotVelocity 9e8, BodyVelocity-фиксация), FallenParts NaN, спин сверху↔снизу с предиктом по MoveDirection — цель улетает далеко; затем сброс на старую позицию.")
+    addText(pInfo, "Auto Fling: цикл по Scope — Selected (из списка) или All Lobby (все по очереди, 0.1с между, 0.5с между кругами). STOP — тот же тогл. Сидящая цель пропускается.")
+    addText(pInfo, "Stick TP — телепорт на цель + клей с Velocity (0, 100000, 0) N сек, затем возврат. Velocity Burst — короткий налёт ~0.8с.")
 end
 
 -- ==== Spectate ====
@@ -9439,8 +9602,6 @@ do
         if plr then
             tpToPlayer(plr)
             toastImpl("TP Player", "Телепорт к " .. plr.Name)
-        else
-            toastImpl("TP Player", "Сначала выбери игрока!")
         end
     end, Color3.fromRGB(24, 70, 110), Color3.fromRGB(30, 86, 132))
     local pInfo = addPanel(pg.col2, "Info")
@@ -10116,6 +10277,11 @@ function fullCleanupNL()
     if S.silentAimConn then pcall(function() S.silentAimConn:Disconnect() end) end
     disableAutoClicker()
     pcall(brCleanupAll) -- rev55: стоп Brainrot-циклов + вернуть промптам HoldDuration
+    S.autoFlingOn = false -- rev57: прекратить Auto Fling (Stop)
+    pcall(function()
+        if S.skidFPDH ~= nil then workspace.FallenPartsDestroyHeight = S.skidFPDH end
+        S.skidActive = false
+    end)
     dcc(S.autoClickBindConn)
     dcc(S.jesusConn)
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end

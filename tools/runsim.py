@@ -29,6 +29,10 @@ if iife_idx != -1:
 
 rt.globals()["MOCK"] = mock
 rt.globals()["SCRIPT_SRC"] = code
+# helper: вернуть LocalPlayer-мок для целевых проб
+lp_fn = rt.eval("function() return MOCK.env.game:GetService('Players').LocalPlayer end")
+rt.globals()["OBJ_LP"] = lp_fn
+rt.globals()["runner_notify"] = None
 
 runner = r"""
 local mock = MOCK
@@ -107,6 +111,19 @@ if E.Cfg and E.Cfg["br.steal.enabled"] then
     pump(2)
     print("br.stealOn: " .. tostring(E.S and E.S.br and E.S.br.stealOn))
     pcall(function() E.Cfg["br.steal.enabled"].set(false) end)
+end
+-- Skid Fling probe (rev57): функции + регистрация контролов
+print("skidFling fn: " .. tostring(type(E.skidFling))
+    .. " | setAutoFling fn: " .. tostring(type(E.setAutoFling)))
+print("fling ctrls: " .. tostring(
+    (E.Cfg and E.Cfg["fling.mode"] ~= nil) and 1 or 0) .. ")" .. tostring(
+    (E.Cfg and E.Cfg["fling.skiddur"] ~= nil) and 1 or 0) .. ")" .. tostring(
+    (E.Cfg and E.Cfg["fling.auto"] ~= nil and 1 or 0)), " (ожидалось 1)1)1")
+-- SkidFling один-запуск против самого себя (мок): не должен бросать ошибок вне pcall
+if type(E.skidFling) == "function" then
+    E.S.skidDur = 0.05
+    local okS, errS = pcall(function() E.skidFling(OBJ_LP(), false) end)
+    print("skidFling self-probe: ok=" .. tostring(okS) .. " ret(err)=" .. tostring(errS))
 end
 return true
 """
