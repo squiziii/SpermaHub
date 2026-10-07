@@ -104,7 +104,7 @@ end
 -- Player pages count
 local pcount, names = 0, {}
 for _, m in ipairs(E.MODULES or {}) do if m.cat == "Player" then pcount = pcount + 1 table.insert(names, tostring(m.title)) end end
-print("Player pages: " .. tostring(pcount) .. " (ожидалось 7) => " .. table.concat(names, " | "))
+print("Player pages: " .. tostring(pcount) .. " (ожидалось 8) => " .. table.concat(names, " | "))
 -- Brainrot regression probe
 if E.Cfg and E.Cfg["br.steal.enabled"] then
     pcall(function() E.Cfg["br.steal.enabled"].set(true) end)

@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-BUILD_REV = 58
+BUILD_REV = 59
 
 KeySystem = {
     --// Конфигурация
@@ -3103,7 +3103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev58 (Player: Statue — стой на месте, видят все: anchor+CFrame-lock, респаун-возврат стояки)")
+print("[SpermaHub] сборка: build18 rev59 (Statue -> Fake Stand desync: ты ходишь, сервер видит стояку; выкл — все видят перемещение)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -3280,7 +3280,7 @@ end
 S = {
     flying=false, noclip=false, esp=false, speed=50,
     targetEspOn=false, targetStyle="Pink", targetEspConn=nil, targetHudOn=false,
-    statueOn=false, statueCF=nil, statueConn=nil, statueCharConn=nil,
+    statueOn=false, statueCF=nil, statueReal=nil, statueConn=nil, statueCharConn=nil,
     wmOn=true,
     bv=nil, bg=nil, flyConn=nil, noclipConn=nil,
     fps=60, ping=0,
@@ -4483,12 +4483,15 @@ function setAutoFling(b)
     end)
 end
 
--- ============ STATUE (rev58: стой тут — видят все игроки) ============
--- Не визуал: фиксируем РЕАЛЬНУЮ позицию (anchor + CFrame-lock) → сервер реплицирует
--- тебя стоящим на месте для ВСЕХ игроков. Выключаешь — отпускает, «стояк» исчезает.
+-- ============ STATUE / FAKE LAG (rev59: ты ходишь, все видят что ты стоишь) ============
+-- Не визуал: серверной репликации отдаём замороженную стояку (CFrame-десинхронизация
+-- Heartbeat→RenderStepped). У самого себя ты свободно двигаешься, остальные видят стояк.
+-- Выключаешь — перестаём перезаписывать → все мгновенно видят, как ты переместился
+-- (от стояки к реальному месту, где ты сейчас).
 function setStatue(b)
     S.statueOn = b
     dcc(S.statueConn)
+    S.statueConn = nil
     dcc(S.statueCharConn)
     S.statueCharConn = nil
     if b then
@@ -4497,55 +4500,38 @@ function setStatue(b)
         if not root then
             toastImpl("Statue", "Нет персонажа")
             S.statueOn = false
+            local c = Cfg["player.statue"] if c then c.set(false) end
             return
         end
-        S.statueCF = root.CFrame
-        pcall(function()
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.Anchored = true                          -- заанкорен = не швырнуть флингом
-        end)
+        S.statueCF = root.CFrame -- фиксируем точку стояка
         S.statueConn = sh2Conn(RunService.Heartbeat:Connect(function()
             if not S.statueOn then return end
             local c2 = LP.Character
             local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-            if r2 and S.statueCF then
-                pcall(function()
-                    -- если нас пытаются сдвинуть (флинг/телепорт) — ставим на место
-                    r2.AssemblyLinearVelocity = Vector3.zero
-                    r2.AssemblyAngularVelocity = Vector3.zero
-                    if not r2.Anchored then r2.Anchored = true end
-                    if (r2.Position - S.statueCF.Position).Magnitude > 2 then
-                        r2.CFrame = S.statueCF
-                    end
-                end)
+            if not r2 then return end
+            local realCF = r2.CFrame
+            r2.CFrame = S.statueCF            -- исходящий репликант уйдёт стояком
+            pcall(function() RunService.RenderStepped:Wait() end)
+            if r2.Parent and S.statueOn then
+                r2.CFrame = realCF           -- а для себя всё как было — свободно идём
+                S.statueReal = realCF
             end
         end))
-        -- респаун: вернуть стояк на то же место (иначе видно, что «исчез» на спавне)
-        S.statueCharConn = sh2Conn(LP.CharacterAdded:Connect(function(c)
+        -- респаун: десинк снимаем (точка стояка умерла вместе с прошлым телом)
+        S.statueCharConn = sh2Conn(LP.CharacterAdded:Connect(function()
             if not S.statueOn then return end
-            task.spawn(function()
-                local r = c:WaitForChild("HumanoidRootPart", 5)
-                if r and S.statueOn and S.statueCF then
-                    task.wait(0.3)
-                    pcall(function()
-                        r.CFrame = S.statueCF
-                        r.Anchored = true
-                    end)
-                end
-            end)
+            S.statueOn = false
+            dcc(S.statueConn)
+            S.statueConn = nil
+            S.statueCF = nil
+            S.statueReal = nil
+            local c = Cfg["player.statue"] if c then c.set(false) end
+            toastImpl("Statue", "Респаун — стояк снят")
         end))
     else
-        local ch = LP.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        pcall(function()
-            if root then
-                root.Anchored = false
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                if S.statueCF then root.CFrame = S.statueCF end -- остаёшься на точке стояка (без прыжка назад)
-            end
-        end)
+        -- офф: другие игроки в тот же кадр репликации увидят, что ты переместился к реальной точке
+        S.statueCF = nil
+        S.statueReal = nil
     end
 end
 
@@ -9675,18 +9661,19 @@ do
     addText(pInfo, "Выбери игрока из списка → Teleport — персонаж оказывается у него вплотную.")
 end
 
--- ==== Statue (стой на месте — видят все) ====
+-- ==== Statue (Fake Lag — ты ходишь, все видят что ты стоишь) ====
 do
     local pg = addPage("Player", "🗿", "Statue")
 
-    local pSt = addPanel(pg.col1, "Stand Statue")
+    local pSt = addPanel(pg.col1, "Fake Stand (Desync)")
     addToggle(pSt, "player.statue", "Enabled", false, function(state)
         setStatue(state)
-        toastImpl("Statue", state and "Стоишь на месте — все видят 🗿" or "Больше не стоишь — отпустило")
+        toastImpl("Statue", state and "Для всех ты стоишь на месте — ты двигаешься 🗿" or "Fake Stand выключен — игроки видят твой реальный мув")
     end)
     local pInfo = addPanel(pg.col2, "Info")
-    addText(pInfo, "Замираешь на месте по-настоящему: сервер реплицирует твою реальную позицию → ВСЕ игроки видят, что ты стоишь. Не визуал — это твоя настоящая точка.")
-    addText(pInfo, "Насмерть пригвождён (anchor): флинги/толчки не сдвигают. Выключаешь — анакор отпускает, «стояка» больше никто не видит. Респаун — вернёт стояку на место.")
+    addText(pInfo, "Ты ходишь как обычно, а исходящей репликации отдаём зафиксированную точку → ВСЕ игроки видят, что ты неподвижно стоишь. Не визуал и не фриз — это десинк CFrame, классический Fake Stand.")
+    addText(pInfo, "Выключаешь — синхрон прекращается, и игроки МГНОВЕННО видят, как ты переместился со стояки на реальное текущее место. Респаун — модуль сам отключится.")
+    addText(pInfo, "Как юзать: встал куда хочешь → включил Enabled → ушёл гулять. Игрокам ты так и стоишь на месте.")
 end
 
 -- ==== Misc (Appearance + NoKb + Invisible) ====
