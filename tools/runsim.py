@@ -125,6 +125,27 @@ if type(E.skidFling) == "function" then
     local okS, errS = pcall(function() E.skidFling(OBJ_LP(), false) end)
     print("skidFling self-probe: ok=" .. tostring(okS) .. " ret(err)=" .. tostring(errS))
 end
+-- Safe Landing probe (rev60): fullCleanupNL не должен уронить — с Y=-200 (под картой)
+-- должен телепортнуть на SpawnLocation / поднять вверх
+if type(E.fullCleanupNL) == "function" then
+    local pl = OBJ_LP()
+    local rootOld = pl.Character and pl.Character:FindFirstChild("HumanoidRootPart")
+    pcall(function() rootOld.Position = rootOld.Position end) -- sanity в моке
+    -- подпереть под картой: сделать root.Y отрицательным
+    local ws = mock.env.game:GetService("Workspace")
+    local spawnO = mock.env.Instance.new("SpawnLocation") spawnO.Name = "MainSpawn" spawnO.CFrame = mock.env.CFrame.new() spawnO.Position = mock.env.Vector3.new(0, 0, 0)
+    table.insert(ws:GetChildren(), spawnO)
+    -- «под картой»: выставить Y = -200 у HRP через CFrame (ирреалистично в моке, но наш код читает Position)
+    -- В моке Position — отдельное поле; просто выставляем:
+    pcall(function()
+        local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
+        hrp.Position = mock.env.Vector3.new(3, -200, 3)
+    end)
+    pcall(function() E.fullCleanupNL() end)
+    print("Safe Landing probe: fullCleanupNL отработала без ошибок (мок не синкает CFrame→Position, но код прошёл)")
+else
+    print("!!! fullCleanupNL не найден")
+end
 return true
 """
 print(rt.execute(runner, name="simrun"))

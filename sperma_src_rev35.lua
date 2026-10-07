@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-BUILD_REV = 59
+BUILD_REV = 60
 
 KeySystem = {
     --// Конфигурация
@@ -3103,7 +3103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev59 (Statue -> Fake Stand desync: ты ходишь, сервер видит стояку; выкл — все видят перемещение)")
+print("[SpermaHub] сборка: build18 rev60 (FIX: Safe Landing в клинаупе — «провалился под карту» при выходе; удаление Anti-Void-платформы)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -10406,6 +10406,51 @@ function fullCleanupNL()
     end
     pcall(function() espMaxStop() end)
     pcall(disableTargetESP)
+
+    -- SAFE LANDING (rev60): спасение от «провалился под карту» при закрытии скрипта.
+    -- Если под ногами нет твёрдой земли в 400 studs, либо Y ~ бездна, либо Y < 0 —
+    -- ставим персонажа на SpawnLocation (+5 вверх). Срабатывает для noclip/fly под землёй,
+    -- Invisible до восстановления (порядок: любое восстановление сначала) и прочих состояний.
+    pcall(function()
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local belowVoidH = false
+        pcall(function()
+            local fdh = workspace.FallenPartsDestroyHeight
+            if type(fdh) == "number" and root.Position.Y < fdh + 60 then belowVoidH = true end
+        end)
+        local noGround = false
+        pcall(function()
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {ch}
+            local hit = workspace:Raycast(root.Position, Vector3.new(0, -400, 0), params)
+            noGround = hit == nil
+        end)
+        local belowZero = root.Position.Y < 0
+        if noGround or belowVoidH or belowZero then
+            local spawn = nil
+            pcall(function()
+                for _, d in ipairs(workspace:GetDescendants()) do
+                    if d:IsA("SpawnLocation") then spawn = d break end
+                end
+            end)
+            local targetCF
+            if spawn then
+                targetCF = spawn.CFrame * CFrame.new(0, 5, 0)
+            else
+                targetCF = CFrame.new(root.Position.X, 100, root.Position.Z)
+            end
+            root.CFrame = targetCF
+            pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+            pcall(function() root.Velocity = Vector3.zero end)
+            print("[SpermaHub] Safe Landing: было Y=" .. tostring(math.floor(root.Position.Y)) ..
+                " → телепорт на безопасную точку")
+        end
+    end)
+    -- Anti-Void-платформа — удалить после Safe Landing (иначе под ногами остаётся пол под картой)
+    pcall(function() if av and av.part then av.part:Destroy() av.part = nil end end)
     local heirsT = { LP.PlayerGui }
     pcall(function() if gethui then table.insert(heirsT, gethui()) end end)
     pcall(function() table.insert(heirsT, game:GetService("CoreGui")) end)
