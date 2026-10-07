@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-BUILD_REV = 60
+BUILD_REV = 61
 
 KeySystem = {
     --// Конфигурация
@@ -3103,7 +3103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev60 (FIX: Safe Landing в клинаупе — «провалился под карту» при выходе; удаление Anti-Void-платформы)")
+print("[SpermaHub] сборка: build18 rev61 (Safe Landing теперь возвращает на последнее твёрдое место — Ground Tracker 0.5с; SpawnLocation только fallback)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -8063,6 +8063,29 @@ end))
 -- ============================================================
 -- ANTI-VOID + ANTI-AFK
 -- ============================================================
+-- ============ GROUND TRACKER (rev61: запоминаем последнее твёрдое место) ============
+-- Лёгкий трекер: раз в 0.5с, если под ногами есть земля (≤4 studs) — фиксируем CFrame.
+-- Используется Safe Landing'ом при закрытии: вернуться туда, где ты реально стоял.
+S.lastGroundCF = nil
+S._glTrackT = 0
+sh2Conn(RunService.Heartbeat:Connect(function()
+    local t = tick()
+    if t - (S._glTrackT or 0) < 0.5 then return end
+    S._glTrackT = t
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    pcall(function()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {ch}
+        local hit = workspace:Raycast(root.Position, Vector3.new(0, -4, 0), params)
+        if hit then
+            S.lastGroundCF = root.CFrame
+        end
+    end)
+end))
+
 local av = {part = nil, lastSafe = nil}
 function setAntiVoid(b)
     S.antiVoidOn = b
@@ -10430,23 +10453,30 @@ function fullCleanupNL()
         end)
         local belowZero = root.Position.Y < 0
         if noGround or belowVoidH or belowZero then
-            local spawn = nil
+            -- приоритет: место, где ты РЕАЛЬНО последний раз стоял (Ground Tracker);
+            -- fallback — SpawnLocation; затем — просто поднять над текущей XZ
+            local targetCF = nil
             pcall(function()
-                for _, d in ipairs(workspace:GetDescendants()) do
-                    if d:IsA("SpawnLocation") then spawn = d break end
-                end
+                if S.lastGroundCF then targetCF = S.lastGroundCF * CFrame.new(0, 3, 0) end
             end)
-            local targetCF
-            if spawn then
-                targetCF = spawn.CFrame * CFrame.new(0, 5, 0)
-            else
-                targetCF = CFrame.new(root.Position.X, 100, root.Position.Z)
+            if not targetCF then
+                local spawn = nil
+                pcall(function()
+                    for _, d in ipairs(workspace:GetDescendants()) do
+                        if d:IsA("SpawnLocation") then spawn = d break end
+                    end
+                end)
+                if spawn then
+                    targetCF = spawn.CFrame * CFrame.new(0, 5, 0)
+                else
+                    targetCF = CFrame.new(root.Position.X, 100, root.Position.Z)
+                end
             end
             root.CFrame = targetCF
             pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
             pcall(function() root.Velocity = Vector3.zero end)
             print("[SpermaHub] Safe Landing: было Y=" .. tostring(math.floor(root.Position.Y)) ..
-                " → телепорт на безопасную точку")
+                " → телепорт туда, где стоял")
         end
     end)
     -- Anti-Void-платформа — удалить после Safe Landing (иначе под ногами остаётся пол под картой)
