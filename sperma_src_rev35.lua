@@ -92,9 +92,9 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-local BUILD_REV = 68
+BUILD_REV = 70
 
-local KeySystem = {
+KeySystem = {
     --// Конфигурация
     Config = {
         AdminPassword = "1337",        -- Пароль от админки
@@ -143,13 +143,13 @@ local KeySystem = {
     }
 }
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local HttpService = game:GetService("HttpService")
-local CoreGuiSvc = game:GetService("CoreGui")
+Players = game:GetService("Players")
+LocalPlayer = Players.LocalPlayer
+HttpService = game:GetService("HttpService")
+CoreGuiSvc = game:GetService("CoreGui")
 
 --// HWID устройства (gethwid → fallback UserId)
-local function GetHWID()
+function GetHWID()
     local ok, h = pcall(function()
         if gethwid then return gethwid() end
         return LocalPlayer.UserId
@@ -162,13 +162,13 @@ end
 pcall(function() math.randomseed(tick() % 1 * 1e6 + os.clock() * 1e3) end)
 
 --// Хелперы
-local function ksPrint(msg)
+function ksPrint(msg)
     if KeySystem.Config.Debug then
         print("[SpermaHub Key] " .. msg)
     end
 end
 
-local function ksNotify(title, msg, duration)
+function ksNotify(title, msg, duration)
     if toastImpl then
         pcall(toastImpl, title, msg)
     else
@@ -177,7 +177,7 @@ local function ksNotify(title, msg, duration)
 end
 
 --// Парс срока «6h»/«3d»/«2w»/«90m» → секунды (rev33)
-local function ParseDuration(str)
+function ParseDuration(str)
     str = tostring(str or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     local num, unit = str:match("^(%d+)([hdwm])$")
     if not num then return nil end
@@ -186,7 +186,7 @@ local function ParseDuration(str)
 end
 
 --// Генерация случайного ключа
-local function GenerateKeyString(length)
+function GenerateKeyString(length)
     length = length or 16
     local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     local result = {}
@@ -3103,7 +3103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build21 rev67 (FTP: Anti Grasp + Сила броска x1–x20 в категории Player)")
+print("[SpermaHub] сборка: build18 rev70 (Kill Aura: обходы 1.8 спам / 1.9 кулдаун + дистанция; фикс Target ESP — берёт цель киллауры)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -3276,15 +3276,31 @@ function dcc(c)
     if typeof(c) == "RBXScriptConnection" then pcall(function() c:Disconnect() end) end
 end
 
--- реестр живых коннектов (ДОЛЖЕН быть объявлен ДО setStatue / SH2 / всех секций логики!)
+-- ГЛОБАЛЬНЫЕ SH2/sh2Conn (origin: блок build11 ниже по файлу). Подняты сюда осознанно:
+-- функции, объявленные выше по коду (Statue rev58, Infinite Ammo, Wallbang, TimeHUD rev63),
+-- обращались к ним как к ГЛОБАЛАМ и получали nil → коннекты не создавались (мёртвые тоглы).
 SH2 = {conns = {}, objs = {}}
 function sh2Conn(c) table.insert(SH2.conns, c) return c end
+
+-- краткий помощник цвета (C3 → Color3.fromRGB), чтобы не писать длинные вызовы
+function C3(r, g, b) return Color3.fromRGB(r or 255, g or 255, b or 255) end
+
+-- безопасный toast: если toastImpl ещё не инициализирован (ранняя стадия загрузки) — пишем в консоль
+function notifySafe(msg, _color)
+    pcall(function()
+        if type(toastImpl) == "function" then
+            toastImpl("SpermaHub", tostring(msg))
+        else
+            print("[SpermaHub] " .. tostring(msg))
+        end
+    end)
+end
 
 -- ============ СОСТОЯНИЕ ============
 S = {
     flying=false, noclip=false, esp=false, speed=50,
     targetEspOn=false, targetStyle="Pink", targetEspConn=nil, targetHudOn=false,
-    statueOn=false, statueCF=nil, statueReal=nil, statueGen=0, statueCharConn=nil,
+    statueOn=false, statueCF=nil, statueReal=nil, statueConn=nil, statueCharConn=nil,
     wmOn=true,
     bv=nil, bg=nil, flyConn=nil, noclipConn=nil,
     fps=60, ping=0,
@@ -3300,7 +3316,7 @@ S = {
     autoClickGen=0, autoClickBind=Enum.KeyCode.X, autoClickBindConn=nil,
     jesusOn=false, jesusConn=nil, jesusPlatform=nil,
     teamCheck=false, visibleCheck=false,
-    tracersOn=false, hitmarkerOn=false, hitsoundOn=false, hitsoundPreset="Neverlose", hitsoundVol=1, hitsoundPitch=1, hitsoundCustomId="rbxassetid://9125402735", fxConn=nil,
+    tracersOn=false, hitmarkerOn=false, fxConn=nil,
     spinOn=false, spinSpeed=90, spinConn=nil, spinHeadDown=false, spinAngle=0, spinBaseYaw=0,
     aaOn=false, aaConn=nil, aaPitch="Up", aaYaw="Backward", aaYawJitter="Disabled",
     aaSpinSpeed=180, aaAngle=0, aaJitSide=false, aaSlowWalk=false, aaSlowSpeed=8, aaFreestanding=false, aaPinPos=nil, aaPinDrop=0, aaHeadDepth=1, aaHipOrig=nil, aaDesync=false, aaDesyncAmt=0.35, aaDesyncPrev=nil,
@@ -3317,15 +3333,25 @@ S = {
     invisOn=false, invisConn=nil, invisOffset=58, invisY=0,
     noKbOn=false, noKbConn=nil, noKbMax=45, noKbLast=nil, noKbFull=false,
     silentMode="Universal",
+    infAmmoOn=false, infAmmoConn=nil,                     -- rev63: бесконечные патроны
+    wallbangOn=false, wallbangConn=nil, wallbangMap=nil,  -- rev63: прострелы через стены
+    hitsoundOn=false, hitsoundId="rbxasset://sounds/snap.mp3", hitsoundVol=0.7, -- rev63: хитсаунд
+    sessionT0=tick(), timeHudOn=false, timeHudGui=nil, timeHudConn=nil, timeDayKey=nil, timeDayTotal=nil, timeSaveAcc=0, -- rev63: таймер
+    botRecOn=false, botRecConn=nil, botPoints={}, botRouteLine=nil, botWalkOn=false, botWalkConn=nil, botTargetMarker=nil,
+    botSpeed=16, botMode="Один раз", botLineOn=true, -- rev67: Route Bot
+    botRecActions=true, botPlayActions=true, botActions={}, botRecT0=nil, botActConns=nil, -- rev69: Bot v2, действия GUI/клики/промпты
+    graspOn=false, graspConn=nil, graspWasHeld=false, graspPrevHeadless=nil, revengeUntil=0, revengeSec=8,
+    tpowOn=false, tpow=2, tpowRadius=15, tpowConn=nil, tpowStamp={}, tpowAcc=0, graspAutoRev=false, -- rev68: FTP Anti-Grasp + Throw Power
     flingMode="Skid Fling", flingDur=5, skidDur=2, flingScope="Selected", flingSelName=nil,
     autoFlingOn=false, flingCycleDelay=0.5, skidOldPos=nil, skidFPDH=nil,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
     asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false, flickHold=false,
-    asSilentNet=true, asNetByAuto=false, flHookOn=false, flOldFire=nil, wallbangOn=false,
+    asSilentNet=true, asNetByAuto=false, flHookOn=false, flOldFire=nil,
     asTrigger=false, asTrigDelay=0.08, asLastTrig=0,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
+    kaMode="1.8", -- rev70: обход 1.8 (спам-клики) / 1.9 (кулдаун с джиттером)
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
@@ -3346,9 +3372,6 @@ S = {
     antiVoidOn=false, antiAfkOn=false,
     auraOn=false, auraType="neverlose",
     deathFxOn=false, deathFxType="Emitter",
-    sessionStart=os.clock(),
-    routeRec=false, routePlay=false, routeLoop=true, routeMode="CFrame", routePts={}, routeRecConn=nil, routePlayGen=0,
-    ftpAntiGrasp=false, ftpThrowMult=1, ftpAgGen=0, ftpTpGen=0,
 }
 
 -- =====================================================================
@@ -3754,30 +3777,6 @@ function enableSilentAim()
         setreadonly(mt, false)
         mt.__namecall = newcclosure(function(self, ...)
             local method = getnamecallmethod()
-            if S.silentAimOn and method == "Raycast" then
-                local target = findSilentTarget()
-                local targetChar = target and target.Character
-                local targetPart = targetChar and (targetChar:FindFirstChild("Head")
-                    or targetChar:FindFirstChild("UpperTorso")
-                    or targetChar:FindFirstChild("Torso"))
-                if targetPart then
-                    local args = {...}
-                    if typeof(args[1]) == "Vector3" then
-                        local origin = args[1]
-                        args[1] = origin
-                        args[2] = (targetPart.Position - origin).Unit * 1000
-                        if S.wallbangOn then
-                            pcall(function()
-                                local rp = RaycastParams.new()
-                                rp.FilterType = Enum.RaycastFilterType.Include
-                                rp.FilterDescendantsInstances = {targetChar}
-                                args[3] = rp
-                            end)
-                        end
-                        return oldNamecall(self, unpack(args))
-                    end
-                end
-            end
             if S.silentAimOn and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") then
                 local target = findSilentTarget()
                 if target then
@@ -3792,9 +3791,6 @@ function enableSilentAim()
                                 local origin = args[1].Origin
                                 local newDir = (targetPart.Position - origin).Unit * 1000
                                 args[1] = Ray.new(origin, newDir)
-                            end
-                            if S.wallbangOn then
-                                return targetPart, targetPart.Position, Vector3.new(0, 1, 0), targetPart.Material
                             end
                             return oldNamecall(self, unpack(args))
                         end
@@ -4517,16 +4513,15 @@ function setAutoFling(b)
     end)
 end
 
--- ============ STATUE / FAKE LAG (rev64: ты ходишь, все видят что ты стоишь) ============
--- Замена на чистый цикл Heartbeat:Wait() → RenderStepped:Wait() в одном потоке:
--- раньше Connect(Heartbeat) + RenderStepped:Wait() спавнило новую корутину КАЖДЫЙ кадр,
--- и два коллбэка перетирали realCF друг другу, замораживая тебя на месте.
--- Теперь строго последовательно: до отправки пакета ставим стояку, перед рендером/инпутом
--- возвращаем твоё реальное место → ты свободно бегаешь, сервер и другие видят статую.
+-- ============ STATUE / FAKE LAG (rev59: ты ходишь, все видят что ты стоишь) ============
+-- Не визуал: серверной репликации отдаём замороженную стояку (CFrame-десинхронизация
+-- Heartbeat→RenderStepped). У самого себя ты свободно двигаешься, остальные видят стояк.
+-- Выключаешь — перестаём перезаписывать → все мгновенно видят, как ты переместился
+-- (от стояки к реальному месту, где ты сейчас).
 function setStatue(b)
     S.statueOn = b
-    S.statueGen = (S.statueGen or 0) + 1
-    local myGen = S.statueGen
+    dcc(S.statueConn)
+    S.statueConn = nil
     dcc(S.statueCharConn)
     S.statueCharConn = nil
     if b then
@@ -4538,35 +4533,35 @@ function setStatue(b)
             local c = Cfg["player.statue"] if c then c.set(false) end
             return
         end
-        S.statueCF = root.CFrame
-        S.statueReal = root.CFrame
-        task.spawn(function()
-            while S.statueOn and S.statueGen == myGen do
-                RunService.Heartbeat:Wait()
-                if not (S.statueOn and S.statueGen == myGen) then break end
-                local c2 = LP.Character
-                local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-                if r2 and S.statueCF then
-                    local realCF = r2.CFrame
-                    S.statueReal = realCF
-                    r2.CFrame = S.statueCF
-                    RunService.RenderStepped:Wait()
-                    if r2.Parent then
-                        r2.CFrame = realCF
-                    end
-                end
+        S.statueCF = root.CFrame -- фиксируем точку стояка
+        S.statueConn = sh2Conn(RunService.Heartbeat:Connect(function()
+            if not S.statueOn then return end
+            local c2 = LP.Character
+            local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+            if not r2 then return end
+            local realCF = r2.CFrame
+            r2.CFrame = S.statueCF            -- исходящий репликант уйдёт стояком
+            pcall(function() RunService.RenderStepped:Wait() end)
+            if r2.Parent then
+                r2.CFrame = realCF           -- ВСЕГДА восстанавливаем (даже если оффнули между кадрами):
+                S.statueReal = realCF        -- ты остаёшься там, где реально был
             end
-        end)
+        end))
+        -- респаун: десинк снимаем (точка стояка умерла вместе с прошлым телом)
         S.statueCharConn = sh2Conn(LP.CharacterAdded:Connect(function()
             if not S.statueOn then return end
             S.statueOn = false
-            S.statueGen = (S.statueGen or 0) + 1
+            dcc(S.statueConn)
+            S.statueConn = nil
             S.statueCF = nil
             S.statueReal = nil
             local c = Cfg["player.statue"] if c then c.set(false) end
             toastImpl("Statue", "Респаун — стояк снят")
         end))
     else
+        -- офф: ты остаёшься ТОЧНО там, куда реально дошёл (страховка от гонки кадров,
+        -- при которой тебя дёргало обратно на стояку); другие игроки в тот же кадр
+        -- репликации видят, как ты переместился от стояки к реальной точке
         pcall(function()
             local c = LP.Character
             local r = c and c:FindFirstChild("HumanoidRootPart")
@@ -4579,37 +4574,768 @@ function setStatue(b)
     end
 end
 
--- ============ BULLET TRACERS + HITMARKER + HITSOUND (rev63: NL-style) ============
-HITSOUND_PRESETS = {
-    ["Neverlose"] = "rbxassetid://9125402735",
-    ["Skeet"]     = "rbxassetid://5633695679",
-    ["Rust"]      = "rbxassetid://1255040462",
-    ["Bell"]      = "rbxassetid://6534947240",
-    ["Bubble"]    = "rbxassetid://6534947588",
-    ["Quake"]     = "rbxassetid://4868633804",
-    ["TF2"]       = "rbxassetid://296102734",
-    ["Minecraft"] = "rbxassetid://4018616850",
-}
-
-function playHitsound()
-    if not S.hitsoundOn then return end
-    pcall(function()
-        local id = (S.hitsoundPreset == "Custom")
-            and tostring(S.hitsoundCustomId or "")
-            or (HITSOUND_PRESETS[S.hitsoundPreset] or HITSOUND_PRESETS["Neverlose"])
-        if id == "" then return end
-        if not id:find("^rbxassetid://") and tonumber(id) then
-            id = "rbxassetid://" .. id
+-- ============ REV63: AMMO / WALLBANG / HITSOUND / SESSION TIME ============
+-- ====== 1) INFINITE AMMO — поддерживаем клиентские значения патронов на 9999 ======
+function setInfiniteAmmo(b)
+    S.infAmmoOn = b
+    dcc(S.infAmmoConn)
+    S.infAmmoConn = nil
+    if not b then return end
+    local AMMO_KEYS = { "ammo", "mag", "clip", "bullet", "shell", "patron", "патрон" }
+    local function isAmmoName(nm)
+        nm = string.lower(tostring(nm or ""))
+        for _, k in ipairs(AMMO_KEYS) do
+            if nm:find(k, 1, true) then return true end
         end
+        return false
+    end
+    local function topUp(container)
+        if not container then return end
+        for _, obj in ipairs(container:GetDescendants()) do
+            pcall(function()
+                if not isAmmoName(obj.Name) then return end
+                if obj:IsA("NumberValue") or obj:IsA("IntValue") then
+                    if obj.Value < 9000 then obj.Value = 9999 end
+                elseif obj:IsA("StringValue") then
+                    local n = tonumber(obj.Value)
+                    if n and n < 9000 then obj.Value = "9999" end
+                end
+            end)
+        end
+    end
+    local last = 0
+    S.infAmmoConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        local t = tick()
+        if t - last < 0.3 then return end
+        last = t
+        pcall(function() topUp(LP.Backpack) end)
+        pcall(function() topUp(LP.Character) end)
+    end))
+end
+
+-- ====== 2) WALLBANG — части карты перестают существовать для raycast (CanQuery=false) ======
+-- Клиентским оружием, которое бьёт raycast'ом на клиенте и шлёт серверу попадание,
+-- это даёт прострелы сквозь стены. Если попадание считает сервер — честно скажем в UI.
+function setWallbang(b)
+    S.wallbangOn = b
+    dcc(S.wallbangConn)
+    S.wallbangConn = nil
+    if b then
+        S.wallbangMap = S.wallbangMap or {}
+        local function isCharModel(p)
+            local okm, m = pcall(function() return p:FindFirstAncestorOfClass("Model") end)
+            if not okm or not m then return false end
+            local okh, h = pcall(function() return m:FindFirstChildOfClass("Humanoid") end)
+            return okh and h ~= nil
+        end
+        local function ghostify(p)
+            if not p:IsA("BasePart") then return end
+            if isCharModel(p) then return end
+            if S.wallbangMap[p] == nil then
+                S.wallbangMap[p] = p.CanQuery
+            end
+            p.CanQuery = false
+        end
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("BasePart") then pcall(ghostify, d) end
+            end
+        end)
+        S.wallbangConn = sh2Conn(workspace.DescendantAdded:Connect(function(d)
+            if not S.wallbangOn then return end
+            pcall(ghostify, d)
+        end))
+    else
+        if S.wallbangMap then
+            for p, v in pairs(S.wallbangMap) do
+                pcall(function() if p and p.Parent then p.CanQuery = v end end)
+            end
+        end
+        S.wallbangMap = nil
+    end
+end
+
+-- ====== 3) HITSOUND (Neverlose-стиль): «тик» при попадании ======
+-- Встроенные Roblox-звуки настоящие и всегда доступны; свой ID впиши в HM_SOUND_ID ниже,
+-- либо выбери «Custom» в выпадающем списке FX.
+HITSOUND_PRESETS = {
+    ["NL Tick (snap)"]      = "rbxasset://sounds/snap.mp3",
+    ["Sword Cling (metal)"] = "rbxasset://sounds/swordslash.mp3",
+}
+function testHitsound()
+    local id = S.hitsoundId
+    if not id then return end
+    pcall(function()
         local s = Instance.new("Sound")
         s.SoundId = id
-        s.Volume = tonumber(S.hitsoundVol) or 1
-        s.PlaybackSpeed = tonumber(S.hitsoundPitch) or 1
-        s.Parent = game:GetService("SoundService")
+        s.Volume = S.hitsoundVol or 0.7
+        s.Parent = workspace
         s:Play()
-        task.delay(2, function() pcall(function() s:Destroy() end) end)
+        task.delay(1.2, function() pcall(function() s:Destroy() end) end)
     end)
 end
+
+-- ====== 4) SESSION TIME — сколько отыграл за сессию и за день ======
+TIME_FILE = "spermahub_nl_time.json"
+function timeFmt(sec)
+    sec = math.max(0, math.floor(sec or 0))
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s = sec % 60
+    if h > 0 then return string.format("%d:%02d:%02d", h, m, s) end
+    return string.format("%02d:%02d", m, s)
+end
+function timeLoad()
+    S.timeDayKey = os.date("%Y-%m-%d")
+    S.timeDayTotal = 0
+    if type(isfile) == "function" and type(readfile) == "function" and pcall(isfile, TIME_FILE) and isfile(TIME_FILE) then
+        pcall(function()
+            local data = HttpService:JSONDecode(readfile(TIME_FILE))
+            if type(data) == "table" and type(data[S.timeDayKey]) == "number" then
+                S.timeDayTotal = data[S.timeDayKey]
+            end
+        end)
+    end
+end
+function timeSave()
+    if type(writefile) ~= "function" then return end
+    pcall(function()
+        local session = math.floor(tick() - (S.sessionT0 or tick()))
+        local today = (S.timeDayTotal or 0) + session
+        local data = {}
+        if type(isfile) == "function" and type(readfile) == "function" and pcall(isfile, TIME_FILE) and isfile(TIME_FILE) then
+            pcall(function()
+                local old = HttpService:JSONDecode(readfile(TIME_FILE) or "{}")
+                if type(old) == "table" then data = old end
+            end)
+        end
+        data[S.timeDayKey or "?"] = math.max((data[S.timeDayKey or "?"] or 0), today)
+        writefile(TIME_FILE, HttpService:JSONEncode(data))
+        -- перебазирование, чтобы при следующем save не насчитать дважды
+        S.timeDayTotal = today
+        S.sessionT0 = tick()
+    end)
+end
+function setTimeHUD(b)
+    S.timeHudOn = b
+    dcc(S.timeHudConn)
+    S.timeHudConn = nil
+    if b then
+        pcall(function() if S.timeHudGui then S.timeHudGui:Destroy() end end)
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "SpermaHubTimeHud"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        pcall(function() if gethui then gui.Parent = gethui() end end)
+        if not gui.Parent then pcall(function() gui.Parent = CoreGui end) end
+        if not gui.Parent then gui.Parent = LP.PlayerGui end
+        local lbl = Instance.new("TextLabel")
+        lbl.Name = "Time"
+        lbl.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
+        lbl.BackgroundTransparency = 0.25
+        lbl.BorderSizePixel = 0
+        lbl.AnchorPoint = Vector2.new(1, 0)
+        lbl.Position = UDim2.new(1, -12, 0, 8)
+        lbl.Size = UDim2.new(0, 260, 0, 26)
+        lbl.Font = Enum.Font.Code
+        lbl.TextSize = 12
+        lbl.TextColor3 = Color3.fromRGB(150, 255, 180)
+        lbl.Text = "…"
+        lbl.ZIndex = 10
+        lbl.Visible = true
+        lbl.Parent = gui
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = lbl
+        S.timeHudGui = gui
+        local last = 0
+        S.timeHudConn = sh2Conn(RunService.Heartbeat:Connect(function()
+            local t = tick()
+            if t - last < 1 then return end
+            last = t
+            pcall(function()
+                local sess = t - (S.sessionT0 or t)
+                local today = (S.timeDayTotal or 0) + sess
+                lbl.Text = "  ⏱ сессия " .. timeFmt(sess) .. " · сегодня " .. timeFmt(today)
+                S.timeSaveAcc = (S.timeSaveAcc or 0) + 1
+                if S.timeSaveAcc % 60 == 0 then timeSave() end
+            end)
+        end))
+    else
+        pcall(function() if S.timeHudGui then S.timeHudGui:Destroy() end S.timeHudGui = nil end)
+        pcall(timeSave)
+    end
+end
+pcall(timeLoad)
+
+-- ============ REV67: ROUTE BOT — запись маршрута, линия пути, бот-ходьба ============
+BOT_ROUTE_FILE = "spermahub_nl_route.json"
+function botClearLine()
+    pcall(function() if S.botRouteLine then S.botRouteLine:Destroy() S.botRouteLine = nil end end)
+end
+function botClearMarker()
+    pcall(function() if S.botTargetMarker then S.botTargetMarker:Destroy() S.botTargetMarker = nil end end)
+end
+function botDrawRoute()
+    botClearLine()
+    if not S.botLineOn then return end
+    local pts = S.botPoints or {}
+    local n = #pts
+    if n < 2 then return end
+    local step = math.max(1, math.ceil(n / 800))
+    pcall(function()
+        local folder = Instance.new("Folder")
+        folder.Name = "SpermaBotRoute"
+        folder.Parent = workspace
+        local prev = nil
+        for i = 1, n, step do
+            local p = pts[i]
+            if prev then
+                local d = p - prev
+                local len = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+                if len > 0.05 then
+                    local seg = Instance.new("Part")
+                    seg.Name = "Seg"
+                    seg.Anchored = true
+                    seg.CanCollide = false
+                    pcall(function() seg.CanQuery = false end)
+                    seg.Material = Enum.Material.Neon
+                    seg.Color = Color3.fromRGB(0, 255, 170)
+                    seg.Transparency = 0.25
+                    seg.Size = Vector3.new(0.12, 0.12, len)
+                    local mid = (prev + p) * 0.5
+                    seg.CFrame = CFrame.lookAt(mid, p)
+                    seg.Parent = folder
+                end
+            end
+            prev = p
+        end
+        local function cap(p2, col)
+            local b = Instance.new("Part")
+            pcall(function() b.Shape = Enum.PartType.Ball end)
+            b.Anchored = true b.CanCollide = false
+            pcall(function() b.CanQuery = false end)
+            b.Material = Enum.Material.Neon b.Color = col
+            b.Size = Vector3.new(1.2, 1.2, 1.2)
+            b.CFrame = CFrame.new(p2)
+            b.Parent = folder
+        end
+        cap(pts[1], Color3.fromRGB(0, 255, 0))   -- старт: зелёный
+        cap(pts[n], Color3.fromRGB(255, 80, 80)) -- финиш: красный
+        S.botRouteLine = folder
+    end)
+end
+
+function botRecStart()
+    S.botPoints = {}
+    S.botRecOn = true
+    dcc(S.botRecConn)
+    if S.botRecActions then pcall(botActHooksStart) end -- rev69: начинаем писать действия
+    local lastV = nil
+    S.botRecConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local p = root.Position
+        if lastV then
+            local d = p - lastV
+            local dist = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+            if dist < 2 then return end
+        end
+        S.botPoints[#S.botPoints + 1] = Vector3.new(p.X, p.Y, p.Z)
+        lastV = p
+        -- живая перерисовка линии примерно каждые 25 studs
+        if S.botLineOn and #S.botPoints > 1 and (#S.botPoints % 10) == 0 then
+            pcall(botDrawRoute)
+        end
+    end))
+    notifySafe("🤖 Bot: ЗАПИСЬ — иди маршрутом, ⏹ Stop — завершить", C3(255, 180, 80))
+end
+function botRecStop()
+    S.botRecOn = false
+    dcc(S.botRecConn)
+    S.botRecConn = nil
+    pcall(botActHooksStop) -- rev69: сворачиваем хуки действий
+    botDrawRoute()
+    local n = #(S.botPoints or {})
+    local aNoop = #(S.botActions or {})
+    local extra = (aNoop > 0) and (" · действий: " .. tostring(aNoop)) or ""
+    notifySafe("🤖 Bot: запись остановлена — точек: " .. tostring(n) .. extra, C3(80, 200, 120))
+end
+
+function botSetMarker(p)
+    pcall(function()
+        if not S.botTargetMarker then
+            local b = Instance.new("Part")
+            pcall(function() b.Shape = Enum.PartType.Ball end)
+            b.Anchored = true b.CanCollide = false
+            pcall(function() b.CanQuery = false end)
+            b.Material = Enum.Material.Neon
+            b.Color = Color3.fromRGB(255, 255, 0)
+            b.Size = Vector3.new(1.0, 1.0, 1.0)
+            b.Transparency = 0.15
+            b.Name = "SpermaBotTarget"
+            b.Parent = workspace
+            S.botTargetMarker = b
+        end
+        S.botTargetMarker.CFrame = CFrame.new(p)
+    end)
+end
+
+function botWalk(state)
+    S.botWalkOn = state
+    dcc(S.botWalkConn)
+    S.botWalkConn = nil
+    botClearMarker()
+    if not state then return end
+    local pts = S.botPoints or {}
+    if #pts < 2 then
+        S.botWalkOn = false
+        local c = Cfg["bot.walk"] if c then c.set(false) end
+        notifySafe("🤖 Bot: сначала запиши маршрут (Start → иди → Stop)", C3(255, 120, 120))
+        return
+    end
+    -- стартуем от точки, ближайшей к текущей позиции
+    local idx = 1
+    do
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if root then
+            local best, bi = math.huge, 1
+            for i, p in ipairs(pts) do
+                local d = p - root.Position
+                local dist = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+                if dist < best then best, bi = dist, i end
+            end
+            idx = math.min(bi, #pts - 1)
+        end
+    end
+    local dir = 1
+    pcall(function()
+        local t = pts[math.min(idx + 1, #pts)]
+        if t then botSetMarker(t) end
+    end)
+    notifySafe("🤖 Bot: пошёл по маршруту («" .. tostring(S.botMode) .. "», точек " .. tostring(#pts) .. ")", C3(80, 200, 120))
+    -- rev69: проигрыватель действий по таймлайну
+    local actIdx = 1
+    local actT0 = tick()
+    S.botWalkConn = sh2Conn(RunService.Heartbeat:Connect(function(dt)
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        dt = dt or 0.016
+        -- выполнить записанные действия в срок
+        if S.botPlayActions then
+            local elapsed = tick() - actT0
+            while true do
+                local a = S.botActions and S.botActions[actIdx]
+                if not a or (a.t and a.t > elapsed) then break end
+                actIdx = actIdx + 1
+                pcall(botActExec, a)
+            end
+        end
+        local nextIdx = idx + dir
+        -- края маршрута: один раз / зациклить / туда-обратно
+        if nextIdx > #pts then
+            if S.botMode == "Зациклить" then
+                idx, dir, nextIdx = 1, 1, math.min(2, #pts)
+                actIdx, actT0 = 1, tick() -- действия запускаем заново каждый круг
+            elseif S.botMode == "Туда-обратно" then
+                dir = -1 nextIdx = math.max(1, #pts - 1)
+            else
+                local c = Cfg["bot.walk"] if c then c.set(false) end
+                return
+            end
+            botSetMarker(pts[nextIdx])
+        elseif nextIdx < 1 then
+            if S.botMode == "Туда-обратно" then
+                dir = 1 nextIdx = math.min(2, #pts)
+                actIdx, actT0 = 1, tick() -- поехали заново вперёд (действия тоже)
+                botSetMarker(pts[nextIdx])
+            else
+                local c = Cfg["bot.walk"] if c then c.set(false) end
+                return
+            end
+        end
+        local target = pts[nextIdx]
+        if not target then return end
+        local pos = root.Position
+        local d = target - pos
+        local dist = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+        if dist < 2.2 then
+            idx = nextIdx
+            botSetMarker(pts[idx])
+            return
+        end
+        local step = math.min(dist, (S.botSpeed or 16) * dt)
+        local ux, uy, uz = d.X / dist, d.Y / dist, d.Z / dist
+        local newPos = Vector3.new(pos.X + ux * step, pos.Y + uy * step, pos.Z + uz * step)
+        local fx, fz = d.X, d.Z
+        local fmag = math.sqrt(fx * fx + fz * fz)
+        if fmag > 0.05 then
+            root.CFrame = CFrame.lookAt(newPos, Vector3.new(newPos.X + fx / fmag, newPos.Y, newPos.Z + fz / fmag))
+        else
+            root.CFrame = CFrame.new(newPos)
+        end
+        pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+        pcall(function() root.Velocity = Vector3.zero end)
+    end))
+end
+
+function botRouteSave()
+    local pts = S.botPoints or {}
+    if #pts < 2 then
+        notifySafe("🤖 Bot: нечего сохранять (0–1 точка)", C3(255, 120, 120))
+        return
+    end
+    pcall(function()
+        if type(writefile) ~= "function" then return end
+        local arr = {}
+        for _, p in ipairs(pts) do arr[#arr + 1] = {p.X, p.Y, p.Z} end
+        local payload
+        if S.botRecActions and #(S.botActions or {}) > 0 then
+            payload = {v = 2, points = arr, actions = S.botActions}
+        else
+            payload = arr -- старый формат (back-compat с rev67-файлами)
+        end
+        writefile(BOT_ROUTE_FILE, HttpService:JSONEncode(payload))
+        local extra = (#(S.botActions or {}) > 0) and (" + " .. tostring(#S.botActions) .. " действий") or ""
+        notifySafe("🤖 Bot: маршрут сохранён (" .. tostring(#pts) .. " точек" .. extra .. ")", C3(80, 200, 120))
+    end)
+end
+function botRouteLoad()
+    pcall(function()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then return end
+        if not (pcall(isfile, BOT_ROUTE_FILE) and isfile(BOT_ROUTE_FILE)) then
+            notifySafe("🤖 Bot: сохранённого маршрута нет", C3(255, 180, 80))
+            return
+        end
+        local data = HttpService:JSONDecode(readfile(BOT_ROUTE_FILE) or "[]")
+        if type(data) ~= "table" then return end
+        local arr, acts
+        if data.v == 2 and type(data.points) == "table" then
+            arr = data.points
+            acts = data.actions
+        else
+            arr = data -- старый формат rev67 (просто массив точек)
+        end
+        if type(arr) ~= "table" or #arr < 2 then return end
+        S.botPoints = {}
+        for _, w in ipairs(arr) do
+            if type(w) == "table" then
+                S.botPoints[#S.botPoints + 1] = Vector3.new(tonumber(w[1]) or 0, tonumber(w[2]) or 0, tonumber(w[3]) or 0)
+            end
+        end
+        S.botActions = {}
+        if type(acts) == "table" then
+            for _, w in ipairs(acts) do
+                if type(w) == "table" and type(w.kind) == "string" then
+                    S.botActions[#S.botActions + 1] = w
+                end
+            end
+        end
+        botDrawRoute()
+        local extra = (#(S.botActions or {}) > 0) and (" · действий: " .. tostring(#S.botActions)) or ""
+        notifySafe("🤖 Bot: загружено точек: " .. tostring(#(S.botPoints or {})) .. extra, C3(80, 200, 120))
+    end)
+end
+
+-- ============ REV69: ROUTE BOT v2 — ЗАПИСЬ ДЕЙСТВИЙ (GUI/клики/клавиши/промпты) ============
+-- Связь с rev67: помимо «КУДА» теперь записываем «ЧТО». При ходе бота по маршруту
+-- действия повторяются в те же моменты времени (открытие окон, E, prompt'ы).
+function botActPush(action)
+    if not S.botRecOn or not S.botRecActions then return end
+    action.t = tick() - (S.botRecT0 or tick())
+    table.insert(S.botActions, action)
+end
+
+function botActHooksStart()
+    S.botActions = {}
+    S.botRecT0 = tick()
+    S.botActConns = {}
+    local function skipUI(gpe)
+        if gpe then return true end
+        if CG_OPEN then return true end -- не пишем клики по собственному меню
+        return false
+    end
+    table.insert(S.botActConns, sh2Conn(UIS.InputBegan:Connect(function(inp, gpe)
+        if skipUI(gpe) or not S.botRecOn or not S.botRecActions then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            local p = inp.Position or {X=0, Y=0}
+            botActPush({kind="click", x=p.X, y=p.Y})
+        end
+    end)))
+    local SKIP_KEYS = {
+        W=true, A=true, S=true, D=true, Space=true,
+        RightShift=true, LeftShift=true, Insert=true, Escape=true,
+        ButtonA=true, DPadUp=true, DPadDown=true,
+    }
+    table.insert(S.botActConns, sh2Conn(UIS.InputBegan:Connect(function(inp, gpe)
+        if skipUI(gpe) or not S.botRecOn or not S.botRecActions then return end
+        if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        local name = tostring(inp.KeyCode)
+        name = name:match("Enum%..*%.(.+)") or name
+        if not SKIP_KEYS[name] then
+            botActPush({kind="key", key=name})
+        end
+    end)))
+    pcall(function()
+        local PPS = game:GetService("ProximityPromptService")
+        if PPS and PPS.PromptTriggered then
+            table.insert(S.botActConns, sh2Conn(PPS.PromptTriggered:Connect(function(prompt, plr)
+                if not S.botRecOn or not S.botRecActions then return end
+                if plr and LP and plr ~= LP then return end
+                pcall(function()
+                    local sig = {kind="prompt"}
+                    if prompt then
+                        sig.obj = tostring(prompt.ObjectText or prompt.Name or "")
+                        sig.act = tostring(prompt.ActionText or "")
+                        local anc = prompt:FindFirstAncestorOfClass("Model")
+                        if anc then sig.model = tostring(anc.Name) end
+                        local pp = prompt.Parent
+                        if pp and pp:IsA("BasePart") then
+                            sig.px, sig.py, sig.pz = pp.Position.X, pp.Position.Y, pp.Position.Z
+                        end
+                    end
+                    botActPush(sig)
+                end)
+            end)))
+        end
+    end)
+end
+
+function botActHooksStop()
+    for _, c in ipairs(S.botActConns or {}) do
+        pcall(function() if c and typeof(c) == "RBXScriptConnection" then c:Disconnect() end end)
+    end
+    S.botActConns = {}
+end
+
+function botActExec(a)
+    if not a or not a.kind then return end
+    pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        if a.kind == "key" and a.key then
+            local kc = Enum.KeyCode[a.key]
+            if VIM and kc then
+                pcall(function() VIM:SendKeyEvent(true, kc, false, game, 0) end)
+                task.delay(0.06, function()
+                    pcall(function() VIM:SendKeyEvent(false, kc, false, game, 0) end)
+                end)
+            end
+        elseif a.kind == "click" and a.x then
+            if VIM then
+                pcall(function() VIM:SendMouseButtonEvent(a.x, a.y, 0, true, game, 0) end)
+                task.delay(0.05, function()
+                    pcall(function() VIM:SendMouseButtonEvent(a.x, a.y, 0, false, game, 0) end)
+                end)
+            end
+        elseif a.kind == "prompt" then
+            local found = nil
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    local matchModel = (a.model and a.model ~= "" and d.Parent and d.Parent.Parent and tostring(d.Parent.Parent.Name) == a.model)
+                    local matchObj = (a.obj and a.obj ~= "" and tostring(d.ObjectText or d.Name or "") == a.obj)
+                    local matchPos = false
+                    pcall(function()
+                        if a.px and d.Parent and d.Parent:IsA("BasePart") then
+                            matchPos = ((d.Parent.Position - Vector3.new(a.px, a.py, a.pz)).Magnitude < 2.5)
+                        end
+                    end)
+                    if matchModel or matchObj or matchPos then found = d break end
+                end
+            end
+            if found then
+                if type(fireproximityprompt) == "function" then
+                    pcall(fireproximityprompt, found)
+                elseif VIM then
+                    local kc = Enum.KeyCode.E
+                    pcall(function() VIM:SendKeyEvent(true, kc, false, game, 0) end)
+                    task.delay(tonumber(found.HoldDuration) or 0.5, function()
+                        pcall(function() VIM:SendKeyEvent(false, kc, false, game, 0) end)
+                    end)
+                end
+                print("[SpermaHub Bot] промпт-экшн: " .. tostring(a.obj))
+            elseif VIM then
+                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game, 0) end)
+                task.delay(0.1, function()
+                    pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game, 0) end)
+                end)
+            end
+        end
+    end)
+end
+
+-- ============ REV68: FTP — ANTI GRASP (можешь ходить, когда схватили) + COUNTER GRAB + THROW POWER ============
+-- 1) Когда тебя захватывают — ты ПРОДОЛЖАЕШЬ ходить: возвращаем управление каждый кадр
+--    (снимаем PlatformStand/якорь, смягчаем резкий импульс от постороннего захвата).
+function setGraspGuard(state)
+    S.graspOn = state
+    dcc(S.graspConn)
+    S.graspConn = nil
+    if not state then
+        pcall(function()
+            local ch = LP.Character
+            local root = ch and ch:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.Anchored = false
+                pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+            end
+        end)
+        return
+    end
+    S.graspConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        local ch = LP.Character
+        if not ch then return end
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not hum or not root then return end
+        local heldNow = false
+        pcall(function()
+            if hum.PlatformStand == true then hum.PlatformStand = false heldNow = true end
+            if root.Anchored == true then root.Anchored = false heldNow = true end
+        end)
+        -- смягчение резкого волочения нас (тихий выход из чужого голема)
+        pcall(function()
+            local v = root.AssemblyLinearVelocity or root.Velocity
+            if v and v.Magnitude > 70 then
+                root.AssemblyLinearVelocity = v * 0.35
+                heldNow = true
+            end
+        end)
+        if heldNow then
+            S.graspWasHeld = true
+            S.revengeUntil = tick() + (S.revengeSec or 8) -- окно мести: нас НЕДАВНО держали
+        end
+    end))
+end
+
+-- 2) «Схватить его в ответ» — жмёшь кнопку/бинду: мы хватаем ближайшего захватчика.
+-- Эмуляция захвата через механику касания (работает на серверах, где захват = touch-события).
+local function graspNearestAttacker()
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root then return nil, 999 end
+    local best, bd = nil, 999
+    pcall(function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP then
+                local pc = plr.Character
+                local pr = pc and pc:FindFirstChild("HumanoidRootPart")
+                if pr and pc:FindFirstChildOfClass("Humanoid") then
+                    local d = (pr.Position - root.Position).Magnitude
+                    if d < bd then bd = d best = plr end
+                end
+            end
+        end
+    end)
+    return best, bd
+end
+
+function graspRevenge(manual)
+    local plr, dist = graspNearestAttacker()
+    if not plr then
+        notifySafe("🪬 Захват в ответ: рядом никого (нужен враг ≤16 studs)", C3(255, 150, 150))
+        return false
+    end
+    if dist > 16 and not manual then return false end
+    local pc = plr.Character
+    local pr = pc and pc:FindFirstChild("HumanoidRootPart")
+    local myCh = LP.Character
+    local myRoot = myCh and myCh:FindFirstChild("HumanoidRootPart")
+    if not pr or not myRoot then return false end
+    local ok = false
+    if type(firetouchinterest) == "function" then
+        pcall(function()
+            firetouchinterest(myRoot, pr, 0)
+            task.wait(0.03)
+            firetouchinterest(myRoot, pr, 1)
+            ok = true
+        end)
+        if ok then
+            notifySafe("🪬 ЗАХВАТ В ОТВЕТ на " .. plr.Name .. "!", C3(255, 210, 90))
+        end
+    else
+        -- фолбэк для обычных серверов: жёсткая отдельная ровность противника с нашей стороны
+        pcall(function()
+            local dir = pr.Position - myRoot.Position
+            local len = math.sqrt(dir.X * dir.X + dir.Y * dir.Y + dir.Z * dir.Z)
+            if len > 0.1 then
+                local back = Vector3.new(-dir.X / len, 0.5, -dir.Z / len)
+                pr.AssemblyLinearVelocity = back * 45
+                ok = true
+                notifySafe("🪬 Отделились от " .. plr.Name .. " (ответка без touch)", C3(255, 180, 80))
+            end
+        end)
+    end
+    S.revengeUntil = 0
+    return ok
+end
+
+-- окно авто-ответа: держали за секунду → если включено, ближайший захватчик получает спайк
+sh2Conn(RunService.Heartbeat:Connect(function()
+    if not S.graspOn then return end
+    if (S.revengeUntil or 0) <= tick() then return end
+    local plr, dist = graspNearestAttacker()
+    if plr and dist and dist < 16 then
+        S.revengeUntil = 0
+        pcall(function() graspRevenge() end)
+    end
+end))
+
+-- 3) THROW POWER: брошенные рядом с нами предметы НАБИРАЮТ умноженную скорость.
+-- В FTP репликация физики от локально-идущего клиента приоритетнее — наши брошенные
+-- вещи окутаны нашей зоной → вылет сильнее и дальше.
+function setThrowPower(state)
+    S.tpowOn = state
+    dcc(S.tpowConn)
+    S.tpowConn = nil
+    if not state then return end
+    S.tpowConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        S.tpowAcc = (S.tpowAcc or 0) + 1
+        if (S.tpowAcc % 2) ~= 0 then return end -- раз в два кадра — не перегревать
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local radius = S.tpowRadius or 15
+        local mult = math.max(1, tonumber(S.tpow) or 1)
+        if mult <= 1 then return end
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("BasePart") and (not d.Anchored) then
+                    local v = d.AssemblyLinearVelocity
+                    if v then
+                        local sp = math.sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z)
+                        -- брошенный предмет = улетает быстро, находится в зоне и не наш персонаж
+                        if sp > 12 then
+                            local dv = d.Position - root.Position
+                            local dist = math.sqrt(dv.X * dv.X + dv.Y * dv.Y + dv.Z * dv.Z)
+                            if dist > 0.1 and dist < radius then
+                                local mine = false
+                                pcall(function()
+                                    if LP.Character and d:IsDescendantOf(LP.Character) then mine = true end
+                                end)
+                                if not mine then
+                                    local stamp = S.tpowStamp[d]
+                                    if not stamp then
+                                        S.tpowStamp[d] = tick()
+                                    elseif (tick() - stamp) < 1.0 then
+                                        if sp < 240 then
+                                            d.AssemblyLinearVelocity = Vector3.new(v.X * mult, v.Y * mult, v.Z * mult)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end))
+end
+
+-- ============ BULLET TRACERS + HITMARKER ============
+HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
 
 FxGui = Instance.new("ScreenGui")
 FxGui.Name = "SpermaHubFx"
@@ -4664,6 +5390,22 @@ function showHitmarker()
         TweenService:Create(bar, TweenInfo.new(0.18), {BackgroundTransparency = 1}):Play()
         task.delay(0.25, function() pcall(function() bar:Destroy() end) end)
     end
+    local hmId = nil
+    if S and S.hitsoundOn and S.hitsoundId then
+        hmId = S.hitsoundId
+    elseif HM_SOUND_ID then
+        hmId = HM_SOUND_ID
+    end
+    if hmId then
+        pcall(function()
+            local s = Instance.new("Sound")
+            s.SoundId = hmId
+            s.Volume = (S and S.hitsoundOn and S.hitsoundVol) or 0.6
+            s.Parent = workspace
+            s:Play()
+            task.delay(1, function() pcall(function() s:Destroy() end) end)
+        end)
+    end
 end
 
 function onShotTracer()
@@ -4688,7 +5430,7 @@ function onShotTracer()
 end
 
 function onShotHitmarker()
-    if not S.hitmarkerOn and not S.hitsoundOn then return end
+    if not S.hitmarkerOn then return end
     local hit = false
     if S.silentAimOn then
         if findSilentTarget() then hit = true end
@@ -4703,10 +5445,7 @@ function onShotHitmarker()
             end
         end
     end
-    if hit then
-        if S.hitmarkerOn then showHitmarker() end
-        if S.hitsoundOn then playHitsound() end
-    end
+    if hit then showHitmarker() end
 end
 
 S.fxConn = UIS.InputBegan:Connect(function(input, gpe)
@@ -5762,15 +6501,28 @@ function kaClick()
     end)
 end
 
+-- rev70: расписание ударов под выбранный обход
+function kaPeriod()
+    if S.kaMode == "1.9" then
+        -- Обход 1.9 (кулдаун): удар ТОЛЬКО когда "шкала атаки" заряжена — пауза 0.42–0.58с
+        -- с человеческим джиттером. Ровный высокий CPS не идёт => CPS-детекты
+        -- античитов молчат, а полный заряд даёт стабильный урон каждым свингом.
+        return 0.42 + math.random() * 0.16
+    end
+    -- Обход 1.8 (спам): классический спам-кликер, темп = ползунок CPS
+    return 1 / math.max(S.kaCps, 1)
+end
+
 function enableKillAura()
     S.kaOn = true
     dcc(S.kaConn)
-    local acc = 0
+    local acc, nxt = 0, 0
     S.kaConn = RunService.Heartbeat:Connect(function(dt)
         if not S.kaOn then return end
         acc = acc + dt
-        if acc < 1 / math.max(S.kaCps, 1) then return end
+        if acc < nxt then return end
         acc = 0
+        nxt = kaPeriod()
         local target = kaNearestTarget()
         if not target then
             S.kaTarget = nil
@@ -6060,6 +6812,12 @@ TargetHL.Enabled = false
 TargetHL.Parent = ESPGui
 
 function currentEspTarget()
+    -- rev70: цель Kill Aura тоже является таргетом (фикс «Target ESP не работает»,
+    -- когда включена киллаура, а аимбот/сайлент выключены)
+    if S.kaOn and S.kaTarget then
+        local kt = S.kaTarget
+        if kt and kt.Character then return kt end
+    end
     if S.silentAimOn then
         local p = findSilentTarget()
         if p then return p end
@@ -6508,7 +7266,7 @@ end
 
 HOIST_CATS = { Combat = true, Movement = true, Visuals = true }
 -- эти панели НЕ вытаскивать отдельными строками — они остаются внутри своего модуля
-NON_HOIST = { ["Target"] = true, ["Info"] = true, ["Silent Aura (1.8 Arena)"] = true, ["Mode Settings"] = true, ["Components"] = true, ["Tracer"] = true }
+NON_HOIST = { ["Target"] = true, ["Info"] = true, ["Silent Aura (1.8 Arena)"] = true, ["Mode Settings"] = true }
 function addPanel(col, title)
     local m = col and col.__module
     if m == nil then return {module = nil, __module = nil, dim = true} end
@@ -7679,7 +8437,8 @@ end
 
 
 -- ============ FULL PACK UPGRADE build11 (полный порт поверх старого) ============
--- Переопределения + новые системы (SH2 и sh2Conn объявлены выше, до setStatue).
+-- Переопределения + новые системы.
+-- SH2 и sh2Conn теперь ГЛОБАЛЬНЫЕ, объявлены рядом с dcc в начале файла (см. выше)
 local TW2 = game:GetService("TweenService")
 local function sh2Wait() end -- alias placeholder (не используется)
 
@@ -8127,37 +8886,25 @@ end))
 -- ============================================================
 -- ANTI-VOID + ANTI-AFK
 -- ============================================================
--- ============ GROUND TRACKER (rev64: точная фиксация последнего твёрдого места) ============
--- Записываем ТОЛЬКО когда реально стоишь на твёрдой земле (Running/Landed, |vy|<2,
--- луч видит опору с CanCollide=true, не наш временный парт, и все читы полёта/ноуклипа выкл).
+-- ============ GROUND TRACKER (rev61: запоминаем последнее твёрдое место) ============
+-- Лёгкий трекер: раз в 0.5с, если под ногами есть земля (≤4 studs) — фиксируем CFrame.
+-- Используется Safe Landing'ом при закрытии: вернуться туда, где ты реально стоял.
 S.lastGroundCF = nil
 S._glTrackT = 0
 sh2Conn(RunService.Heartbeat:Connect(function()
     local t = tick()
-    if t - (S._glTrackT or 0) < 0.35 then return end
+    if t - (S._glTrackT or 0) < 0.5 then return end
     S._glTrackT = t
-    if S.flying or S.noclip or S.invisOn or S.airstackOn or S.statueOn or S.jesusOn then return end
     local ch = LP.Character
     local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    if not (root and hum) then return end
-    local st = hum:GetState()
-    if st == Enum.HumanoidStateType.Freefall
-        or st == Enum.HumanoidStateType.FallingDown
-        or st == Enum.HumanoidStateType.Flying
-        or st == Enum.HumanoidStateType.Jumping then
-        return
-    end
-    if math.abs(root.AssemblyLinearVelocity.Y) > 3 then return end
+    if not root then return end
     pcall(function()
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = {ch}
-        local hit = workspace:Raycast(root.Position, Vector3.new(0, -5, 0), params)
-        if hit and hit.Instance and hit.Instance.CanCollide
-            and not tostring(hit.Instance.Name):find("^Sperma") then
-            S.lastGroundCF = CFrame.new(hit.Position + Vector3.new(0, 3, 0))
-                * (root.CFrame - root.CFrame.Position)
+        local hit = workspace:Raycast(root.Position, Vector3.new(0, -4, 0), params)
+        if hit then
+            S.lastGroundCF = root.CFrame
         end
     end)
 end))
@@ -8436,10 +9183,9 @@ local WeaponMod = {
         },
         NoSpread = { Enabled = false, Mode = "Full", Value = 0 },
         NoRecoil = { Enabled = false, Mode = "Full", Vertical = 0, Horizontal = 0 },
-        InfiniteAmmo = { Enabled = false },
     },
     State = {
-        OriginalFireRate = {}, OriginalSpread = {}, OriginalRecoil = {}, OriginalAmmo = {},
+        OriginalFireRate = {}, OriginalSpread = {}, OriginalRecoil = {},
         Connections = {},
     },
 }
@@ -8639,54 +9385,6 @@ function WeaponMod:DisableNoRecoil()
     self.State.OriginalRecoil = {}
 end
 
-function WeaponMod:EnableInfiniteAmmo()
-    if self.State.Connections.InfiniteAmmo then return end
-    self.State.Connections.InfiniteAmmo = WeaponModRS.Heartbeat:Connect(function()
-        if not self.Settings.InfiniteAmmo.Enabled then return end
-        local tool = wmGetTool()
-        if not tool then return end
-        wmForEachNumber(tool, function(obj)
-            if obj:IsA("NumberValue") or obj:IsA("IntValue") then
-                local name = obj.Name:lower()
-                if (name:find("ammo") or name:find("clip") or name:find("mag") or name:find("bullet") or name:find("charge"))
-                    and not name:find("max") then
-                    if not self.State.OriginalAmmo[obj] then
-                        self.State.OriginalAmmo[obj] = obj.Value
-                    end
-                    obj.Value = math.max(self.State.OriginalAmmo[obj] or 30, 999)
-                end
-            elseif obj:IsA("BoolValue") then
-                local name = obj.Name:lower()
-                if name == "reloading" or name == "isreloading" or name == "outofammo" then
-                    obj.Value = false
-                end
-            end
-        end)
-        pcall(function()
-            for k, v in pairs(tool:GetAttributes()) do
-                local name = tostring(k):lower()
-                if type(v) == "number" and (name:find("ammo") or name:find("clip") or name:find("mag") or name:find("bullet"))
-                    and not name:find("max") then
-                    tool:SetAttribute(k, math.max(v, 999))
-                elseif type(v) == "boolean" and (name == "reloading" or name == "isreloading") then
-                    tool:SetAttribute(k, false)
-                end
-            end
-        end)
-    end)
-end
-
-function WeaponMod:DisableInfiniteAmmo()
-    if self.State.Connections.InfiniteAmmo then
-        self.State.Connections.InfiniteAmmo:Disconnect()
-        self.State.Connections.InfiniteAmmo = nil
-    end
-    for obj, original in pairs(self.State.OriginalAmmo) do
-        if obj and obj.Parent then pcall(function() obj.Value = original end) end
-    end
-    self.State.OriginalAmmo = {}
-end
-
 getgenv().SpermaHubWeaponMod = WeaponMod
 
 -- ---------------- AIMBOT (категория) ----------------
@@ -8745,12 +9443,14 @@ do
     end)
     addText(pNR, "Компенсация отдачи через камеру + нейтрализация recoil-значений внутри оружия. Если античит козлит — ставь % побольше и режим Full.")
 
-    local pIA = addPanel(pg.col1, "♾ Infinite Ammo")
-    addToggle(pIA, "weap.infammo", "Infinite Ammo", false, function(state)
-        WeaponMod.Settings.InfiniteAmmo.Enabled = state
-        if state then WeaponMod:EnableInfiniteAmmo() else WeaponMod:DisableInfiniteAmmo() end
+    local pAW = addPanel(pg.col2, "∞ Ammo & Wallbang")
+    addToggle(pAW, "weap.infammo", "Infinite Ammo (бесконечные патроны)", false, function(state)
+        setInfiniteAmmo(state)
     end)
-    addText(pIA, "Держит патроны (Ammo/Clip/Mag/Bullets + атрибуты Tool) на 999 и сбрасывает флаг Reloading.")
+    addToggle(pAW, "weap.wallbang", "Wallbang (прострелы через стены)", false, function(state)
+        setWallbang(state)
+    end)
+    addText(pAW, "Патроны: каждые 0.3с значения патронов в Tool подпитываются до 9999. Wallbang: части карты перестают существовать для raycast на клиенте (CanQuery=false) — для серверной проверки попаданий не подействует.")
 end
 
 -- ==== Legitbot (Aimbot + Silent Aim) ====
@@ -8804,9 +9504,6 @@ do
             disableSilentAim()
             enableSilentAim()
         end
-    end)
-    addToggle(pSilent, "silent.wallbang", "Wallbang (прострел стен)", false, function(state)
-        S.wallbangOn = state
     end)
     addText(pSilent, "Fortline — камера сама целится ПОКА зажата кнопка огня (работает на Xeno без хуков). Network — перенаправление FireServer оружия в голов (нужны хуки). Universal — Ray/Mouse.Hit хук (нужны хуки).")
 
@@ -8895,16 +9592,19 @@ do
     addToggle(pKa, "ka.enabled", "Enabled", false, function(state)
         if state then enableKillAura() else disableKillAura() end
     end)
-    addSlider(pKa, "ka.range", "Range", 4, 25, 10, 1, function(v)
+    addSlider(pKa, "ka.range", "Дистанция", 3, 40, 10, 1, function(v)
         S.kaRange = math.floor(v)
     end)
-    addSlider(pKa, "ka.cps", "CPS", 5, 30, 12, 1, function(v)
+    addSlider(pKa, "ka.cps", "CPS (только 1.8)", 5, 30, 12, 1, function(v)
         S.kaCps = math.floor(v)
+    end)
+    addDropdown(pKa, "ka.mode", "Обход", {"1.8 (спам-клики)", "1.9 (кулдаун)"}, "1.8 (спам-клики)", function(v)
+        S.kaMode = (type(v) == "string" and v:sub(1, 3) == "1.9") and "1.9" or "1.8"
     end)
     addToggle(pKa, "ka.face", "Face Target", true, function(state)
         S.kaFace = state
     end)
-    addText(pKa, "Враг зашёл в Range — его автоматически закликивает: инжект ЛКМ + активация оружия, персонаж поворачивается к цели. CPS — кликов в секунду. Team Check учитывается.")
+    addText(pKa, "Враг вошёл в Дистанцию — его автоматически закликивает: инжект ЛКМ + активация оружия, персонаж поворачивается к цели (Face Target). Обход 1.8 — спам-клики с темпом CPS (макс. урон, для слабых античитов). Обход 1.9 — удар по перезарядке ~0.5с с человеческим джиттером: CPS-детекты молчат, каждый свинг — полный заряд. Team Check учитывается. Target ESP подсвечивает цель киллауры автоматически.")
 
     local pSa = addPanel(pg.col2, "Silent Aura (1.8 Arena)")
     addToggle(pSa, "sa.enabled", "Enabled", false, function(state)
@@ -9366,19 +10066,19 @@ do
     end)
     addText(pEsp, "Единственный ESP клиента: чистый Drawing-движок, стиль точ-в-точ со скрина. Team Check (вкладка Aimbot) прячет свою команду.")
 
-    local pComp = addPanel(pg.col1, "Components")
-    addToggle(pComp, "esp.box", "Тонкий чёрный Box", true, function(v) ESPMX.box = v end)
-    addToggle(pComp, "esp.names", "НИК над головой", true, function(v) ESPMX.names = v end)
-    addToggle(pComp, "esp.hp", "HP (цвет по жизни)", true, function(v) ESPMX.hp = v end)
-    addToggle(pComp, "esp.effects", "Эффекты справа от бокса", true, function(v) ESPMX.effects = v end)
-    addToggle(pComp, "esp.tracer", "Tracer (белая линия)", true, function(v) ESPMX.tracer = v end)
-    addToggle(pComp, "esp.dist", "Дистанция под ногами", false, function(v) ESPMX.dist = v end)
-
-    local pTr = addPanel(pg.col2, "Tracer")
-    addDropdown(pTr, "esp.tracerorigin", "Линия откуда", {"Низ экрана", "Верх экрана", "Центр"}, "Низ экрана", function(v)
+    -- rev64: всё, что было отдельными модулями Components и Tracer — прямо здесь, в ESP
+    addText(pEsp, "— Components —")
+    addToggle(pEsp, "esp.box", "Тонкий чёрный Box", true, function(v) ESPMX.box = v end)
+    addToggle(pEsp, "esp.names", "НИК над головой", true, function(v) ESPMX.names = v end)
+    addToggle(pEsp, "esp.hp", "HP (цвет по жизни)", true, function(v) ESPMX.hp = v end)
+    addToggle(pEsp, "esp.effects", "Эффекты справа от бокса", true, function(v) ESPMX.effects = v end)
+    addToggle(pEsp, "esp.tracer", "Tracer (белая линия)", true, function(v) ESPMX.tracer = v end)
+    addToggle(pEsp, "esp.dist", "Дистанция под ногами", false, function(v) ESPMX.dist = v end)
+    addText(pEsp, "— Tracer —")
+    addDropdown(pEsp, "esp.tracerorigin", "Линия откуда", {"Низ экрана", "Верх экрана", "Центр"}, "Низ экрана", function(v)
         ESPMX.origin = v
     end)
-    addText(pTr, "Тег [F] золотой = друг. Эффекты: ⚔ оружие в руке, скорость/прыжок если кручены, атрибуты персонажа — до 6 строк.")
+    addText(pEsp, "Тег [F] золотой = друг. Эффекты: ⚔ оружие в руке, скорость/прыжок если кручены, атрибуты персонажа — до 6 строк.")
 
     local pTgt = addPanel(pg.col2, "Target ESP")
     addToggle(pTgt, "esp.target", "Enabled (Highlight)", false, function(state)
@@ -9390,7 +10090,7 @@ do
     addToggle(pTgt, "esp.targethud", "Target HUD (скид с фото)", false, function(state)
         if state then enableTargetHUD() else disableTargetHUD() end
     end)
-    addText(pTgt, "Highlight — пульсирующая подсветка модели. Target HUD — красная скруглённая плашка над головой цели: НИК + HP: x.x + зелёный HP-бар (1:1 с референса). Цель берётся из Aimbot / Silent Aim.")
+    addText(pTgt, "Highlight — пульсирующая подсветка модели. Target HUD — красная скруглённая плашка над головой цели: НИК + HP: x.x + зелёный HP-бар (1:1 с референса). Цель берётся из Kill Aura / Aimbot / Silent Aim (rev70: киллаура тоже даёт цель).")
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "Полный аналог ESP из референса: чёрный двойной бокс (3px контур + 1px внутр. белый), «НИК 24HP» над головой, колонка эффектов справа от бокса, белая линия от низа экрана к боксу. Всё на Drawing API — работает даже там, где ScreenGui заблокирован.")
@@ -9410,29 +10110,21 @@ do
     addToggle(pFx, "fx.hitmarker", "Hitmarker", false, function(state)
         S.hitmarkerOn = state
     end)
-    addToggle(pFx, "fx.hitsound", "Hitsound", false, function(state)
+    addToggle(pFx, "fx.hitsound", "Hitsound (Neverlose-стиль)", false, function(state)
         S.hitsoundOn = state
-        if state then playHitsound() end
     end)
-    addDropdown(pFx, "fx.hitsound.preset", "Hitsound Preset",
-        {"Neverlose", "Skeet", "Rust", "Bell", "Bubble", "Quake", "TF2", "Minecraft", "Custom"},
-        "Neverlose", function(v)
-            S.hitsoundPreset = v
-            if S.hitsoundOn then playHitsound() end
-        end)
-    addSlider(pFx, "fx.hitsound.vol", "Hitsound Volume", 0.1, 5, 1, 0.1, function(v)
-        S.hitsoundVol = v
+    addDropdown(pFx, "fx.hitsoundsel", "Hitsound обозем", {"NL Tick (snap)", "Sword Cling (metal)", "Custom (HM_SOUND_ID)"}, "NL Tick (snap)", function(v)
+        if v == "Custom (HM_SOUND_ID)" then
+            S.hitsoundId = HM_SOUND_ID
+        else
+            S.hitsoundId = HITSOUND_PRESETS[v]
+        end
     end)
-    addSlider(pFx, "fx.hitsound.pitch", "Hitsound Pitch", 0.5, 2, 1, 0.05, function(v)
-        S.hitsoundPitch = v
+    addSlider(pFx, "fx.hitsoundvol", "Hitsound громкость", 10, 200, 70, 5, function(v)
+        S.hitsoundVol = v / 100
     end)
-    addButton(pFx, "Test Hitsound", function()
-        local prev = S.hitsoundOn
-        S.hitsoundOn = true
-        playHitsound()
-        S.hitsoundOn = prev
-    end)
-    addText(pFx, "Работают при выстреле с оружием в руках. Трассер — до точки попадания / цели Silent Aim. Hitsound — классические звуки попадания (Neverlose / Skeet / Rust / Quake / TF2).")
+    addButton(pFx, "Тест хитсаунда", function() testHitsound() end)
+    addText(pFx, "Тики Neverlose/CS-стиля: snap — встроенный звук Roblox, всегда работает. Custom — свой ID звука впиши в HM_SOUND_ID в коде (регион BULLET TRACERS). Работают при выстреле с оружием в руках. Трассер — до точки попадания / цели Silent Aim.")
 
     local pSc = addPanel(pg.col2, "Smooth Camera")
     addToggle(pSc, "scam.enabled", "Enabled", false, function(state)
@@ -9737,153 +10429,6 @@ do
     addText(pInfo, "ЛКМ по поверхности — телепорт туда (на заданной высоте).")
 end
 
--- ==== 🛤 Route Bot (rev66: запись и автобег по маршруту) ====
-do
-    local pg = addPage("Movement", "🛤", "Route Bot")
-
-    local pRb = addPanel(pg.col1, "Route Bot")
-    local statusEl = addText(pRb, "Точек: 0  |  Статус: стоп")
-    local function updRouteStatus(st)
-        local txt = ("Точек: %d  |  Статус: %s"):format(#(S.routePts or {}), tostring(st or "стоп"))
-        pcall(function()
-            for _, mod in ipairs(MODULES) do
-                for _, el in ipairs(mod.elements or {}) do
-                    if el.kind == "text" and tostring(el.text):find("^Точек:") then
-                        el.text = txt
-                        if el._lbl and el._lbl.Parent then el._lbl.Text = txt end
-                    end
-                end
-            end
-        end)
-    end
-
-    local function stopRouteRec()
-        S.routeRec = false
-        dcc(S.routeRecConn)
-        S.routeRecConn = nil
-    end
-
-    local function startRouteRec()
-        stopRouteRec()
-        S.routePts = {}
-        S.routeRec = true
-        local lastT = 0
-        local lastPos = nil
-        S.routeRecConn = sh2Conn(RunService.Heartbeat:Connect(function()
-            if not S.routeRec then return end
-            local now = os.clock()
-            if now - lastT < 0.06 then return end
-            local ch = LP.Character
-            local root = ch and ch:FindFirstChild("HumanoidRootPart")
-            local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-            if not root then return end
-            local p = root.Position
-            if not lastPos or (p - lastPos).Magnitude >= 0.4 then
-                lastT = now
-                lastPos = p
-                local jmp = hum and (hum:GetState() == Enum.HumanoidStateType.Jumping
-                    or hum:GetState() == Enum.HumanoidStateType.Freefall) or false
-                table.insert(S.routePts, {cf = root.CFrame, pos = p, jump = jmp})
-                updRouteStatus("запись 🔴")
-            end
-        end))
-        updRouteStatus("запись 🔴")
-    end
-
-    local function stopRoutePlay()
-        S.routePlay = false
-        S.routePlayGen = (S.routePlayGen or 0) + 1
-        updRouteStatus("стоп")
-    end
-
-    local function startRoutePlay()
-        if #(S.routePts or {}) == 0 then
-            toastImpl("Route Bot", "Сначала запиши маршрут (Record)")
-            local c = Cfg["route.play"] if c then c.set(false) end
-            return
-        end
-        if S.routeRec then
-            stopRouteRec()
-            local c = Cfg["route.rec"] if c then c.set(false) end
-        end
-        S.routePlay = true
-        S.routePlayGen = (S.routePlayGen or 0) + 1
-        local myGen = S.routePlayGen
-        task.spawn(function()
-            while S.routePlay and S.routePlayGen == myGen do
-                local pts = S.routePts or {}
-                for i = 1, #pts do
-                    if not (S.routePlay and S.routePlayGen == myGen) then break end
-                    local pt = pts[i]
-                    local ch = LP.Character
-                    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-                    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-                    if root and pt then
-                        updRouteStatus(("идёт ▶ %d/%d"):format(i, #pts))
-                        if S.routeMode == "Walk" and hum then
-                            if pt.jump then hum.Jump = true end
-                            hum:MoveTo(pt.pos)
-                            local t0 = os.clock()
-                            while S.routePlay and S.routePlayGen == myGen and (os.clock() - t0) < 0.35 do
-                                local r2 = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-                                if not r2 or (r2.Position - pt.pos).Magnitude < 2.2 then break end
-                                RunService.Heartbeat:Wait()
-                            end
-                        else
-                            root.CFrame = pt.cf
-                            pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
-                            task.wait(0.05)
-                        end
-                    else
-                        task.wait(0.1)
-                    end
-                end
-                if not S.routeLoop then
-                    S.routePlay = false
-                    local c = Cfg["route.play"] if c then c.set(false) end
-                    break
-                end
-                task.wait(0.05)
-            end
-            updRouteStatus("стоп")
-        end)
-    end
-
-    addToggle(pRb, "route.rec", "Record Route (запись)", false, function(state)
-        if state then
-            if S.routePlay then
-                stopRoutePlay()
-                local c = Cfg["route.play"] if c then c.set(false) end
-            end
-            startRouteRec()
-            toastImpl("Route Bot", "Запись маршрута начата — беги по точкам")
-        else
-            stopRouteRec()
-            updRouteStatus("записано")
-            toastImpl("Route Bot", "Записано точек: " .. tostring(#(S.routePts or {})))
-        end
-    end)
-    addToggle(pRb, "route.play", "Play Route (автобег)", false, function(state)
-        if state then startRoutePlay() else stopRoutePlay() end
-    end)
-    addToggle(pRb, "route.loop", "Loop (по кругу)", true, function(state)
-        S.routeLoop = state
-    end)
-    addDropdown(pRb, "route.mode", "Move Mode", {"CFrame", "Walk"}, "CFrame", function(v)
-        S.routeMode = v
-    end)
-    addButton(pRb, "Clear Route (очистить)", function()
-        stopRouteRec()
-        stopRoutePlay()
-        local c1 = Cfg["route.rec"] if c1 then c1.set(false) end
-        local c2 = Cfg["route.play"] if c2 then c2.set(false) end
-        S.routePts = {}
-        updRouteStatus("очищено")
-        toastImpl("Route Bot", "Маршрут очищен")
-    end)
-    addText(pRb, "Включи Record → пробеги нужный путь → выключи Record → жми Play. CFrame точно повторяет все точки и прыжки, Walk ведёт через Humanoid:MoveTo.")
-end
-
 -- ---------------- PLAYER ----------------
 addCategory("Player")
 
@@ -10003,7 +10548,39 @@ do
     addText(pInfo, "Как юзать: встал куда хочешь → включил Enabled → ушёл гулять. Игрокам ты так и стоишь на месте.")
 end
 
--- ==== Misc (Appearance) ====
+-- ==== Route Bot (rev67): запись маршрута + ходьба по нему + неоновая линия ====
+do
+    local pg = addPage("Player", "🤖", "Bot")
+
+    local pB = addPanel(pg.col1, "Route Bot")
+    addButton(pB, "⏺ Start запись", function() botRecStart() end)
+    addButton(pB, "⏹ Stop запись", function() botRecStop() end)
+    addToggle(pB, "bot.walk", "Бот: идти маршрутом", false, function(state)
+        botWalk(state)
+    end)
+    addDropdown(pB, "bot.mode", "После конца маршрута", {"Один раз", "Зациклить", "Туда-обратно"}, "Один раз", function(v)
+        S.botMode = v
+    end)
+    addSlider(pB, "bot.speed", "Скорость бота", 8, 60, 16, 2, function(v)
+        S.botSpeed = math.floor(v)
+    end)
+    addToggle(pB, "bot.line", "Линия маршрута", true, function(v)
+        S.botLineOn = v
+        if v then botDrawRoute() else botClearLine() end
+    end)
+    addToggle(pB, "bot.recact", "Записывать ДЕЙСТВИЯ (клики/клавиши)", true, function(v)
+        S.botRecActions = v
+    end)
+    addToggle(pB, "bot.playact", "Воспроизводить действия при ходе", true, function(v)
+        S.botPlayActions = v
+    end)
+    addButton(pB, "💾 Сохранить маршрут", function() botRouteSave() end)
+    addButton(pB, "📂 Загрузить маршрут", function() botRouteLoad() end)
+    addText(pB, "v2: rev69 — помимо маршрута бот пишет ДЕЙСТВИЯ: клики мыши (покупка/открытие окон/магазинов), клавиши E/F/T, открытие prompt'ов. При воспроизведении маршрута бот в тех же временных точках повторяет их — автоматом открывает двери, разговаривает с NPC, нажимает кнопки. WASD/пробел не пишутся. Start → пройди маршрут и по дороге делай нужные действия → Stop → включи ход. Режимы Один раз/Зациклить/Туда-обратно. Сохранение/загрузка в файл (с действиями).")
+end
+
+-- ==== Misc (Appearance + NoKb + Invisible) ====
+
 do
     local pg = addPage("Player", "🎭", "Misc")
 
@@ -10013,7 +10590,21 @@ do
     addText(pMorph, "Визуальные морфы: Korblox-нога и Headless-голова (локально).")
 end
 
--- ==== 🛡 No Knockback (отдельная строка в Player) ====
+-- ==== Invisible (отдельный модуль во вкладке Player, rev65) ====
+do
+    local pg = addPage("Player", "👻", "Invisible")
+
+    local pInvis = addPanel(pg.col1, "Invisible")
+    addToggle(pInvis, "invis.enabled", "Enabled", false, function(state)
+        setInvisible(state)
+    end)
+    addSlider(pInvis, "invis.offset", "Depth", 20, 200, 58, 2, function(v)
+        S.invisOffset = math.floor(v)
+    end)
+    addText(pInvis, "Персонаж проваливается под карту (Y зафиксирован — падения нет), другие тебя не видят. Камера и управление — как обычно. Выключаешь — телепорт обратно на поверхность.")
+end
+
+-- ==== No Knockback (отдельный модуль во вкладке Player, rev65) ====
 do
     local pg = addPage("Player", "🛡", "No Knockback")
 
@@ -10038,104 +10629,39 @@ do
     addText(pNoKb, "Preset 1.8 Arena: порог 28 + обнуление вертикального подскока от ударов — комбо не рвётся, движение свободное.")
 end
 
--- ==== 👻 Invisible (отдельная строка в Player) ====
+-- ==== Fling Things & People: Anti Grasp + Throw Power (rev68) ====
 do
-    local pg = addPage("Player", "👻", "Invisible")
+    local pg = addPage("Player", "🪬", "FTP: Anti Grasp")
 
-    local pInvis = addPanel(pg.col1, "Invisible")
-    addToggle(pInvis, "invis.enabled", "Enabled", false, function(state)
-        setInvisible(state)
+    local pG = addPanel(pg.col1, "Anti Grasp (нет заморозки при захвате)")
+    addToggle(pG, "grasp.enabled", "Могу ходить даже в захвате", false, function(state)
+        setGraspGuard(state)
     end)
-    addSlider(pInvis, "invis.offset", "Depth", 20, 200, 58, 2, function(v)
-        S.invisOffset = math.floor(v)
+    addButton(pG, "🪬 Захватить его обратно", function()
+        graspRevenge(true)
     end)
-    addText(pInvis, "Персонаж проваливается под карту (Y зафиксирован — падения нет), другие тебя не видят. Камера и управление — как обычно. Выключаешь — телепорт обратно на поверхность.")
-end
-
--- ==== 🤼 Fling Things & People (rev67: Anti Grasp + Супер-бросок) ====
-do
-    local pg = addPage("Player", "🤼", "FTP")
-    local RS = game:GetService("ReplicatedStorage")
-
-    local function setFtpAntiGrasp(on)
-        S.ftpAntiGrasp = on
-        S.ftpAgGen = (S.ftpAgGen or 0) + 1
-        local myGen = S.ftpAgGen
-        if not on then return end
-        task.spawn(function()
-            while S.ftpAntiGrasp and S.ftpAgGen == myGen do
-                pcall(function()
-                    local ch = LP.Character
-                    if not ch then return end
-                    local head = ch:FindFirstChild("Head")
-                    local isHeld = LP:FindFirstChild("IsHeld")
-                    local struggleEvt = RS:FindFirstChild("CharacterEvents")
-                        and RS.CharacterEvents:FindFirstChild("Struggle")
-                    if (head and head:FindFirstChild("PartOwner")) or (isHeld and isHeld.Value) then
-                        if struggleEvt then struggleEvt:FireServer(LP) end
-                        local gce = RS:FindFirstChild("GameCorrectionEvents")
-                        local sv = gce and gce:FindFirstChild("StopAllVelocity")
-                        if sv then sv:FireServer() end
-                        for _, v in ipairs(ch:GetChildren()) do
-                            if v:IsA("BasePart") then v.Anchored = true end
-                        end
-                        while S.ftpAntiGrasp and S.ftpAgGen == myGen
-                            and ((head and head:FindFirstChild("PartOwner")) or (isHeld and isHeld.Value)) do
-                            if struggleEvt then struggleEvt:FireServer(LP) end
-                            task.wait()
-                        end
-                        for _, v in ipairs(ch:GetChildren()) do
-                            if v:IsA("BasePart") then v.Anchored = false end
-                        end
-                    end
-                end)
-                task.wait()
-            end
-        end)
-    end
-
-    local function setFtpThrowLoop()
-        S.ftpTpGen = (S.ftpTpGen or 0) + 1
-        local myGen = S.ftpTpGen
-        if (tonumber(S.ftpThrowMult) or 1) <= 1 then return end
-        task.spawn(function()
-            while (tonumber(S.ftpThrowMult) or 1) > 1 and S.ftpTpGen == myGen and S.guiAlive do
-                pcall(function()
-                    local pg2 = LP:FindFirstChild("PlayerGui")
-                    local cgui = pg2 and pg2:FindFirstChild("ContextActionGui")
-                    local ctx = cgui and cgui:FindFirstChild("ContextButtonFrame")
-                        and cgui.ContextButtonFrame:FindFirstChild("ContextActionButton")
-                    if not ctx then return end
-                    for _, conn in ipairs(getconnections(ctx.MouseButton1Down)) do
-                        if type(conn.Function) == "function" then
-                            for idx, val in pairs(debug.getupvalues(conn.Function)) do
-                                if type(val) == "Instance" and val:IsA("BodyVelocity") then
-                                    debug.setupvalue(conn.Function, idx, nil)
-                                    local maxF = val.MaxForce
-                                    local vel = val.Velocity
-                                    local mult = tonumber(S.ftpThrowMult) or 1
-                                    val.MaxForce = Vector3.new(maxF.X * mult, maxF.Y * mult, maxF.Z * mult)
-                                    val.Velocity = Vector3.new(vel.X * mult, vel.Y * mult, vel.Z * mult)
-                                    debug.setupvalue(conn.Function, idx, val)
-                                end
-                            end
-                        end
-                    end
-                end)
-                task.wait(0.1)
-            end
-        end)
-    end
-
-    local pFtp = addPanel(pg.col1, "Fling Things & People")
-    addToggle(pFtp, "ftp.antigrasp", "Anti Grasp (не дают схватить)", false, function(state)
-        setFtpAntiGrasp(state)
+    addKeybind(pG, "grasp.revbind", "Горячая клавиша «ответки»", "Q", function(_)
+        graspRevenge(true)
     end)
-    addSlider(pFtp, "ftp.throwmult", "Сила броска (x1–x20)", 1, 20, 1, 1, function(v)
-        S.ftpThrowMult = math.floor(v)
-        setFtpThrowLoop()
+    addToggle(pG, "grasp.autorev", "Auto-Revenge (когда держали нас)", false, function(state)
+        S.graspAutoRev = state
     end)
-    addText(pFtp, "Anti Grasp — автоматически вырывается из захвата (Struggle + якорь пока держат). Сила броска — множитель BodyVelocity при броске в Fling Things & People.")
+    addSlider(pG, "grasp.revsec", "Сколько секунд держим окно мести", 3, 20, 8, 1, function(v)
+        S.revengeSec = v
+    end)
+    addText(pG, "Как работает: когда тебя схватили (обычно ты замираешь) — мы каждый кадр возвращаем твое движение. Ты спокойно идёшь дальше, а захватчик остаётся ни с чем. Кнопка/«Q»-другой тяжелый — одной горячей кнопкой схватываем ЕГО взамен. Auto-Revenge делает это сама первые N секунд после того, нас держали.")
+
+    local pT = addPanel(pg.col2, "Throw Power (сила броска)")
+    addToggle(pT, "tpow.enabled", "Включить усиление броска", false, function(state)
+        setThrowPower(state)
+    end)
+    addSlider(pT, "tpow.mult", "Сила броска (x)", 1, 5, 2, 0.5, function(v)
+        S.tpow = v
+    end)
+    addSlider(pT, "tpow.radius", "Радиус усиления", 5, 30, 15, 5, function(v)
+        S.tpowRadius = v
+    end)
+    addText(pT, "Летящие рядом предметы (брошенные тебя или соседей вместо тебя) набирают сильнее импульс: предметы улетают дальше/быстрее. Честно: если сервер жёстко владеет физикой, эффект будет слабее.")
 end
 
 
@@ -10203,11 +10729,20 @@ do
             toastImpl("Server", "setclipboard недоступен")
         end
     end)
+    addButton(pSrv, "⏱ Сколько я отыграл?", function()
+        local sess = tick() - (S.sessionT0 or tick())
+        local today = (S.timeDayTotal or 0) + sess
+        notifySafe("⏱ Сессия: " .. timeFmt(sess) .. " · Сегодня всего: " .. timeFmt(today), C3(80, 200, 120))
+    end)
+    addToggle(pSrv, "srv.timehud", "Время в игре (HUD)", false, function(state)
+        setTimeHUD(state)
+    end)
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "PlaceId: " .. tostring(game.PlaceId))
     addText(pInfo, "JobId: " .. tostring(game.JobId))
     addText(pInfo, "Игроков сейчас: " .. tostring(#Players:GetPlayers()) .. " / " .. tostring(Players.MaxPlayers))
+    addText(pInfo, "Игра в сессии: включи «Время в игре (HUD)» — таймер сверху справа, накапливается за день (сохраняется в файл).")
     addText(pInfo, "Server Hop отправляет на другой сервер этого же плейса (Roblox сам выберет).")
 end
 
@@ -10348,27 +10883,6 @@ do
     end)
 
     local pInfo = addPanel(miscPage.col1, "Info")
-    local sessionEl = addText(pInfo, "Session Time: 00:00:00")
-    task.spawn(function()
-        while S.guiAlive do
-            local sec = math.max(0, math.floor(os.clock() - (S.sessionStart or os.clock())))
-            local h = math.floor(sec / 3600)
-            local m = math.floor((sec % 3600) / 60)
-            local s = sec % 60
-            local txt = string.format("Session Time: %02d:%02d:%02d", h, m, s)
-            pcall(function()
-                for _, mod in ipairs(MODULES) do
-                    for _, el in ipairs(mod.elements or {}) do
-                        if el.kind == "text" and tostring(el.text):find("^Session Time:") then
-                            el.text = txt
-                            if el._lbl and el._lbl.Parent then el._lbl.Text = txt end
-                        end
-                    end
-                end
-            end)
-            task.wait(1)
-        end
-    end)
     addText(pInfo, "RightShift — скрыть/показать меню.")
     addText(pInfo, "Окно таскается за шапку, размер — за правый нижний угол.")
     addText(pInfo, "Меню в оболочке Voidware-стиля, всё своё.")
@@ -10797,17 +11311,6 @@ function fullCleanupNL()
     pcall(function() if S.statueOn then setStatue(false) end end) -- rev58: снять стояку
     dcc(S.statueConn)
     dcc(S.statueCharConn)
-    -- rev66: остановить Route Bot
-    S.routeRec = false
-    S.routePlay = false
-    S.routePlayGen = (S.routePlayGen or 0) + 1
-    dcc(S.routeRecConn)
-    S.routeRecConn = nil
-    -- rev67: остановить FTP (Anti Grasp + Throw Power)
-    S.ftpAntiGrasp = false
-    S.ftpThrowMult = 1
-    S.ftpAgGen = (S.ftpAgGen or 0) + 1
-    S.ftpTpGen = (S.ftpTpGen or 0) + 1
     dcc(S.autoClickBindConn)
     dcc(S.jesusConn)
     if S.jesusPlatform then S.jesusPlatform:Destroy() S.jesusPlatform = nil end
@@ -10825,20 +11328,29 @@ function fullCleanupNL()
     pcall(disableAirStack)
     pcall(function() setInvisible(false) end)
     pcall(disableNoKb)
+    -- rev63: Ammo/Wallbang/TimeHUD — гасим аккуратно (Wallbang возвращает CanQuery частям)
+    pcall(function() setInfiniteAmmo(false) end)
+    pcall(function() setWallbang(false) end)
+    pcall(function() setTimeHUD(false) end) -- внутри ещё и timeSave()
+    pcall(timeSave)
+    -- rev67: Route Bot — стоп записи/ходьбы, чистим линию и маркер
+    pcall(function()
+        S.botRecOn = false S.botWalkOn = false
+        dcc(S.botRecConn)  S.botRecConn = nil
+        dcc(S.botWalkConn) S.botWalkConn = nil
+        pcall(botActHooksStop) -- rev69
+    end)
+    pcall(function()
+        botClearLine()
+        botClearMarker()
+    end)
+    -- rev68: Anti Grasp / Throw Power — стоп
+    pcall(function() setGraspGuard(false) end)
+    pcall(function() setThrowPower(false) end)
     pcall(disableKillAura)
     pcall(disableSilentAura)
     pcall(disableSmoothCam)
     pcall(disableAutoShot)
-    pcall(function()
-        WeaponMod.Settings.RapidFire.Enabled = false
-        WeaponMod.Settings.NoSpread.Enabled = false
-        WeaponMod.Settings.NoRecoil.Enabled = false
-        WeaponMod.Settings.InfiniteAmmo.Enabled = false
-        WeaponMod:DisableRapidFire()
-        WeaponMod:DisableNoSpread()
-        WeaponMod:DisableNoRecoil()
-        WeaponMod:DisableInfiniteAmmo()
-    end)
     pcall(disableAntiKick)
     dcc(S.godConn)
     dcc(S.flingConn)
@@ -10879,45 +11391,45 @@ function fullCleanupNL()
         local ch = LP.Character
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
         if not root then return end
-        -- rev64: Safe Landing ТОЛЬКО если реально падаешь в войд/под карту (Y < -35 или ниже FallenPartsDestroyHeight+60)
-        -- или если только что выключался чит, уносивший модель в воздух/под пол (Fly/Invis/AirStack/Statue).
-        -- Раньше срабатывало на ЛЮБОМ прыжке и даже стоя на тонком полу, унося в 0,100,0.
-        local curY = root.Position.Y
         local belowVoidH = false
         pcall(function()
             local fdh = workspace.FallenPartsDestroyHeight
-            if type(fdh) == "number" and fdh > -1e6 and curY < fdh + 60 then belowVoidH = true end
+            if type(fdh) == "number" and root.Position.Y < fdh + 60 then belowVoidH = true end
         end)
-        local deepBelow = curY < -35
-        local noGroundDeep = false
-        if curY < -5 then
+        local noGround = false
+        pcall(function()
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {ch}
+            local hit = workspace:Raycast(root.Position, Vector3.new(0, -400, 0), params)
+            noGround = hit == nil
+        end)
+        local belowZero = root.Position.Y < 0
+        if noGround or belowVoidH or belowZero then
+            -- приоритет: место, где ты РЕАЛЬНО последний раз стоял (Ground Tracker);
+            -- fallback — SpawnLocation; затем — просто поднять над текущей XZ
+            local targetCF = nil
             pcall(function()
-                local params = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = {ch}
-                local hit = workspace:Raycast(root.Position, Vector3.new(0, -500, 0), params)
-                noGroundDeep = (hit == nil)
+                if S.lastGroundCF then targetCF = S.lastGroundCF * CFrame.new(0, 3, 0) end
             end)
-        end
-        if belowVoidH or deepBelow or noGroundDeep then
-            local targetCF = S.lastGroundCF
             if not targetCF then
+                local spawn = nil
                 pcall(function()
                     for _, d in ipairs(workspace:GetDescendants()) do
-                        if d:IsA("SpawnLocation") then
-                            targetCF = d.CFrame * CFrame.new(0, 4, 0)
-                            break
-                        end
+                        if d:IsA("SpawnLocation") then spawn = d break end
                     end
                 end)
+                if spawn then
+                    targetCF = spawn.CFrame * CFrame.new(0, 5, 0)
+                else
+                    targetCF = CFrame.new(root.Position.X, 100, root.Position.Z)
+                end
             end
-            if targetCF then
-                root.CFrame = targetCF
-                pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
-                pcall(function() root.Velocity = Vector3.zero end)
-                print("[SpermaHub] Safe Landing: было Y=" .. tostring(math.floor(curY)) ..
-                    " → возврат на последнюю твёрдую точку")
-            end
+            root.CFrame = targetCF
+            pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+            pcall(function() root.Velocity = Vector3.zero end)
+            print("[SpermaHub] Safe Landing: было Y=" .. tostring(math.floor(root.Position.Y)) ..
+                " → телепорт туда, где стоял")
         end
     end)
     -- Anti-Void-платформа — удалить после Safe Landing (иначе под ногами остаётся пол под картой)
@@ -11489,7 +12001,6 @@ do
                     l.Size = UDim2.new(1, 0, 0, 0)
                     l.AutomaticSize = Enum.AutomaticSize.Y
                     l.TextWrapped = true
-                    _el._lbl = l
                 elseif _el.kind == "plist" then
                     buildPlistBlock(holder, _ord, _el)
                 end
@@ -11673,6 +12184,14 @@ do
         relayoutRoot()
     end
     print(("[SpermaHub] spermaclick: модулей отрисовано: %d, категорий: %d"):format(built, #colOrder))
+    -- версия НА ЭКРАНЕ при загрузке — чтобы было видно, новая ли копия вообще запустилась
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "SpermaHub rev" .. tostring(BUILD_REV),
+            Text = "Загружено. Components/Tracer теперь внутри формы ESP.",
+            Duration = 10,
+        })
+    end)
 
     -- подсветка включённых модулей из Cfg.set / respawn-хандлеров
     updModHeader = function(m)
@@ -11717,7 +12236,7 @@ do
         applySearch()
     end)
 
-    local hint = mkText(gui, "Additional options - CTRL + G (Hold)", 11.5, false, C_DIM, Enum.TextXAlignment.Center)
+    local hint = mkText(gui, "Additional options - CTRL + G (Hold)  ·  SpermaHub rev" .. tostring(BUILD_REV), 11.5, false, C_DIM, Enum.TextXAlignment.Center)
     hint.AnchorPoint = Vector2.new(0.5, 1)
     hint.Position = UDim2.new(0.5, 0, 1, -50)
     hint.Size = UDim2.new(0, 400, 0, 16)
@@ -11765,38 +12284,40 @@ do
         if type(fullCleanupNL) == "function" then fullCleanupNL() end
     end)
 
-    -- ---------- открыть/закрыть меню (rev65: плавное появление колонок) ----------
-    local menuAnimToken = 0
+    -- ---------- открыть/закрыть меню (rev66: эффект появления pop&rise) ----------
+    local BASE_ROOT_POS = UDim2.new(0.5, 0, 0.46, 0)
+    pcall(function()
+        local us = root:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
+        us.Name = "PopScale"
+        us.Scale = 1
+        us.Parent = root
+    end)
+    local function playOpenFX()
+        pcall(function()
+            local TS = game:GetService("TweenService")
+            local us = root:FindFirstChildOfClass("UIScale")
+            -- старт: чуть ниже, маленький, слегка крученый
+            root.Position = UDim2.new(BASE_ROOT_POS.X.Scale, BASE_ROOT_POS.X.Offset,
+                                      BASE_ROOT_POS.Y.Scale + 0.07, BASE_ROOT_POS.Y.Offset)
+            root.Rotation = -2
+            if us then us.Scale = 0.86 end
+            TS:Create(root, TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                      {Position = BASE_ROOT_POS}):Play()
+            TS:Create(root, TweenInfo.new(0.30, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                      {Rotation = 0}):Play()
+            if us then
+                TS:Create(us, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                          {Scale = 1}):Play()
+            end
+        end)
+    end
     local function setGuiOpen(openV)
         CG_OPEN = openV and true or false
-        menuAnimToken = menuAnimToken + 1
-        local myTok = menuAnimToken
+        gui.Enabled = CG_OPEN
         if CG_OPEN then
-            gui.Enabled = true
+            playOpenFX()
             for m, rd in pairs(rowRefs) do pcall(rd.paint) end
             pcall(applySearch)
-            pcall(function()
-                root.Position = UDim2.new(0.5, 0, 0.46, 14)
-                TweenService:Create(root, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                    Position = UDim2.new(0.5, 0, 0.46, 0),
-                }):Play()
-                for idx, col in ipairs(colOrder) do
-                    local cf = col.frame
-                    if cf and cf.Visible then
-                        cf.BackgroundTransparency = 0.65
-                        task.delay((idx - 1) * 0.025, function()
-                            if menuAnimToken ~= myTok or not CG_OPEN then return end
-                            pcall(function()
-                                TweenService:Create(cf, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                                    BackgroundTransparency = 0.06,
-                                }):Play()
-                            end)
-                        end)
-                    end
-                end
-            end)
-        else
-            gui.Enabled = false
         end
     end
     S.rsToggleConn = UIS.InputBegan:Connect(function(input, gpe)
