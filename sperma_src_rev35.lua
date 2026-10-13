@@ -92,7 +92,7 @@ end
 --// ============================================================
 
 --// rev33: текущая ревизия сборки (minVersion в адмметаллце сверяется с ней)
-BUILD_REV = 66
+BUILD_REV = 72
 
 KeySystem = {
     --// Конфигурация
@@ -3103,7 +3103,7 @@ print("[SpermaHub] Key system passed, loading main script...")
 
 -- отметка начала загрузки (если меню не появилось — смотри, до какого принта дошло)
 print("[SpermaHub] Загрузка началась...")
-print("[SpermaHub] сборка: build18 rev66 (эффект появления меню: подъём+раскрытие с поворотом при открытии)")
+print("[SpermaHub] сборка: build18 rev72 (Bot: большие кнопки ▶ ЗАПУСТИТЬ / ⏹ ОСТАНОВИТЬ; Smooth Camera rev71 в комплекте)")
 
 -- полифилл для старых инжекторов без task.*
 if type(task) ~= "table" or type(task.spawn) ~= "function" then
@@ -3282,6 +3282,20 @@ end
 SH2 = {conns = {}, objs = {}}
 function sh2Conn(c) table.insert(SH2.conns, c) return c end
 
+-- краткий помощник цвета (C3 → Color3.fromRGB), чтобы не писать длинные вызовы
+function C3(r, g, b) return Color3.fromRGB(r or 255, g or 255, b or 255) end
+
+-- безопасный toast: если toastImpl ещё не инициализирован (ранняя стадия загрузки) — пишем в консоль
+function notifySafe(msg, _color)
+    pcall(function()
+        if type(toastImpl) == "function" then
+            toastImpl("SpermaHub", tostring(msg))
+        else
+            print("[SpermaHub] " .. tostring(msg))
+        end
+    end)
+end
+
 -- ============ СОСТОЯНИЕ ============
 S = {
     flying=false, noclip=false, esp=false, speed=50,
@@ -3323,15 +3337,22 @@ S = {
     wallbangOn=false, wallbangConn=nil, wallbangMap=nil,  -- rev63: прострелы через стены
     hitsoundOn=false, hitsoundId="rbxasset://sounds/snap.mp3", hitsoundVol=0.7, -- rev63: хитсаунд
     sessionT0=tick(), timeHudOn=false, timeHudGui=nil, timeHudConn=nil, timeDayKey=nil, timeDayTotal=nil, timeSaveAcc=0, -- rev63: таймер
+    botRecOn=false, botRecConn=nil, botPoints={}, botRouteLine=nil, botWalkOn=false, botWalkConn=nil, botTargetMarker=nil,
+    botSpeed=16, botMode="Один раз", botLineOn=true, -- rev67: Route Bot
+    botRecActions=true, botPlayActions=true, botActions={}, botRecT0=nil, botActConns=nil, -- rev69: Bot v2, действия GUI/клики/промпты
+    graspOn=false, graspConn=nil, graspWasHeld=false, graspPrevHeadless=nil, revengeUntil=0, revengeSec=8,
+    tpowOn=false, tpow=2, tpowRadius=15, tpowConn=nil, tpowStamp={}, tpowAcc=0, graspAutoRev=false, -- rev68: FTP Anti-Grasp + Throw Power
     flingMode="Skid Fling", flingDur=5, skidDur=2, flingScope="Selected", flingSelName=nil,
     autoFlingOn=false, flingCycleDelay=0.5, skidOldPos=nil, skidFPDH=nil,
     scOn=false, scConn=nil, scPrevType=nil, scSpeed=6, scDist=8, scSens=1,
+    scPrevMB=nil, scWheelConn=nil, -- rev71: возврат поведения мыши + коннект зума
     asOn=false, asConn=nil, asFovPx=80, asCps=10, asSilentHit=true, asRange=20, asOrigSize=nil, asAssist=0,
     asTp=false, asTpRange=200, asTpDist=4, asBackCF=nil, asLastSwing=0,
     asFlick=false, asReaction=0.12, asNextFire=0, asLastTarget=nil, flickHead=nil, asFlickB=false, flickHold=false,
     asSilentNet=true, asNetByAuto=false, flHookOn=false, flOldFire=nil,
     asTrigger=false, asTrigDelay=0.08, asLastTrig=0,
     kaOn=false, kaConn=nil, kaRange=10, kaCps=12, kaFace=true, kaTarget=nil,
+    kaMode="1.8", -- rev70: обход 1.8 (спам-клики) / 1.9 (кулдаун с джиттером)
     saOn=false, saConn=nil, saRange=15, saDelay=0.3, saTarget=nil, saOrigSize=nil,
     godOn=false, godConn=nil, flingConn=nil,
     guiAlive=true, fovVisualize=true,
@@ -4748,6 +4769,572 @@ function setTimeHUD(b)
 end
 pcall(timeLoad)
 
+-- ============ REV67: ROUTE BOT — запись маршрута, линия пути, бот-ходьба ============
+BOT_ROUTE_FILE = "spermahub_nl_route.json"
+function botClearLine()
+    pcall(function() if S.botRouteLine then S.botRouteLine:Destroy() S.botRouteLine = nil end end)
+end
+function botClearMarker()
+    pcall(function() if S.botTargetMarker then S.botTargetMarker:Destroy() S.botTargetMarker = nil end end)
+end
+function botDrawRoute()
+    botClearLine()
+    if not S.botLineOn then return end
+    local pts = S.botPoints or {}
+    local n = #pts
+    if n < 2 then return end
+    local step = math.max(1, math.ceil(n / 800))
+    pcall(function()
+        local folder = Instance.new("Folder")
+        folder.Name = "SpermaBotRoute"
+        folder.Parent = workspace
+        local prev = nil
+        for i = 1, n, step do
+            local p = pts[i]
+            if prev then
+                local d = p - prev
+                local len = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+                if len > 0.05 then
+                    local seg = Instance.new("Part")
+                    seg.Name = "Seg"
+                    seg.Anchored = true
+                    seg.CanCollide = false
+                    pcall(function() seg.CanQuery = false end)
+                    seg.Material = Enum.Material.Neon
+                    seg.Color = Color3.fromRGB(0, 255, 170)
+                    seg.Transparency = 0.25
+                    seg.Size = Vector3.new(0.12, 0.12, len)
+                    local mid = (prev + p) * 0.5
+                    seg.CFrame = CFrame.lookAt(mid, p)
+                    seg.Parent = folder
+                end
+            end
+            prev = p
+        end
+        local function cap(p2, col)
+            local b = Instance.new("Part")
+            pcall(function() b.Shape = Enum.PartType.Ball end)
+            b.Anchored = true b.CanCollide = false
+            pcall(function() b.CanQuery = false end)
+            b.Material = Enum.Material.Neon b.Color = col
+            b.Size = Vector3.new(1.2, 1.2, 1.2)
+            b.CFrame = CFrame.new(p2)
+            b.Parent = folder
+        end
+        cap(pts[1], Color3.fromRGB(0, 255, 0))   -- старт: зелёный
+        cap(pts[n], Color3.fromRGB(255, 80, 80)) -- финиш: красный
+        S.botRouteLine = folder
+    end)
+end
+
+function botRecStart()
+    S.botPoints = {}
+    S.botRecOn = true
+    dcc(S.botRecConn)
+    if S.botRecActions then pcall(botActHooksStart) end -- rev69: начинаем писать действия
+    local lastV = nil
+    S.botRecConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local p = root.Position
+        if lastV then
+            local d = p - lastV
+            local dist = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+            if dist < 2 then return end
+        end
+        S.botPoints[#S.botPoints + 1] = Vector3.new(p.X, p.Y, p.Z)
+        lastV = p
+        -- живая перерисовка линии примерно каждые 25 studs
+        if S.botLineOn and #S.botPoints > 1 and (#S.botPoints % 10) == 0 then
+            pcall(botDrawRoute)
+        end
+    end))
+    notifySafe("🤖 Bot: ЗАПИСЬ — иди маршрутом, ⏹ Stop — завершить", C3(255, 180, 80))
+end
+function botRecStop()
+    S.botRecOn = false
+    dcc(S.botRecConn)
+    S.botRecConn = nil
+    pcall(botActHooksStop) -- rev69: сворачиваем хуки действий
+    botDrawRoute()
+    local n = #(S.botPoints or {})
+    local aNoop = #(S.botActions or {})
+    local extra = (aNoop > 0) and (" · действий: " .. tostring(aNoop)) or ""
+    notifySafe("🤖 Bot: запись остановлена — точек: " .. tostring(n) .. extra, C3(80, 200, 120))
+end
+
+function botSetMarker(p)
+    pcall(function()
+        if not S.botTargetMarker then
+            local b = Instance.new("Part")
+            pcall(function() b.Shape = Enum.PartType.Ball end)
+            b.Anchored = true b.CanCollide = false
+            pcall(function() b.CanQuery = false end)
+            b.Material = Enum.Material.Neon
+            b.Color = Color3.fromRGB(255, 255, 0)
+            b.Size = Vector3.new(1.0, 1.0, 1.0)
+            b.Transparency = 0.15
+            b.Name = "SpermaBotTarget"
+            b.Parent = workspace
+            S.botTargetMarker = b
+        end
+        S.botTargetMarker.CFrame = CFrame.new(p)
+    end)
+end
+
+function botWalk(state)
+    S.botWalkOn = state
+    dcc(S.botWalkConn)
+    S.botWalkConn = nil
+    botClearMarker()
+    if not state then return end
+    local pts = S.botPoints or {}
+    if #pts < 2 then
+        S.botWalkOn = false
+        local c = Cfg["bot.walk"] if c then c.set(false) end
+        notifySafe("🤖 Bot: сначала запиши маршрут (Start → иди → Stop)", C3(255, 120, 120))
+        return
+    end
+    -- стартуем от точки, ближайшей к текущей позиции
+    local idx = 1
+    do
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if root then
+            local best, bi = math.huge, 1
+            for i, p in ipairs(pts) do
+                local d = p - root.Position
+                local dist = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+                if dist < best then best, bi = dist, i end
+            end
+            idx = math.min(bi, #pts - 1)
+        end
+    end
+    local dir = 1
+    pcall(function()
+        local t = pts[math.min(idx + 1, #pts)]
+        if t then botSetMarker(t) end
+    end)
+    notifySafe("🤖 Bot: пошёл по маршруту («" .. tostring(S.botMode) .. "», точек " .. tostring(#pts) .. ")", C3(80, 200, 120))
+    -- rev69: проигрыватель действий по таймлайну
+    local actIdx = 1
+    local actT0 = tick()
+    S.botWalkConn = sh2Conn(RunService.Heartbeat:Connect(function(dt)
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        dt = dt or 0.016
+        -- выполнить записанные действия в срок
+        if S.botPlayActions then
+            local elapsed = tick() - actT0
+            while true do
+                local a = S.botActions and S.botActions[actIdx]
+                if not a or (a.t and a.t > elapsed) then break end
+                actIdx = actIdx + 1
+                pcall(botActExec, a)
+            end
+        end
+        local nextIdx = idx + dir
+        -- края маршрута: один раз / зациклить / туда-обратно
+        if nextIdx > #pts then
+            if S.botMode == "Зациклить" then
+                idx, dir, nextIdx = 1, 1, math.min(2, #pts)
+                actIdx, actT0 = 1, tick() -- действия запускаем заново каждый круг
+            elseif S.botMode == "Туда-обратно" then
+                dir = -1 nextIdx = math.max(1, #pts - 1)
+            else
+                local c = Cfg["bot.walk"] if c then c.set(false) end
+                return
+            end
+            botSetMarker(pts[nextIdx])
+        elseif nextIdx < 1 then
+            if S.botMode == "Туда-обратно" then
+                dir = 1 nextIdx = math.min(2, #pts)
+                actIdx, actT0 = 1, tick() -- поехали заново вперёд (действия тоже)
+                botSetMarker(pts[nextIdx])
+            else
+                local c = Cfg["bot.walk"] if c then c.set(false) end
+                return
+            end
+        end
+        local target = pts[nextIdx]
+        if not target then return end
+        local pos = root.Position
+        local d = target - pos
+        local dist = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+        if dist < 2.2 then
+            idx = nextIdx
+            botSetMarker(pts[idx])
+            return
+        end
+        local step = math.min(dist, (S.botSpeed or 16) * dt)
+        local ux, uy, uz = d.X / dist, d.Y / dist, d.Z / dist
+        local newPos = Vector3.new(pos.X + ux * step, pos.Y + uy * step, pos.Z + uz * step)
+        local fx, fz = d.X, d.Z
+        local fmag = math.sqrt(fx * fx + fz * fz)
+        if fmag > 0.05 then
+            root.CFrame = CFrame.lookAt(newPos, Vector3.new(newPos.X + fx / fmag, newPos.Y, newPos.Z + fz / fmag))
+        else
+            root.CFrame = CFrame.new(newPos)
+        end
+        pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+        pcall(function() root.Velocity = Vector3.zero end)
+    end))
+end
+
+function botRouteSave()
+    local pts = S.botPoints or {}
+    if #pts < 2 then
+        notifySafe("🤖 Bot: нечего сохранять (0–1 точка)", C3(255, 120, 120))
+        return
+    end
+    pcall(function()
+        if type(writefile) ~= "function" then return end
+        local arr = {}
+        for _, p in ipairs(pts) do arr[#arr + 1] = {p.X, p.Y, p.Z} end
+        local payload
+        if S.botRecActions and #(S.botActions or {}) > 0 then
+            payload = {v = 2, points = arr, actions = S.botActions}
+        else
+            payload = arr -- старый формат (back-compat с rev67-файлами)
+        end
+        writefile(BOT_ROUTE_FILE, HttpService:JSONEncode(payload))
+        local extra = (#(S.botActions or {}) > 0) and (" + " .. tostring(#S.botActions) .. " действий") or ""
+        notifySafe("🤖 Bot: маршрут сохранён (" .. tostring(#pts) .. " точек" .. extra .. ")", C3(80, 200, 120))
+    end)
+end
+function botRouteLoad()
+    pcall(function()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then return end
+        if not (pcall(isfile, BOT_ROUTE_FILE) and isfile(BOT_ROUTE_FILE)) then
+            notifySafe("🤖 Bot: сохранённого маршрута нет", C3(255, 180, 80))
+            return
+        end
+        local data = HttpService:JSONDecode(readfile(BOT_ROUTE_FILE) or "[]")
+        if type(data) ~= "table" then return end
+        local arr, acts
+        if data.v == 2 and type(data.points) == "table" then
+            arr = data.points
+            acts = data.actions
+        else
+            arr = data -- старый формат rev67 (просто массив точек)
+        end
+        if type(arr) ~= "table" or #arr < 2 then return end
+        S.botPoints = {}
+        for _, w in ipairs(arr) do
+            if type(w) == "table" then
+                S.botPoints[#S.botPoints + 1] = Vector3.new(tonumber(w[1]) or 0, tonumber(w[2]) or 0, tonumber(w[3]) or 0)
+            end
+        end
+        S.botActions = {}
+        if type(acts) == "table" then
+            for _, w in ipairs(acts) do
+                if type(w) == "table" and type(w.kind) == "string" then
+                    S.botActions[#S.botActions + 1] = w
+                end
+            end
+        end
+        botDrawRoute()
+        local extra = (#(S.botActions or {}) > 0) and (" · действий: " .. tostring(#S.botActions)) or ""
+        notifySafe("🤖 Bot: загружено точек: " .. tostring(#(S.botPoints or {})) .. extra, C3(80, 200, 120))
+    end)
+end
+
+-- ============ REV69: ROUTE BOT v2 — ЗАПИСЬ ДЕЙСТВИЙ (GUI/клики/клавиши/промпты) ============
+-- Связь с rev67: помимо «КУДА» теперь записываем «ЧТО». При ходе бота по маршруту
+-- действия повторяются в те же моменты времени (открытие окон, E, prompt'ы).
+function botActPush(action)
+    if not S.botRecOn or not S.botRecActions then return end
+    action.t = tick() - (S.botRecT0 or tick())
+    table.insert(S.botActions, action)
+end
+
+function botActHooksStart()
+    S.botActions = {}
+    S.botRecT0 = tick()
+    S.botActConns = {}
+    local function skipUI(gpe)
+        if gpe then return true end
+        if CG_OPEN then return true end -- не пишем клики по собственному меню
+        return false
+    end
+    table.insert(S.botActConns, sh2Conn(UIS.InputBegan:Connect(function(inp, gpe)
+        if skipUI(gpe) or not S.botRecOn or not S.botRecActions then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            local p = inp.Position or {X=0, Y=0}
+            botActPush({kind="click", x=p.X, y=p.Y})
+        end
+    end)))
+    local SKIP_KEYS = {
+        W=true, A=true, S=true, D=true, Space=true,
+        RightShift=true, LeftShift=true, Insert=true, Escape=true,
+        ButtonA=true, DPadUp=true, DPadDown=true,
+    }
+    table.insert(S.botActConns, sh2Conn(UIS.InputBegan:Connect(function(inp, gpe)
+        if skipUI(gpe) or not S.botRecOn or not S.botRecActions then return end
+        if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        local name = tostring(inp.KeyCode)
+        name = name:match("Enum%..*%.(.+)") or name
+        if not SKIP_KEYS[name] then
+            botActPush({kind="key", key=name})
+        end
+    end)))
+    pcall(function()
+        local PPS = game:GetService("ProximityPromptService")
+        if PPS and PPS.PromptTriggered then
+            table.insert(S.botActConns, sh2Conn(PPS.PromptTriggered:Connect(function(prompt, plr)
+                if not S.botRecOn or not S.botRecActions then return end
+                if plr and LP and plr ~= LP then return end
+                pcall(function()
+                    local sig = {kind="prompt"}
+                    if prompt then
+                        sig.obj = tostring(prompt.ObjectText or prompt.Name or "")
+                        sig.act = tostring(prompt.ActionText or "")
+                        local anc = prompt:FindFirstAncestorOfClass("Model")
+                        if anc then sig.model = tostring(anc.Name) end
+                        local pp = prompt.Parent
+                        if pp and pp:IsA("BasePart") then
+                            sig.px, sig.py, sig.pz = pp.Position.X, pp.Position.Y, pp.Position.Z
+                        end
+                    end
+                    botActPush(sig)
+                end)
+            end)))
+        end
+    end)
+end
+
+function botActHooksStop()
+    for _, c in ipairs(S.botActConns or {}) do
+        pcall(function() if c and typeof(c) == "RBXScriptConnection" then c:Disconnect() end end)
+    end
+    S.botActConns = {}
+end
+
+function botActExec(a)
+    if not a or not a.kind then return end
+    pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        if a.kind == "key" and a.key then
+            local kc = Enum.KeyCode[a.key]
+            if VIM and kc then
+                pcall(function() VIM:SendKeyEvent(true, kc, false, game, 0) end)
+                task.delay(0.06, function()
+                    pcall(function() VIM:SendKeyEvent(false, kc, false, game, 0) end)
+                end)
+            end
+        elseif a.kind == "click" and a.x then
+            if VIM then
+                pcall(function() VIM:SendMouseButtonEvent(a.x, a.y, 0, true, game, 0) end)
+                task.delay(0.05, function()
+                    pcall(function() VIM:SendMouseButtonEvent(a.x, a.y, 0, false, game, 0) end)
+                end)
+            end
+        elseif a.kind == "prompt" then
+            local found = nil
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    local matchModel = (a.model and a.model ~= "" and d.Parent and d.Parent.Parent and tostring(d.Parent.Parent.Name) == a.model)
+                    local matchObj = (a.obj and a.obj ~= "" and tostring(d.ObjectText or d.Name or "") == a.obj)
+                    local matchPos = false
+                    pcall(function()
+                        if a.px and d.Parent and d.Parent:IsA("BasePart") then
+                            matchPos = ((d.Parent.Position - Vector3.new(a.px, a.py, a.pz)).Magnitude < 2.5)
+                        end
+                    end)
+                    if matchModel or matchObj or matchPos then found = d break end
+                end
+            end
+            if found then
+                if type(fireproximityprompt) == "function" then
+                    pcall(fireproximityprompt, found)
+                elseif VIM then
+                    local kc = Enum.KeyCode.E
+                    pcall(function() VIM:SendKeyEvent(true, kc, false, game, 0) end)
+                    task.delay(tonumber(found.HoldDuration) or 0.5, function()
+                        pcall(function() VIM:SendKeyEvent(false, kc, false, game, 0) end)
+                    end)
+                end
+                print("[SpermaHub Bot] промпт-экшн: " .. tostring(a.obj))
+            elseif VIM then
+                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game, 0) end)
+                task.delay(0.1, function()
+                    pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game, 0) end)
+                end)
+            end
+        end
+    end)
+end
+
+-- ============ REV68: FTP — ANTI GRASP (можешь ходить, когда схватили) + COUNTER GRAB + THROW POWER ============
+-- 1) Когда тебя захватывают — ты ПРОДОЛЖАЕШЬ ходить: возвращаем управление каждый кадр
+--    (снимаем PlatformStand/якорь, смягчаем резкий импульс от постороннего захвата).
+function setGraspGuard(state)
+    S.graspOn = state
+    dcc(S.graspConn)
+    S.graspConn = nil
+    if not state then
+        pcall(function()
+            local ch = LP.Character
+            local root = ch and ch:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.Anchored = false
+                pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+            end
+        end)
+        return
+    end
+    S.graspConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        local ch = LP.Character
+        if not ch then return end
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not hum or not root then return end
+        local heldNow = false
+        pcall(function()
+            if hum.PlatformStand == true then hum.PlatformStand = false heldNow = true end
+            if root.Anchored == true then root.Anchored = false heldNow = true end
+        end)
+        -- смягчение резкого волочения нас (тихий выход из чужого голема)
+        pcall(function()
+            local v = root.AssemblyLinearVelocity or root.Velocity
+            if v and v.Magnitude > 70 then
+                root.AssemblyLinearVelocity = v * 0.35
+                heldNow = true
+            end
+        end)
+        if heldNow then
+            S.graspWasHeld = true
+            S.revengeUntil = tick() + (S.revengeSec or 8) -- окно мести: нас НЕДАВНО держали
+        end
+    end))
+end
+
+-- 2) «Схватить его в ответ» — жмёшь кнопку/бинду: мы хватаем ближайшего захватчика.
+-- Эмуляция захвата через механику касания (работает на серверах, где захват = touch-события).
+local function graspNearestAttacker()
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root then return nil, 999 end
+    local best, bd = nil, 999
+    pcall(function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP then
+                local pc = plr.Character
+                local pr = pc and pc:FindFirstChild("HumanoidRootPart")
+                if pr and pc:FindFirstChildOfClass("Humanoid") then
+                    local d = (pr.Position - root.Position).Magnitude
+                    if d < bd then bd = d best = plr end
+                end
+            end
+        end
+    end)
+    return best, bd
+end
+
+function graspRevenge(manual)
+    local plr, dist = graspNearestAttacker()
+    if not plr then
+        notifySafe("🪬 Захват в ответ: рядом никого (нужен враг ≤16 studs)", C3(255, 150, 150))
+        return false
+    end
+    if dist > 16 and not manual then return false end
+    local pc = plr.Character
+    local pr = pc and pc:FindFirstChild("HumanoidRootPart")
+    local myCh = LP.Character
+    local myRoot = myCh and myCh:FindFirstChild("HumanoidRootPart")
+    if not pr or not myRoot then return false end
+    local ok = false
+    if type(firetouchinterest) == "function" then
+        pcall(function()
+            firetouchinterest(myRoot, pr, 0)
+            task.wait(0.03)
+            firetouchinterest(myRoot, pr, 1)
+            ok = true
+        end)
+        if ok then
+            notifySafe("🪬 ЗАХВАТ В ОТВЕТ на " .. plr.Name .. "!", C3(255, 210, 90))
+        end
+    else
+        -- фолбэк для обычных серверов: жёсткая отдельная ровность противника с нашей стороны
+        pcall(function()
+            local dir = pr.Position - myRoot.Position
+            local len = math.sqrt(dir.X * dir.X + dir.Y * dir.Y + dir.Z * dir.Z)
+            if len > 0.1 then
+                local back = Vector3.new(-dir.X / len, 0.5, -dir.Z / len)
+                pr.AssemblyLinearVelocity = back * 45
+                ok = true
+                notifySafe("🪬 Отделились от " .. plr.Name .. " (ответка без touch)", C3(255, 180, 80))
+            end
+        end)
+    end
+    S.revengeUntil = 0
+    return ok
+end
+
+-- окно авто-ответа: держали за секунду → если включено, ближайший захватчик получает спайк
+sh2Conn(RunService.Heartbeat:Connect(function()
+    if not S.graspOn then return end
+    if (S.revengeUntil or 0) <= tick() then return end
+    local plr, dist = graspNearestAttacker()
+    if plr and dist and dist < 16 then
+        S.revengeUntil = 0
+        pcall(function() graspRevenge() end)
+    end
+end))
+
+-- 3) THROW POWER: брошенные рядом с нами предметы НАБИРАЮТ умноженную скорость.
+-- В FTP репликация физики от локально-идущего клиента приоритетнее — наши брошенные
+-- вещи окутаны нашей зоной → вылет сильнее и дальше.
+function setThrowPower(state)
+    S.tpowOn = state
+    dcc(S.tpowConn)
+    S.tpowConn = nil
+    if not state then return end
+    S.tpowConn = sh2Conn(RunService.Heartbeat:Connect(function()
+        S.tpowAcc = (S.tpowAcc or 0) + 1
+        if (S.tpowAcc % 2) ~= 0 then return end -- раз в два кадра — не перегревать
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local radius = S.tpowRadius or 15
+        local mult = math.max(1, tonumber(S.tpow) or 1)
+        if mult <= 1 then return end
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("BasePart") and (not d.Anchored) then
+                    local v = d.AssemblyLinearVelocity
+                    if v then
+                        local sp = math.sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z)
+                        -- брошенный предмет = улетает быстро, находится в зоне и не наш персонаж
+                        if sp > 12 then
+                            local dv = d.Position - root.Position
+                            local dist = math.sqrt(dv.X * dv.X + dv.Y * dv.Y + dv.Z * dv.Z)
+                            if dist > 0.1 and dist < radius then
+                                local mine = false
+                                pcall(function()
+                                    if LP.Character and d:IsDescendantOf(LP.Character) then mine = true end
+                                end)
+                                if not mine then
+                                    local stamp = S.tpowStamp[d]
+                                    if not stamp then
+                                        S.tpowStamp[d] = tick()
+                                    elseif (tick() - stamp) < 1.0 then
+                                        if sp < 240 then
+                                            d.AssemblyLinearVelocity = Vector3.new(v.X * mult, v.Y * mult, v.Z * mult)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end))
+end
+
 -- ============ BULLET TRACERS + HITMARKER ============
 HM_SOUND_ID = nil -- сюда можно вписать id звука хитмаркера, напр. "rbxassetid://1234567890"
 
@@ -5341,7 +5928,14 @@ TeleportService = game:GetService("TeleportService")
 -- ============ SMOOTH CAMERA (плавное движение камеры) ============
 -- кастомный камера-контроллер: CameraType=Scriptable, yaw/pitch сглаживаются
 -- экспоненциальным фильтром; камера орбитирует вокруг головы персонажа.
-scYaw = 0 scPitch = 0 scTgtYaw = 0 scTgtPitch = 0
+-- rev71 ПОЧИНКА: раньше камеру НЕЛЬЗЯ было двигать — мышь не залочена, поэтому
+-- GetMouseDelta() всегда 0. Теперь: наше меню закрыто -> мышь залочена по центру
+-- и СРАЗУ крутит камеру; меню открыто (CG_OPEN) -> курсор свободен для кликов.
+-- rev71 ВИЗУАЛ: кинематографичный наклон камеры в поворотах (lean/roll),
+-- плавный зум колёсиком мыши, камера не проваливается в стены (рейкаст).
+scYaw = 0 scPitch = 0 scRoll = 0 scTgtYaw = 0 scTgtPitch = 0 scDistCur = 8
+scRay = RaycastParams.new()
+scRay.FilterType = Enum.RaycastFilterType.Exclude
 
 function enableSmoothCam()
     local cam = workspace.CurrentCamera
@@ -5351,35 +5945,71 @@ function enableSmoothCam()
     end
     S.scOn = true
     S.scPrevType = cam.CameraType
+    pcall(function() S.scPrevMB = UIS.MouseBehavior end)
     cam.CameraType = Enum.CameraType.Scriptable
-    -- стартовые углы из текущего вида камеры
-    local x, y = cam.CFrame:ToEulerAnglesYXZ()
-    scPitch = x
-    scYaw = y
-    scTgtPitch = x
-    scTgtYaw = y
+    -- стартовые углы из текущего вида камеры (pcall — от кривых окружений)
+    local x, y = 0, 0
+    pcall(function() x, y = cam.CFrame:ToEulerAnglesYXZ() end)
+    scPitch, scYaw, scTgtPitch, scTgtYaw = x, y, x, y
+    scRoll = 0
+    scDistCur = S.scDist
+    local yawPrev = scYaw
+    -- rev71: плавный зум колёсиком (крутится и когда меню открыто)
+    dcc(S.scWheelConn)
+    S.scWheelConn = UIS.InputChanged:Connect(function(io, gpe)
+        if not S.scOn or gpe then return end
+        if io.UserInputType == Enum.UserInputType.MouseWheel then
+            local dz = 0
+            pcall(function() dz = io.Position.Z end)
+            S.scDist = math.clamp(S.scDist - dz * 1.5, 2, 20)
+        end
+    end)
     dcc(S.scConn)
     S.scConn = RunService.RenderStepped:Connect(function(dt)
         if not S.scOn then return end
         local cam2 = workspace.CurrentCamera
         if not cam2 then return end
-        -- цель вращения — по дельте мыши (без мгновенного скачка)
-        local md = UIS:GetMouseDelta()
-        local sens = 0.0035 * S.scSens
-        scTgtYaw = scTgtYaw - md.X * sens
-        scTgtPitch = math.clamp(scTgtPitch - md.Y * sens, -1.45, 1.45)
+        -- мышь: меню закрыто -> лок по центру + вращение; открыто -> курсор свободен
+        local menuOpen = (CG_OPEN == true)
+        pcall(function()
+            UIS.MouseBehavior = menuOpen and Enum.MouseBehavior.Default or Enum.MouseBehavior.LockCenter
+        end)
+        if not menuOpen then
+            local md = UIS:GetMouseDelta()
+            local sens = 0.0035 * S.scSens
+            scTgtYaw = scTgtYaw - md.X * sens
+            scTgtPitch = math.clamp(scTgtPitch - md.Y * sens, -1.45, 1.45)
+        end
         -- сглаживание (экспоненциальный фильтр, не зависит от FPS)
         local k = 1 - math.exp(-dt * S.scSpeed)
         scYaw = scYaw + (scTgtYaw - scYaw) * k
         scPitch = scPitch + (scTgtPitch - scPitch) * k
-        -- орбита вокруг головы
+        scDistCur = scDistCur + (S.scDist - scDistCur) * k
+        -- rev71 визуал: наклон камеры пропорционально скорости поворота (lean)
+        local turn = scYaw - yawPrev
+        yawPrev = scYaw
+        local rollTgt = math.clamp(-turn * 1.2, -0.05, 0.05)
+        scRoll = scRoll + (rollTgt - scRoll) * math.min(k * 1.4, 1)
+        -- орбита вокруг головы + не лезем в стены
         local ch = LP.Character
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
         if root then
             local headPos = root.Position + Vector3.new(0, 1.5, 0)
             local look = CFrame.Angles(0, scYaw, 0) * CFrame.Angles(scPitch, 0, 0)
-            local camPos = headPos - look.LookVector * S.scDist
-            cam2.CFrame = CFrame.new(camPos, headPos)
+            local camPos = headPos - (look * CFrame.Angles(0, 0, scRoll)).LookVector * scDistCur
+            pcall(function()
+                scRay.FilterDescendantsInstances = {ch}
+                local back = camPos - headPos
+                if back.Magnitude > 0.01 then
+                    local hit = workspace:Raycast(headPos, back, scRay)
+                    if hit then
+                        local d = hit.Distance - 0.5
+                        if d < 0.3 then d = 0.3 end
+                        if d < scDistCur then camPos = headPos + back.Unit * d end
+                    end
+                end
+            end)
+            cam2.CFrame = CFrame.new(camPos, headPos) * CFrame.Angles(0, 0, scRoll)
         end
     end)
 end
@@ -5387,6 +6017,12 @@ end
 function disableSmoothCam()
     S.scOn = false
     if S.scConn then S.scConn:Disconnect() S.scConn = nil end
+    if S.scWheelConn then S.scWheelConn:Disconnect() S.scWheelConn = nil end
+    scRoll = 0
+    pcall(function()
+        UIS.MouseBehavior = S.scPrevMB or Enum.MouseBehavior.Default
+    end)
+    S.scPrevMB = nil
     local cam = workspace.CurrentCamera
     if cam then
         cam.CameraType = S.scPrevType or Enum.CameraType.Custom
@@ -5915,15 +6551,28 @@ function kaClick()
     end)
 end
 
+-- rev70: расписание ударов под выбранный обход
+function kaPeriod()
+    if S.kaMode == "1.9" then
+        -- Обход 1.9 (кулдаун): удар ТОЛЬКО когда "шкала атаки" заряжена — пауза 0.42–0.58с
+        -- с человеческим джиттером. Ровный высокий CPS не идёт => CPS-детекты
+        -- античитов молчат, а полный заряд даёт стабильный урон каждым свингом.
+        return 0.42 + math.random() * 0.16
+    end
+    -- Обход 1.8 (спам): классический спам-кликер, темп = ползунок CPS
+    return 1 / math.max(S.kaCps, 1)
+end
+
 function enableKillAura()
     S.kaOn = true
     dcc(S.kaConn)
-    local acc = 0
+    local acc, nxt = 0, 0
     S.kaConn = RunService.Heartbeat:Connect(function(dt)
         if not S.kaOn then return end
         acc = acc + dt
-        if acc < 1 / math.max(S.kaCps, 1) then return end
+        if acc < nxt then return end
         acc = 0
+        nxt = kaPeriod()
         local target = kaNearestTarget()
         if not target then
             S.kaTarget = nil
@@ -6213,6 +6862,12 @@ TargetHL.Enabled = false
 TargetHL.Parent = ESPGui
 
 function currentEspTarget()
+    -- rev70: цель Kill Aura тоже является таргетом (фикс «Target ESP не работает»,
+    -- когда включена киллаура, а аимбот/сайлент выключены)
+    if S.kaOn and S.kaTarget then
+        local kt = S.kaTarget
+        if kt and kt.Character then return kt end
+    end
     if S.silentAimOn then
         local p = findSilentTarget()
         if p then return p end
@@ -8987,16 +9642,19 @@ do
     addToggle(pKa, "ka.enabled", "Enabled", false, function(state)
         if state then enableKillAura() else disableKillAura() end
     end)
-    addSlider(pKa, "ka.range", "Range", 4, 25, 10, 1, function(v)
+    addSlider(pKa, "ka.range", "Дистанция", 3, 40, 10, 1, function(v)
         S.kaRange = math.floor(v)
     end)
-    addSlider(pKa, "ka.cps", "CPS", 5, 30, 12, 1, function(v)
+    addSlider(pKa, "ka.cps", "CPS (только 1.8)", 5, 30, 12, 1, function(v)
         S.kaCps = math.floor(v)
+    end)
+    addDropdown(pKa, "ka.mode", "Обход", {"1.8 (спам-клики)", "1.9 (кулдаун)"}, "1.8 (спам-клики)", function(v)
+        S.kaMode = (type(v) == "string" and v:sub(1, 3) == "1.9") and "1.9" or "1.8"
     end)
     addToggle(pKa, "ka.face", "Face Target", true, function(state)
         S.kaFace = state
     end)
-    addText(pKa, "Враг зашёл в Range — его автоматически закликивает: инжект ЛКМ + активация оружия, персонаж поворачивается к цели. CPS — кликов в секунду. Team Check учитывается.")
+    addText(pKa, "Враг вошёл в Дистанцию — его автоматически закликивает: инжект ЛКМ + активация оружия, персонаж поворачивается к цели (Face Target). Обход 1.8 — спам-клики с темпом CPS (макс. урон, для слабых античитов). Обход 1.9 — удар по перезарядке ~0.5с с человеческим джиттером: CPS-детекты молчат, каждый свинг — полный заряд. Team Check учитывается. Target ESP подсвечивает цель киллауры автоматически.")
 
     local pSa = addPanel(pg.col2, "Silent Aura (1.8 Arena)")
     addToggle(pSa, "sa.enabled", "Enabled", false, function(state)
@@ -9482,7 +10140,7 @@ do
     addToggle(pTgt, "esp.targethud", "Target HUD (скид с фото)", false, function(state)
         if state then enableTargetHUD() else disableTargetHUD() end
     end)
-    addText(pTgt, "Highlight — пульсирующая подсветка модели. Target HUD — красная скруглённая плашка над головой цели: НИК + HP: x.x + зелёный HP-бар (1:1 с референса). Цель берётся из Aimbot / Silent Aim.")
+    addText(pTgt, "Highlight — пульсирующая подсветка модели. Target HUD — красная скруглённая плашка над головой цели: НИК + HP: x.x + зелёный HP-бар (1:1 с референса). Цель берётся из Kill Aura / Aimbot / Silent Aim (rev70: киллаура тоже даёт цель).")
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "Полный аналог ESP из референса: чёрный двойной бокс (3px контур + 1px внутр. белый), «НИК 24HP» над головой, колонка эффектов справа от бокса, белая линия от низа экрана к боксу. Всё на Drawing API — работает даже там, где ScreenGui заблокирован.")
@@ -9531,7 +10189,7 @@ do
     addSlider(pSc, "scam.sens", "Sensitivity", 0.2, 2, 1, 0.1, function(v)
         S.scSens = v
     end)
-    addText(pSc, "Кинематографическая плавная камера: движение мыши сглаживается (без рывков), орбита вокруг персонажа. Чем БОЛЬШЕ Smoothness, тем БЫСТРЕЕ доезжает до взгляда (меньше — сильнее смягчение).")
+    addText(pSc, "Кинематографическая плавная камера (rev71, ПОЧИНЕНА — камера снова крутится!): мышь всегда поворачивает взгляд, курсор спрятан; ОТКРЫЛ МЕНЮ — курсор вернулся, меню кликабельно. Колёсико — плавный зум (Distance). Визуал: камера наклоняется в поворотах (как в кино) и не проваливается в стены. Чем БОЛЬШЕ Smoothness, тем БЫСТРЕЕ доезжает до взгляда (меньше — сильнее смягчение).")
 
     local pInfo = addPanel(pg.col2, "Info")
     addText(pInfo, "HUD-элементы убраны — меню только Rayfield.")
@@ -9940,6 +10598,44 @@ do
     addText(pInfo, "Как юзать: встал куда хочешь → включил Enabled → ушёл гулять. Игрокам ты так и стоишь на месте.")
 end
 
+-- ==== Route Bot (rev67): запись маршрута + ходьба по нему + неоновая линия ====
+do
+    local pg = addPage("Player", "🤖", "Bot")
+
+    local pB = addPanel(pg.col1, "Route Bot")
+    addButton(pB, "⏺ Start запись", function() botRecStart() end)
+    addButton(pB, "⏹ Stop запись", function() botRecStop() end)
+    local walkTgl = addToggle(pB, "bot.walk", "Бот: идти маршрутом", false, function(state)
+        botWalk(state)
+    end)
+    -- rev72: большие явные кнопки ЗАПУСТИТЬ/ОСТАНОВИТЬ (не все находили тумблер; кнопки синхронны с ним)
+    addButton(pB, "▶ ЗАПУСТИТЬ бота по маршруту", function()
+        if walkTgl and walkTgl.set then walkTgl.set(true) else botWalk(true) end
+    end)
+    addButton(pB, "⏹ ОСТАНОВИТЬ бота", function()
+        if walkTgl and walkTgl.set then walkTgl.set(false) else botWalk(false) end
+    end)
+    addDropdown(pB, "bot.mode", "После конца маршрута", {"Один раз", "Зациклить", "Туда-обратно"}, "Один раз", function(v)
+        S.botMode = v
+    end)
+    addSlider(pB, "bot.speed", "Скорость бота", 8, 60, 16, 2, function(v)
+        S.botSpeed = math.floor(v)
+    end)
+    addToggle(pB, "bot.line", "Линия маршрута", true, function(v)
+        S.botLineOn = v
+        if v then botDrawRoute() else botClearLine() end
+    end)
+    addToggle(pB, "bot.recact", "Записывать ДЕЙСТВИЯ (клики/клавиши)", true, function(v)
+        S.botRecActions = v
+    end)
+    addToggle(pB, "bot.playact", "Воспроизводить действия при ходе", true, function(v)
+        S.botPlayActions = v
+    end)
+    addButton(pB, "💾 Сохранить маршрут", function() botRouteSave() end)
+    addButton(pB, "📂 Загрузить маршрут", function() botRouteLoad() end)
+    addText(pB, "v2: rev69 — помимо маршрута бот пишет ДЕЙСТВИЯ: клики мыши (покупка/открытие окон/магазинов), клавиши E/F/T, открытие prompt'ов. При воспроизведении маршрута бот в тех же временных точках повторяет их — автоматом открывает двери, разговаривает с NPC, нажимает кнопки. WASD/пробел не пишутся. Start → пройди маршрут и по дороге делай нужные действия → Stop → включи ход. Режимы Один раз/Зациклить/Туда-обратно. Сохранение/загрузка в файл (с действиями).")
+end
+
 -- ==== Misc (Appearance + NoKb + Invisible) ====
 
 do
@@ -9988,6 +10684,41 @@ do
         end
     end)
     addText(pNoKb, "Preset 1.8 Arena: порог 28 + обнуление вертикального подскока от ударов — комбо не рвётся, движение свободное.")
+end
+
+-- ==== Fling Things & People: Anti Grasp + Throw Power (rev68) ====
+do
+    local pg = addPage("Player", "🪬", "FTP: Anti Grasp")
+
+    local pG = addPanel(pg.col1, "Anti Grasp (нет заморозки при захвате)")
+    addToggle(pG, "grasp.enabled", "Могу ходить даже в захвате", false, function(state)
+        setGraspGuard(state)
+    end)
+    addButton(pG, "🪬 Захватить его обратно", function()
+        graspRevenge(true)
+    end)
+    addKeybind(pG, "grasp.revbind", "Горячая клавиша «ответки»", "Q", function(_)
+        graspRevenge(true)
+    end)
+    addToggle(pG, "grasp.autorev", "Auto-Revenge (когда держали нас)", false, function(state)
+        S.graspAutoRev = state
+    end)
+    addSlider(pG, "grasp.revsec", "Сколько секунд держим окно мести", 3, 20, 8, 1, function(v)
+        S.revengeSec = v
+    end)
+    addText(pG, "Как работает: когда тебя схватили (обычно ты замираешь) — мы каждый кадр возвращаем твое движение. Ты спокойно идёшь дальше, а захватчик остаётся ни с чем. Кнопка/«Q»-другой тяжелый — одной горячей кнопкой схватываем ЕГО взамен. Auto-Revenge делает это сама первые N секунд после того, нас держали.")
+
+    local pT = addPanel(pg.col2, "Throw Power (сила броска)")
+    addToggle(pT, "tpow.enabled", "Включить усиление броска", false, function(state)
+        setThrowPower(state)
+    end)
+    addSlider(pT, "tpow.mult", "Сила броска (x)", 1, 5, 2, 0.5, function(v)
+        S.tpow = v
+    end)
+    addSlider(pT, "tpow.radius", "Радиус усиления", 5, 30, 15, 5, function(v)
+        S.tpowRadius = v
+    end)
+    addText(pT, "Летящие рядом предметы (брошенные тебя или соседей вместо тебя) набирают сильнее импульс: предметы улетают дальше/быстрее. Честно: если сервер жёстко владеет физикой, эффект будет слабее.")
 end
 
 
@@ -10659,6 +11390,20 @@ function fullCleanupNL()
     pcall(function() setWallbang(false) end)
     pcall(function() setTimeHUD(false) end) -- внутри ещё и timeSave()
     pcall(timeSave)
+    -- rev67: Route Bot — стоп записи/ходьбы, чистим линию и маркер
+    pcall(function()
+        S.botRecOn = false S.botWalkOn = false
+        dcc(S.botRecConn)  S.botRecConn = nil
+        dcc(S.botWalkConn) S.botWalkConn = nil
+        pcall(botActHooksStop) -- rev69
+    end)
+    pcall(function()
+        botClearLine()
+        botClearMarker()
+    end)
+    -- rev68: Anti Grasp / Throw Power — стоп
+    pcall(function() setGraspGuard(false) end)
+    pcall(function() setThrowPower(false) end)
     pcall(disableKillAura)
     pcall(disableSilentAura)
     pcall(disableSmoothCam)
