@@ -1,22 +1,24 @@
 --=================================================================
---  NEVERLOSE-STYLE INTERFACE  (Roblox, standalone)
+--  SPERMAHUB UI  (Neverlose-style, Roblox, standalone)
 --=================================================================
 --  Никаких внешних библиотек. Всё на голых Instance.
 --
 --  API:
---    getgenv().NeverloseUI.Config          -- все значения
---    getgenv().NeverloseUI.Notify(text)    -- тост
---    getgenv().NeverloseUI.Save()          -- сохранить в neverlose_config.json
---    getgenv().NeverloseUI.Unload()        -- выгрузить
---    getgenv().NeverloseUI.Icons           -- таблица иконок (glyph / image)
---    getgenv().NeverloseUI.SetIcon(name, { image = "rbxassetid://..." })
---    getgenv().NeverloseUI.RefreshIcons()  -- перерисовать все иконки
---
+--    getgenv().SpermaHubUI.Config          -- все значения
+--    getgenv().SpermaHubUI.Notify(text)    -- тост
+--    getgenv().SpermaHubUI.Save()          -- сохранить в spermahub_config.json
+--    getgenv().SpermaHubUI.Unload()        -- выгрузить
+--    getgenv().SpermaHubUI.Icons           -- таблица иконок (glyph / image)
+--    getgenv().SpermaHubUI.SetIcon(name, { image = "rbxassetid://..." })
+--    getgenv().SpermaHubUI.RefreshIcons()  -- перерисовать все иконки
+--    getgenv().SpermaHubUI.Features        -- состояние функций хаба
+----
 --  Показать/скрыть: RightShift (или Escape - закрыть)
 --=================================================================
 
 local Players   = game:GetService("Players")
 local UIS       = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local Tween     = game:GetService("TweenService")
 local Lighting  = game:GetService("Lighting")
 local Http      = game:GetService("HttpService")
@@ -26,9 +28,9 @@ local PlayerGui = LP:WaitForChild("PlayerGui")
 --=================================================================
 --  КОНСТАНТЫ / ПАЛИТРА
 --=================================================================
-local W, H      = 1200, 872
-local SB        = 290          -- ширина сайдбара
-local HEADER    = 104          -- высота шапки
+local W, H      = 1120, 800
+local SB        = 272          -- ширина сайдбара
+local HEADER    = 98           -- высота шапки
 
 local C = {
     panel     = Color3.fromRGB(8, 11, 17),
@@ -123,9 +125,9 @@ end
 --    glyph  — текстовый символ; используется, когда image = nil.
 --
 --  Подмена на ходу:
---    getgenv().NeverloseUI.SetIcon("weapon", { image = "rbxassetid://1234567890" })
---    getgenv().NeverloseUI.Icons.weapon.image = 1234567890
---    getgenv().NeverloseUI.RefreshIcons()
+--    getgenv().SpermaHubUI.SetIcon("weapon", { image = "rbxassetid://1234567890" })
+--    getgenv().SpermaHubUI.Icons.weapon.image = 1234567890
+--    getgenv().SpermaHubUI.RefreshIcons()
 --
 --  Глифы оставлены только из блоков, которые есть почти в любом шрифте Roblox:
 --  Basic Latin / Latin-1 / General Punctuation / Geometric Shapes (U+25xx).
@@ -285,12 +287,15 @@ end
 --=================================================================
 --  КОРЕНЬ
 --=================================================================
+if getgenv and getgenv().SpermaHubUI and getgenv().SpermaHubUI.Unload then
+    pcall(function() getgenv().SpermaHubUI.Unload() end)
+end
 if getgenv and getgenv().NeverloseUI and getgenv().NeverloseUI.Unload then
     pcall(function() getgenv().NeverloseUI.Unload() end)
 end
 
 local gui = new("ScreenGui", {
-    Name = "NeverloseUI",
+    Name = "SpermaHubUI",
     ResetOnSpawn = false,
     IgnoreGuiInset = true,
     DisplayOrder = 990,
@@ -363,11 +368,11 @@ new("UIGradient", {
 }, sidebar)
 
 -- лого
-local logo = txt(sidebar, "NEVERLOSE", {
+local logo = txt(sidebar, "SPERMAHUB", {
     Position = UDim2.new(0, 26, 0, 24),
     Size = UDim2.new(1, -52, 0, 46),
     Font = F.black,
-    TextSize = 34,
+    TextSize = 30,
     TextColor3 = Color3.fromRGB(240, 243, 248),
 })
 
@@ -773,7 +778,7 @@ local function buildToggle(parent, label, default, hasEye, key, onChange)
         if not silent and onChange then
             task.spawn(function()
                 local ok, err = pcall(onChange, state)
-                if not ok then warn("[NeverloseUI] toggle callback: " .. tostring(err)) end
+                if not ok then warn("[SpermaHubUI] toggle callback: " .. tostring(err)) end
             end)
         end
     end
@@ -895,7 +900,7 @@ local function buildSlider(parent, label, minV, maxV, default, step, key, onChan
         if not silent and onChange then
             task.spawn(function()
                 local ok, err = pcall(onChange, value)
-                if not ok then warn("[NeverloseUI] slider callback: " .. tostring(err)) end
+                if not ok then warn("[SpermaHubUI] slider callback: " .. tostring(err)) end
             end)
         end
     end
@@ -1012,7 +1017,7 @@ local function buildDropdown(parent, label, options, default, hasEye, key, onCha
         if not silent and onChange then
             task.spawn(function()
                 local ok, err = pcall(onChange, value)
-                if not ok then warn("[NeverloseUI] dropdown callback: " .. tostring(err)) end
+                if not ok then warn("[SpermaHubUI] dropdown callback: " .. tostring(err)) end
             end)
         end
     end
@@ -1181,6 +1186,616 @@ local function createPage(def)
 end
 
 --=================================================================
+--  ФУНКЦИИ ХАБА
+--=================================================================
+--  Логика перенесена из sperma.lua (репозиторий): Aimbot, Silent Aim,
+--  Hitbox Expander, ESP + скелет, Fly, Noclip, Click TP, WalkSpeed, Kill Player.
+--=================================================================
+local FZ = {
+    aim     = { on = false, fov = 120, smooth = 0.3, conn = nil },
+    silent  = { on = false, fov = 150, conn = nil },
+    hitbox  = { on = false, size = 5, conn = nil, sizes = {} },
+    esp     = { on = false, skel = true, conn = nil, gui = nil, objects = {}, skelFrames = {} },
+    fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
+    noclip  = { on = false, conn = nil },
+    clickTp = { on = false, height = 3, conn = nil },
+    walk    = { on = false, speed = 16, conn = nil },
+}
+
+local function alive(plr)
+    local ch = plr.Character
+    if not ch then return false end
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return ch:FindFirstChild("HumanoidRootPart") ~= nil
+end
+
+local function targetPart(ch)
+    if not ch then return nil end
+    return ch:FindFirstChild("Head") or ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
+end
+
+-- ближайший к центру экрана игрок в радиусе FOV (в пикселях)
+local function findTarget(fov)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local best, bestDist = nil, fov
+    local vp = cam.ViewportSize
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local ch = plr.Character
+            if ch then
+                local head = ch:FindFirstChild("Head")
+                local hum = ch:FindFirstChildOfClass("Humanoid")
+                if head and hum and hum.Health > 0 then
+                    local sp, onScreen = cam:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        local d = math.sqrt((sp.X - vp.X / 2) ^ 2 + (sp.Y - vp.Y / 2) ^ 2)
+                        if d < bestDist then
+                            bestDist = d
+                            best = plr
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+--===================  AIMBOT  ===================
+local function setAimbot(on)
+    FZ.aim.on = on and true or false
+    if FZ.aim.conn then
+        pcall(function() FZ.aim.conn:Disconnect() end)
+        FZ.aim.conn = nil
+    end
+    if not FZ.aim.on then return end
+    FZ.aim.conn = RunService.RenderStepped:Connect(function()
+        if not FZ.aim.on then return end
+        local target = findTarget(FZ.aim.fov)
+        local head = target and target.Character and target.Character:FindFirstChild("Head")
+        local cam = workspace.CurrentCamera
+        if head and cam then
+            local lookAt = CFrame.new(cam.CFrame.Position, head.Position)
+            cam.CFrame = cam.CFrame:Lerp(lookAt, FZ.aim.smooth)
+        end
+    end)
+end
+
+--===================  SILENT AIM  ===================
+local function silentSupported()
+    local hasHook, hasMeta, hasReadonly, hasClosure = false, false, false, false
+    pcall(function() hasHook = type(hookfunction) == "function" end)
+    pcall(function() hasMeta = type(getrawmetatable) == "function" end)
+    pcall(function() hasReadonly = type(setreadonly) == "function" end)
+    pcall(function() hasClosure = type(newcclosure) == "function" end)
+    return hasHook and hasMeta and hasReadonly and hasClosure
+end
+
+local function setSilentAim(on)
+    FZ.silent.on = on and true or false
+    if FZ.silent.conn then
+        pcall(function() FZ.silent.conn:Disconnect() end)
+        FZ.silent.conn = nil
+    end
+    if not FZ.silent.on then return end
+
+    if not silentSupported() then
+        FZ.silent.on = false
+        notify("Silent Aim: нет hookfunction")
+        return
+    end
+
+    local ok = pcall(function()
+        local mt = getrawmetatable(game)
+        local oldNamecall = mt.__namecall
+        local oldIndex = mt.__index
+        setreadonly(mt, false)
+
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if FZ.silent.on and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") then
+                local target = findTarget(FZ.silent.fov)
+                local part = target and targetPart(target.Character)
+                if part then
+                    local args = { ... }
+                    if args[1] and args[1].Origin then
+                        local origin = args[1].Origin
+                        args[1] = Ray.new(origin, (part.Position - origin).Unit * 1000)
+                    end
+                    return oldNamecall(self, unpack(args))
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+
+        mt.__index = newcclosure(function(self, key)
+            local result = oldIndex(self, key)
+            if FZ.silent.on and typeof(self) == "Instance" and self:IsA("Mouse") and (key == "Hit" or key == "Target") then
+                local target = findTarget(FZ.silent.fov)
+                local part = target and targetPart(target.Character)
+                if part then
+                    if key == "Hit" then return CFrame.new(part.Position) end
+                    return part
+                end
+            end
+            return result
+        end)
+
+        setreadonly(mt, true)
+
+        FZ.silent.conn = {
+            Disconnect = function()
+                pcall(function()
+                    setreadonly(mt, false)
+                    mt.__namecall = oldNamecall
+                    mt.__index = oldIndex
+                    setreadonly(mt, true)
+                end)
+            end,
+        }
+    end)
+
+    if not ok then
+        FZ.silent.on = false
+        notify("Silent Aim: ошибка хука")
+    end
+end
+
+--===================  HITBOX EXPANDER  ===================
+local function applyHitbox()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local ch = plr.Character
+            if ch then
+                for _, part in ipairs(ch:GetDescendants()) do
+                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                        if not FZ.hitbox.sizes[part] then
+                            FZ.hitbox.sizes[part] = part.Size
+                        end
+                        part.Size = Vector3.new(FZ.hitbox.size, FZ.hitbox.size, FZ.hitbox.size)
+                        part.Transparency = 0.7
+                        part.CanCollide = false
+                        part.Massless = true
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function restoreHitbox()
+    for part, size in pairs(FZ.hitbox.sizes) do
+        if typeof(part) == "Instance" and part.Parent then
+            pcall(function()
+                part.Size = size
+                part.Transparency = 0
+                part.CanCollide = true
+                part.Massless = false
+            end)
+        end
+    end
+    FZ.hitbox.sizes = {}
+end
+
+local function setHitbox(on)
+    FZ.hitbox.on = on and true or false
+    if FZ.hitbox.conn then
+        pcall(function() FZ.hitbox.conn:Disconnect() end)
+        FZ.hitbox.conn = nil
+    end
+    if not FZ.hitbox.on then
+        restoreHitbox()
+        return
+    end
+    applyHitbox()
+    FZ.hitbox.conn = RunService.Heartbeat:Connect(function()
+        if FZ.hitbox.on then applyHitbox() end
+    end)
+end
+
+--===================  ESP + СКЕЛЕТ  ===================
+local function espGui()
+    if FZ.esp.gui and FZ.esp.gui.Parent then return FZ.esp.gui end
+    FZ.esp.gui = new("ScreenGui", {
+        Name = "SpermaHubESP",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        DisplayOrder = 50,
+    }, PlayerGui)
+    return FZ.esp.gui
+end
+
+local function createESP(plr)
+    if plr == LP or FZ.esp.objects[plr] then return end
+    local g = espGui()
+    local data = { lines = {}, boxLines = {} }
+    FZ.esp.objects[plr] = data
+
+    local ch = plr.Character
+    if ch then
+        local hl = new("Highlight", {
+            FillColor = Color3.fromRGB(255, 40, 40),
+            OutlineColor = Color3.fromRGB(255, 255, 0),
+            FillTransparency = 0.4,
+            OutlineTransparency = 0,
+            DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+            Adornee = ch,
+        }, g)
+        data.highlight = hl
+    end
+
+    for i = 1, 4 do
+        data.boxLines[i] = new("Frame", {
+            BackgroundColor3 = Color3.fromRGB(255, 255, 0),
+            BorderSizePixel = 0,
+            ZIndex = 6,
+            Visible = false,
+        }, g)
+    end
+
+    local bb = new("BillboardGui", {
+        Name = "ESPName",
+        Size = UDim2.new(0, 220, 0, 70),
+        StudsOffset = Vector3.new(0, 3, 0),
+        AlwaysOnTop = true,
+    }, g)
+
+    data.nameLabel = txt(bb, plr.Name, {
+        Size = UDim2.new(1, 0, 0, 20),
+        Font = F.bold,
+        TextSize = 14,
+        TextColor3 = Color3.fromRGB(255, 255, 0),
+        TextStrokeTransparency = 0,
+        TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+    data.hpLabel = txt(bb, "100 HP", {
+        Position = UDim2.new(0, 0, 0, 20),
+        Size = UDim2.new(1, 0, 0, 16),
+        Font = F.bold,
+        TextSize = 13,
+        TextColor3 = Color3.fromRGB(80, 255, 120),
+        TextStrokeTransparency = 0,
+        TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+    data.billboard = bb
+end
+
+local function removeESP(plr)
+    local data = FZ.esp.objects[plr]
+    if not data then return end
+    if data.highlight then pcall(function() data.highlight:Destroy() end) end
+    if data.billboard then pcall(function() data.billboard:Destroy() end) end
+    for _, line in ipairs(data.boxLines) do
+        if line then pcall(function() line:Destroy() end) end
+    end
+    FZ.esp.objects[plr] = nil
+end
+
+local function updateESP()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    for plr, data in pairs(FZ.esp.objects) do
+        local ch = plr.Character
+        if ch and alive(plr) then
+            local head = ch:FindFirstChild("Head")
+            local hum = ch:FindFirstChildOfClass("Humanoid")
+            local hrp = ch:FindFirstChild("HumanoidRootPart")
+
+            if data.highlight then
+                data.highlight.Adornee = ch
+                data.highlight.Enabled = true
+            end
+            if data.billboard and head then data.billboard.Adornee = head end
+            if data.nameLabel then data.nameLabel.Text = plr.Name end
+            if data.hpLabel and hum then
+                local hp = math.floor(hum.Health)
+                local ratio = hum.Health / math.max(1, hum.MaxHealth)
+                data.hpLabel.Text = hp .. " HP"
+                data.hpLabel.TextColor3 = Color3.fromRGB(math.floor(255 * (1 - ratio)), math.floor(255 * ratio), 80)
+            end
+
+            if hrp and #data.boxLines >= 4 then
+                local headPos = head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0))
+                local footPos = hrp.Position - Vector3.new(0, 3, 0)
+                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
+                local botV, botOn = cam:WorldToViewportPoint(footPos)
+                if topOn and botOn then
+                    local height = math.abs(botV.Y - topV.Y)
+                    local width = height * 0.55
+                    local x, y = topV.X - width / 2, topV.Y
+                    data.boxLines[1].Size = UDim2.new(0, width, 0, 1)
+                    data.boxLines[1].Position = UDim2.new(0, x, 0, y)
+                    data.boxLines[2].Size = UDim2.new(0, width, 0, 1)
+                    data.boxLines[2].Position = UDim2.new(0, x, 0, y + height)
+                    data.boxLines[3].Size = UDim2.new(0, 1, 0, height)
+                    data.boxLines[3].Position = UDim2.new(0, x, 0, y)
+                    data.boxLines[4].Size = UDim2.new(0, 1, 0, height)
+                    data.boxLines[4].Position = UDim2.new(0, x + width, 0, y)
+                    for _, line in ipairs(data.boxLines) do line.Visible = true end
+                else
+                    for _, line in ipairs(data.boxLines) do line.Visible = false end
+                end
+            end
+        else
+            if data.highlight then data.highlight.Adornee = nil end
+            if data.billboard then data.billboard.Adornee = nil end
+            for _, line in ipairs(data.boxLines) do line.Visible = false end
+        end
+    end
+end
+
+local function drawSkeleton()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    for plr in pairs(FZ.esp.objects) do
+        local ch = plr.Character
+        if ch and alive(plr) then
+            local parts = {}
+            for _, p in ipairs(ch:GetChildren()) do
+                if p:IsA("BasePart") then parts[p.Name] = p end
+            end
+            local links
+            if parts["UpperTorso"] then
+                links = {
+                    { "Head", "UpperTorso" }, { "UpperTorso", "LowerTorso" },
+                    { "UpperTorso", "LeftUpperArm" }, { "UpperTorso", "RightUpperArm" },
+                    { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
+                    { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
+                    { "LowerTorso", "LeftUpperLeg" }, { "LowerTorso", "RightUpperLeg" },
+                    { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
+                    { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
+                }
+            else
+                links = {
+                    { "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" },
+                    { "Torso", "Left Leg" }, { "Torso", "Right Leg" },
+                }
+            end
+            local frames = FZ.esp.skelFrames[plr]
+            if not frames then frames = {} FZ.esp.skelFrames[plr] = frames end
+            local g = espGui()
+            for i, link in ipairs(links) do
+                local p1, p2 = parts[link[1]], parts[link[2]]
+                if p1 and p2 then
+                    local v1, on1 = cam:WorldToViewportPoint(p1.Position)
+                    local v2, on2 = cam:WorldToViewportPoint(p2.Position)
+                    if on1 and on2 then
+                        if not frames[i] then
+                            frames[i] = new("Frame", {
+                                BackgroundColor3 = Color3.fromRGB(255, 255, 0),
+                                BorderSizePixel = 0,
+                                ZIndex = 5,
+                            }, g)
+                        end
+                        local f = frames[i]
+                        local dx, dy = v2.X - v1.X, v2.Y - v1.Y
+                        f.Size = UDim2.new(0, math.sqrt(dx * dx + dy * dy), 0, 2)
+                        f.Position = UDim2.new(0, v1.X, 0, v1.Y)
+                        f.Rotation = math.deg(math.atan2(dy, dx))
+                        f.Visible = true
+                    elseif frames[i] then
+                        frames[i].Visible = false
+                    end
+                elseif frames[i] then
+                    frames[i].Visible = false
+                end
+            end
+            for i = #links + 1, #frames do frames[i].Visible = false end
+        end
+    end
+end
+
+local function setESP(on)
+    FZ.esp.on = on and true or false
+    if FZ.esp.conn then
+        pcall(function() FZ.esp.conn:Disconnect() end)
+        FZ.esp.conn = nil
+    end
+    if not FZ.esp.on then
+        for plr in pairs(FZ.esp.objects) do removeESP(plr) end
+        FZ.esp.objects = {}
+        for _, frames in pairs(FZ.esp.skelFrames) do
+            for _, f in ipairs(frames) do pcall(function() f:Destroy() end) end
+        end
+        FZ.esp.skelFrames = {}
+        return
+    end
+
+    espGui()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then createESP(plr) end
+    end
+    FZ.esp.conn = RunService.RenderStepped:Connect(function()
+        if not FZ.esp.on then return end
+        updateESP()
+        if FZ.esp.skel then drawSkeleton() end
+    end)
+end
+
+--===================  FLY  ===================
+local function setFly(on)
+    FZ.fly.on = on and true or false
+    if FZ.fly.conn then
+        pcall(function() FZ.fly.conn:Disconnect() end)
+        FZ.fly.conn = nil
+    end
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not FZ.fly.on then
+        if FZ.fly.bv then pcall(function() FZ.fly.bv:Destroy() end) FZ.fly.bv = nil end
+        if FZ.fly.bg then pcall(function() FZ.fly.bg:Destroy() end) FZ.fly.bg = nil end
+        if hum then hum.PlatformStand = false end
+        return
+    end
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not root or not hum then
+        FZ.fly.on = false
+        return
+    end
+
+    FZ.fly.bv = new("BodyVelocity", { MaxForce = Vector3.new(1e5, 1e5, 1e5), Velocity = Vector3.new(0, 0, 0) }, root)
+    FZ.fly.bg = new("BodyGyro", { MaxTorque = Vector3.new(1e5, 1e5, 1e5), P = 10000, D = 200 }, root)
+    hum.PlatformStand = true
+
+    FZ.fly.conn = RunService.RenderStepped:Connect(function()
+        if not FZ.fly.on then return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local d = Vector3.new(0, 0, 0)
+        if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + cam.CFrame.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - cam.CFrame.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then d = d + Vector3.new(0, 1, 0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then d = d - Vector3.new(0, 1, 0) end
+        if FZ.fly.bv then
+            FZ.fly.bv.Velocity = d.Magnitude > 0 and d.Unit * FZ.fly.speed or Vector3.new(0, 0, 0)
+        end
+        if FZ.fly.bg then FZ.fly.bg.CFrame = cam.CFrame end
+    end)
+end
+
+--===================  NOCLIP  ===================
+local function setNoclip(on)
+    FZ.noclip.on = on and true or false
+    if FZ.noclip.conn then
+        pcall(function() FZ.noclip.conn:Disconnect() end)
+        FZ.noclip.conn = nil
+    end
+    if not FZ.noclip.on then
+        local ch = LP.Character
+        if ch then
+            for _, p in ipairs(ch:GetDescendants()) do
+                if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then p.CanCollide = true end
+            end
+        end
+        return
+    end
+    FZ.noclip.conn = RunService.Stepped:Connect(function()
+        if not FZ.noclip.on then return end
+        local ch = LP.Character
+        if not ch then return end
+        for _, p in ipairs(ch:GetDescendants()) do
+            if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+        end
+    end)
+end
+
+--===================  CLICK TP  ===================
+local function setClickTp(on)
+    FZ.clickTp.on = on and true or false
+    if FZ.clickTp.conn then
+        pcall(function() FZ.clickTp.conn:Disconnect() end)
+        FZ.clickTp.conn = nil
+    end
+    if not FZ.clickTp.on then return end
+    FZ.clickTp.conn = UIS.InputBegan:Connect(function(input, gpe)
+        if gpe or not FZ.clickTp.on then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        local ch = LP.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local mouse
+        pcall(function() mouse = LP:GetMouse() end)
+        if not mouse or not mouse.Target then return end
+        root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, FZ.clickTp.height, 0))
+        root.Velocity = Vector3.new(0, 0, 0)
+    end)
+end
+
+--===================  WALK SPEED  ===================
+local function applyWalkSpeed()
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.WalkSpeed = FZ.walk.on and FZ.walk.speed or 16
+    end
+end
+
+local function setWalkSpeed(on)
+    FZ.walk.on = on and true or false
+    if FZ.walk.conn then
+        pcall(function() FZ.walk.conn:Disconnect() end)
+        FZ.walk.conn = nil
+    end
+    applyWalkSpeed()
+    if not FZ.walk.on then return end
+    FZ.walk.conn = RunService.Heartbeat:Connect(function()
+        if not FZ.walk.on then return end
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hum and math.abs(hum.WalkSpeed - FZ.walk.speed) > 0.1 then
+            hum.WalkSpeed = FZ.walk.speed
+        end
+    end)
+end
+
+--===================  KILL PLAYER  ===================
+local function killPlayer(targetPlayer)
+    if not targetPlayer then return end
+    local myChar = LP.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local targetChar = targetPlayer.Character
+    local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot or not targetRoot then return end
+
+    local hum = myChar:FindFirstChildOfClass("Humanoid")
+    local backpack = LP:FindFirstChild("Backpack")
+    if not hum or not backpack then return end
+
+    myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0.5, 0)
+    myRoot.Velocity = Vector3.new(0, 0, 0)
+
+    local tool = nil
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then tool = item break end
+    end
+    if not tool then
+        for _, item in ipairs(myChar:GetChildren()) do
+            if item:IsA("Tool") then tool = item break end
+        end
+    end
+    if not tool then
+        notify("Kill Player: нет оружия")
+        return
+    end
+
+    if tool.Parent == backpack then
+        pcall(function() hum:EquipTool(tool) end)
+        task.wait(0.1)
+    end
+
+    task.spawn(function()
+        for _ = 1, 30 do
+            if not tool or not tool.Parent then break end
+            if targetRoot and targetRoot.Parent then
+                myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0.5, 0)
+                myRoot.Velocity = Vector3.new(0, 0, 0)
+            end
+            pcall(function() tool:Activate() end)
+            task.wait(0.03)
+        end
+    end)
+end
+
+-- всё выключить (вызывается из Unload)
+local function teardownFeatures()
+    pcall(function() setAimbot(false) end)
+    pcall(function() setSilentAim(false) end)
+    pcall(function() setHitbox(false) end)
+    pcall(function() setESP(false) end)
+    pcall(function() setFly(false) end)
+    pcall(function() setNoclip(false) end)
+    pcall(function() setClickTp(false) end)
+    pcall(function() setWalkSpeed(false) end)
+    if FZ.esp.gui then pcall(function() FZ.esp.gui:Destroy() end) FZ.esp.gui = nil end
+end
+
+--=================================================================
 --  КОНТЕНТ СТРАНИЦ (демо по референсу)
 --=================================================================
 local function buildWorld(p)
@@ -1224,6 +1839,68 @@ local function buildPlaceholder(p, name)
 end
 
 --=================================================================
+--  СТРАНИЦЫ НА РЕАЛЬНЫХ ФУНКЦИЯХ
+--=================================================================
+local function buildRagebot(p)
+    local aim = p:card("Aimbot")
+    aim:toggle("Enabled", false, true, function(on) setAimbot(on) end)
+    aim:slider("FOV", 20, 600, 120, 1, function(v) FZ.aim.fov = v end)
+    aim:slider("Smooth", 0.05, 1, 0.3, 0.05, function(v) FZ.aim.smooth = v end)
+
+    local silent = p:card("Silent Aim", "right")
+    silent:toggle("Enabled", false, true, function(on) setSilentAim(on) end)
+    silent:slider("FOV", 20, 600, 150, 1, function(v) FZ.silent.fov = v end)
+    silent:text("Нужны hookfunction, getrawmetatable, setreadonly, newcclosure — без них включение отменится.")
+
+    local hit = p:card("Hitbox")
+    hit:toggle("Enabled", false, true, function(on) setHitbox(on) end)
+    hit:slider("Size", 1, 20, 5, 1, function(v) FZ.hitbox.size = v end)
+end
+
+local function buildPlayers(p)
+    local esp = p:card("ESP")
+    esp:toggle("Enabled", false, true, function(on) setESP(on) end)
+    esp:toggle("Skeleton", true, false, function(on) FZ.esp.skel = on end)
+    esp:text("Highlight, бокс, ник и HP над головой.")
+end
+
+local function buildWeapon(p)
+    local kill = p:card("Kill Player")
+    local names = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then table.insert(names, plr.Name) end
+    end
+    if #names == 0 then names = { "(никого)" } end
+    kill:dropdown("Target", names, names[1], false)
+
+    local killToggle
+    killToggle = kill:toggle("Kill", false, false, function(on)
+        if not on then return end
+        killToggle:set(false, true)
+        local name = CFG["Weapon/Kill Player/Target"]
+        local plr = name and Players:FindFirstChild(name)
+        killPlayer(plr)
+    end)
+    kill:text("Телепорт в цель и 30 ударов текущим инструментом.")
+end
+
+local function buildMain(p)
+    local move = p:card("Movement")
+    move:toggle("Fly", false, true, function(on) setFly(on) end)
+    move:slider("Fly Speed", 10, 300, 50, 1, function(v) FZ.fly.speed = v end)
+    move:toggle("Noclip", false, true, function(on) setNoclip(on) end)
+    move:toggle("Click TP", false, true, function(on) setClickTp(on) end)
+    move:slider("TP Height", 0, 20, 3, 1, function(v) FZ.clickTp.height = v end)
+
+    local ws = p:card("Walk Speed", "right")
+    ws:toggle("Enabled", false, true, function(on) setWalkSpeed(on) end)
+    ws:slider("Speed", 16, 300, 16, 1, function(v)
+        FZ.walk.speed = v
+        applyWalkSpeed()
+    end)
+end
+
+--=================================================================
 --  СПИСОК СТРАНИЦ
 --=================================================================
 -- icon = ключ из ICONS (таблица иконок выше), а не сам глиф
@@ -1245,6 +1922,10 @@ local PAGES = {
 
 local BUILDERS = {
     World = buildWorld,
+    Ragebot = buildRagebot,
+    Players = buildPlayers,
+    Weapon = buildWeapon,
+    Main = buildMain,
 }
 
 local pageByName = {}
@@ -1271,7 +1952,7 @@ local function showPage(def)
         local builder = BUILDERS[def.name] or function(p) buildPlaceholder(p, def.name) end
         local ok, err = pcall(builder, def.page)
         if not ok then
-            warn("[NeverloseUI] build '" .. def.name .. "': " .. tostring(err))
+            warn("[SpermaHubUI] build '" .. def.name .. "': " .. tostring(err))
         end
     end
     for _, other in ipairs(PAGES) do
@@ -1324,7 +2005,7 @@ end
 local function saveConfig()
     local ok, json = pcall(function() return Http:JSONEncode(CFG) end)
     if ok and type(writefile) == "function" then
-        pcall(writefile, "neverlose_config.json", json)
+        pcall(writefile, "spermahub_config.json", json)
         notify("Config saved")
     elseif ok then
         notify("Saved (no writefile)")
@@ -1368,8 +2049,8 @@ gearBtn.MouseButton1Click:Connect(function()
         if pick == "Save config" then
             saveConfig()
         elseif pick == "Unload" then
-            if getgenv and getgenv().NeverloseUI then
-                getgenv().NeverloseUI.Unload()
+            if getgenv and getgenv().SpermaHubUI then
+                getgenv().SpermaHubUI.Unload()
             end
         end
     end, 170)
@@ -1405,14 +2086,20 @@ end)
 --  API
 --=================================================================
 local function unload()
+    pcall(teardownFeatures)
     pcall(function() gui:Destroy() end)
     pcall(function() blur:Destroy() end)
-    if getgenv and getgenv().NeverloseUI then
-        getgenv().NeverloseUI = nil
+    if getgenv then
+        if getgenv().SpermaHubUI and getgenv().SpermaHubUI.Gui == gui then
+            getgenv().SpermaHubUI = nil
+        end
+        if getgenv().NeverloseUI and getgenv().NeverloseUI.Gui == gui then
+            getgenv().NeverloseUI = nil
+        end
     end
 end
 
-getgenv().NeverloseUI = {
+local api = {
     Gui = gui,
     Panel = panel,
     Config = CFG,
@@ -1424,8 +2111,21 @@ getgenv().NeverloseUI = {
     Icons = ICONS,
     SetIcon = setIcon,
     RefreshIcons = refreshIcons,
+    Features = FZ,
+    SetAimbot = setAimbot,
+    SetSilentAim = setSilentAim,
+    SetHitbox = setHitbox,
+    SetESP = setESP,
+    SetFly = setFly,
+    SetNoclip = setNoclip,
+    SetClickTp = setClickTp,
+    SetWalkSpeed = setWalkSpeed,
+    KillPlayer = killPlayer,
 }
+
+getgenv().SpermaHubUI = api
+getgenv().NeverloseUI = api  -- старое имя, оставлено для совместимости
 
 -- стартовая страница
 setSelected(pageByName.World or PAGES[1])
-notify("Neverlose UI loaded \u{2022} RShift")
+notify("SPERMAHUB loaded \u{2022} RShift")
