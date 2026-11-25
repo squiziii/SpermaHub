@@ -345,7 +345,7 @@ local function hookCamera()
     end
 end
 task.spawn(hookCamera)
-workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+local camWatch = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
     fitScale()
     hookCamera()
 end)
@@ -1407,38 +1407,55 @@ local function espGui()
     return FZ.esp.gui
 end
 
+-- палитра ESP
+local ESP_FRAME = Color3.fromRGB(236, 244, 255)   -- рамка и уголки
+local ESP_SKEL  = Color3.fromRGB(126, 206, 255)   -- скелет
+local ESP_TEXT  = Color3.fromRGB(150, 168, 190)   -- HP / дистанция
+
+-- цвет полоски HP: зелёный (1.0) -> красный (0.0)
+local function hpColor(r)
+    return Color3.fromRGB(235 - 140 * r, 80 + 135 * r, 80 + 45 * r)
+end
+
+local function espLine(parent, color, z)
+    return new("Frame", {
+        BackgroundColor3 = color,
+        BorderSizePixel = 0,
+        ZIndex = z or 4,
+        Visible = false,
+    }, parent)
+end
+
 local function createESP(plr)
     if plr == LP or FZ.esp.objects[plr] then return end
     local g = espGui()
-    local data = { lines = {}, boxLines = {} }
+    local data = { box = {}, corners = {} }
     FZ.esp.objects[plr] = data
 
-    local ch = plr.Character
-    if ch then
-        local hl = new("Highlight", {
-            FillColor = Color3.fromRGB(255, 40, 40),
-            OutlineColor = Color3.fromRGB(255, 255, 0),
-            FillTransparency = 0.4,
-            OutlineTransparency = 0,
-            DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
-            Adornee = ch,
-        }, g)
-        data.highlight = hl
-    end
+    -- мягкая подсветка модели, без кричащих цветов
+    data.highlight = new("Highlight", {
+        FillColor = Color3.fromRGB(70, 165, 235),
+        OutlineColor = Color3.fromRGB(150, 215, 255),
+        FillTransparency = 0.85,
+        OutlineTransparency = 0.6,
+        DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+        Enabled = false,
+    }, g)
 
-    for i = 1, 4 do
-        data.boxLines[i] = new("Frame", {
-            BackgroundColor3 = Color3.fromRGB(255, 255, 0),
-            BorderSizePixel = 0,
-            ZIndex = 6,
-            Visible = false,
-        }, g)
-    end
+    -- тонкая рамка (4 линии)
+    for i = 1, 4 do data.box[i] = espLine(g, ESP_FRAME, 4) end
+    -- уголки (8 коротких линий)
+    for i = 1, 8 do data.corners[i] = espLine(g, ESP_FRAME, 5) end
+
+    -- полоска здоровья слева
+    data.hpBg = espLine(g, Color3.fromRGB(6, 9, 13), 4)
+    data.hpBg.BackgroundTransparency = 0.3
+    data.hpFill = espLine(g, hpColor(1), 5)
 
     local bb = new("BillboardGui", {
-        Name = "ESPName",
-        Size = UDim2.new(0, 220, 0, 70),
-        StudsOffset = Vector3.new(0, 3, 0),
+        Name = "SpermaHubESPInfo",
+        Size = UDim2.fromOffset(220, 44),
+        StudsOffset = Vector3.new(0, 2.6, 0),
         AlwaysOnTop = true,
     }, g)
 
@@ -1446,18 +1463,18 @@ local function createESP(plr)
         Size = UDim2.new(1, 0, 0, 20),
         Font = F.bold,
         TextSize = 14,
-        TextColor3 = Color3.fromRGB(255, 255, 0),
-        TextStrokeTransparency = 0,
+        TextColor3 = Color3.fromRGB(242, 247, 255),
+        TextStrokeTransparency = 0.25,
         TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
         TextXAlignment = Enum.TextXAlignment.Center,
     })
-    data.hpLabel = txt(bb, "100 HP", {
-        Position = UDim2.new(0, 0, 0, 20),
+    data.infoLabel = txt(bb, "", {
+        Position = UDim2.new(0, 0, 0, 19),
         Size = UDim2.new(1, 0, 0, 16),
-        Font = F.bold,
-        TextSize = 13,
-        TextColor3 = Color3.fromRGB(80, 255, 120),
-        TextStrokeTransparency = 0,
+        Font = F.med,
+        TextSize = 12,
+        TextColor3 = ESP_TEXT,
+        TextStrokeTransparency = 0.45,
         TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
         TextXAlignment = Enum.TextXAlignment.Center,
     })
@@ -1467,12 +1484,25 @@ end
 local function removeESP(plr)
     local data = FZ.esp.objects[plr]
     if not data then return end
-    if data.highlight then pcall(function() data.highlight:Destroy() end) end
-    if data.billboard then pcall(function() data.billboard:Destroy() end) end
-    for _, line in ipairs(data.boxLines) do
-        if line then pcall(function() line:Destroy() end) end
+    local loose = { data.highlight, data.billboard, data.hpBg, data.hpFill }
+    for _, obj in ipairs(data.box) do table.insert(loose, obj) end
+    for _, obj in ipairs(data.corners) do table.insert(loose, obj) end
+    for _, obj in ipairs(loose) do
+        if obj then pcall(function() obj:Destroy() end) end
     end
     FZ.esp.objects[plr] = nil
+end
+
+local function hideESP(data)
+    for _, o in ipairs(data.box) do o.Visible = false end
+    for _, o in ipairs(data.corners) do o.Visible = false end
+    if data.hpBg then data.hpBg.Visible = false end
+    if data.hpFill then data.hpFill.Visible = false end
+    if data.highlight then
+        data.highlight.Adornee = nil
+        data.highlight.Enabled = false
+    end
+    if data.billboard then data.billboard.Adornee = nil end
 end
 
 local function updateESP()
@@ -1484,46 +1514,82 @@ local function updateESP()
             local head = ch:FindFirstChild("Head")
             local hum = ch:FindFirstChildOfClass("Humanoid")
             local hrp = ch:FindFirstChild("HumanoidRootPart")
+            local headPos = head and head.Position or (hrp and hrp.Position + Vector3.new(0, 1.5, 0))
 
             if data.highlight then
                 data.highlight.Adornee = ch
                 data.highlight.Enabled = true
             end
-            if data.billboard and head then data.billboard.Adornee = head end
-            if data.nameLabel then data.nameLabel.Text = plr.Name end
-            if data.hpLabel and hum then
-                local hp = math.floor(hum.Health)
-                local ratio = hum.Health / math.max(1, hum.MaxHealth)
-                data.hpLabel.Text = hp .. " HP"
-                data.hpLabel.TextColor3 = Color3.fromRGB(math.floor(255 * (1 - ratio)), math.floor(255 * ratio), 80)
-            end
 
-            if hrp and #data.boxLines >= 4 then
-                local headPos = head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0))
-                local footPos = hrp.Position - Vector3.new(0, 3, 0)
-                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
-                local botV, botOn = cam:WorldToViewportPoint(footPos)
+            if headPos and hrp then
+                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.65, 0))
+                local botV, botOn = cam:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
                 if topOn and botOn then
                     local height = math.abs(botV.Y - topV.Y)
-                    local width = height * 0.55
+                    local width = height * 0.5
                     local x, y = topV.X - width / 2, topV.Y
-                    data.boxLines[1].Size = UDim2.new(0, width, 0, 1)
-                    data.boxLines[1].Position = UDim2.new(0, x, 0, y)
-                    data.boxLines[2].Size = UDim2.new(0, width, 0, 1)
-                    data.boxLines[2].Position = UDim2.new(0, x, 0, y + height)
-                    data.boxLines[3].Size = UDim2.new(0, 1, 0, height)
-                    data.boxLines[3].Position = UDim2.new(0, x, 0, y)
-                    data.boxLines[4].Size = UDim2.new(0, 1, 0, height)
-                    data.boxLines[4].Position = UDim2.new(0, x + width, 0, y)
-                    for _, line in ipairs(data.boxLines) do line.Visible = true end
+                    local right, bottom = x + width, y + height
+
+                    local dist = (cam.CFrame.Position - hrp.Position).Magnitude
+                    local fade = math.clamp(1 - dist / 400, 0.35, 1)
+                    local frameA = 0.7 + (1 - fade) * 0.2
+                    local cornerA = 0.15 + (1 - fade) * 0.3
+
+                    -- тонкая рамка
+                    local edges = {
+                        { x, y, width, 1 }, { x, bottom, width, 1 },
+                        { x, y, 1, height }, { right, y, 1, height },
+                    }
+                    for i, e in ipairs(edges) do
+                        local line = data.box[i]
+                        line.Size = UDim2.new(0, e[3], 0, e[4])
+                        line.Position = UDim2.new(0, e[1], 0, e[2])
+                        line.BackgroundTransparency = frameA
+                        line.Visible = true
+                    end
+
+                    -- уголки
+                    local arm = math.clamp(height * 0.16, 6, 16)
+                    local corners = {
+                        { x, y, arm, 1 }, { x, y, 1, arm },
+                        { right - arm, y, arm, 1 }, { right - 1, y, 1, arm },
+                        { x, bottom - 1, arm, 1 }, { x, bottom - arm, 1, arm },
+                        { right - arm, bottom - 1, arm, 1 }, { right - 1, bottom - arm, 1, arm },
+                    }
+                    for i, c in ipairs(corners) do
+                        local line = data.corners[i]
+                        line.Size = UDim2.new(0, c[3], 0, c[4])
+                        line.Position = UDim2.new(0, c[1], 0, c[2])
+                        line.BackgroundTransparency = cornerA
+                        line.Visible = true
+                    end
+
+                    -- полоска HP
+                    if hum then
+                        local ratio = math.clamp(hum.Health / math.max(1, hum.MaxHealth), 0, 1)
+                        data.hpBg.Size = UDim2.new(0, 3, 0, height)
+                        data.hpBg.Position = UDim2.new(0, x - 7, 0, y)
+                        data.hpBg.Visible = true
+                        data.hpFill.Size = UDim2.new(0, 3, 0, height * ratio)
+                        data.hpFill.Position = UDim2.new(0, x - 7, 0, bottom - height * ratio)
+                        data.hpFill.BackgroundColor3 = hpColor(ratio)
+                        data.hpFill.Visible = true
+
+                        if data.infoLabel then
+                            data.infoLabel.Text = string.format("%d HP  \u{2022}  %dm", math.floor(hum.Health), math.floor(dist))
+                        end
+                    end
+
+                    if data.billboard then data.billboard.Adornee = head or hrp end
+                    if data.nameLabel then data.nameLabel.Text = plr.Name end
                 else
-                    for _, line in ipairs(data.boxLines) do line.Visible = false end
+                    hideESP(data)
                 end
+            else
+                hideESP(data)
             end
         else
-            if data.highlight then data.highlight.Adornee = nil end
-            if data.billboard then data.billboard.Adornee = nil end
-            for _, line in ipairs(data.boxLines) do line.Visible = false end
+            hideESP(data)
         end
     end
 end
@@ -1566,16 +1632,18 @@ local function drawSkeleton()
                     if on1 and on2 then
                         if not frames[i] then
                             frames[i] = new("Frame", {
-                                BackgroundColor3 = Color3.fromRGB(255, 255, 0),
+                                BackgroundColor3 = ESP_SKEL,
+                                BackgroundTransparency = 0.3,
                                 BorderSizePixel = 0,
-                                ZIndex = 5,
+                                ZIndex = 3,
                             }, g)
                         end
                         local f = frames[i]
                         local dx, dy = v2.X - v1.X, v2.Y - v1.Y
-                        f.Size = UDim2.new(0, math.sqrt(dx * dx + dy * dy), 0, 2)
+                        f.Size = UDim2.new(0, math.sqrt(dx * dx + dy * dy), 0, 1)
                         f.Position = UDim2.new(0, v1.X, 0, v1.Y)
-                        f.Rotation = math.deg(math.atan2(dy, dx))
+                        local angle = math.atan2 and math.atan2(dy, dx) or math.atan(dy, dx)
+                        f.Rotation = math.deg(angle)
                         f.Visible = true
                     elseif frames[i] then
                         frames[i].Visible = false
@@ -2023,6 +2091,35 @@ saveBtn.MouseLeave:Connect(function()
     Tween:Create(saveBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(12, 17, 25)}):Play()
 end)
 
+-- forward-декларация: сама функция объявлена в секции API ниже
+local unload
+
+local unloadBtn = new("TextButton", {
+    Position = UDim2.new(0, 192, 0, 30),
+    Size = UDim2.fromOffset(104, 40),
+    BackgroundColor3 = Color3.fromRGB(12, 17, 25),
+    BorderSizePixel = 0,
+    Text = "Unload",
+    Font = F.med,
+    TextSize = 15,
+    TextColor3 = C.dim,
+    AutoButtonColor = false,
+}, header)
+corner(unloadBtn, 5)
+stroke(unloadBtn, C.line, 0.2)
+
+unloadBtn.MouseEnter:Connect(function()
+    Tween:Create(unloadBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(26, 14, 16)}):Play()
+    unloadBtn.TextColor3 = Color3.fromRGB(238, 122, 122)
+end)
+unloadBtn.MouseLeave:Connect(function()
+    Tween:Create(unloadBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(12, 17, 25)}):Play()
+    unloadBtn.TextColor3 = C.dim
+end)
+unloadBtn.MouseButton1Click:Connect(function()
+    if unload then unload() end
+end)
+
 searchBtn.MouseButton1Click:Connect(function()
     searchBox.Visible = not searchBox.Visible
     if searchBox.Visible then
@@ -2067,7 +2164,7 @@ local function setOpen(state)
     Tween:Create(blur, TweenInfo.new(0.2), {Size = state and 14 or 0}):Play()
 end
 
-UIS.InputBegan:Connect(function(input, gameProcessed)
+local uiConn = UIS.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
         setOpen(not opened)
@@ -2085,7 +2182,11 @@ end)
 --=================================================================
 --  API
 --=================================================================
-local function unload()
+unload = function()
+    -- сначала отключаем всё, что живёт на сервисах: после Destroy они бы падали
+    pcall(function() if uiConn then uiConn:Disconnect() end end)
+    pcall(function() if camWatch then camWatch:Disconnect() end end)
+    pcall(function() if camConn then camConn:Disconnect() end end)
     pcall(teardownFeatures)
     pcall(function() gui:Destroy() end)
     pcall(function() blur:Destroy() end)
