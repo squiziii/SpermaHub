@@ -12,6 +12,9 @@
 --    getgenv().SpermaHubUI.SetIcon(name, { image = "rbxassetid://..." })
 --    getgenv().SpermaHubUI.RefreshIcons()  -- перерисовать все иконки
 --    getgenv().SpermaHubUI.Features        -- состояние функций хаба
+--    getgenv().SpermaHubHUD                -- HUD (порт Interface.java)
+--    getgenv().SpermaHubHUD.SetEnabled("arraylist", false)
+--    getgenv().SpermaHubHUD.Push("text")   -- нотификация в HUD
 ----
 --  Показать/скрыть: RightShift (или Escape - закрыть)
 --=================================================================
@@ -684,6 +687,10 @@ local function notify(text)
         ZIndex = 451,
     })
 
+    if getgenv and getgenv().SpermaHubHUD and getgenv().SpermaHubHUD.Push then
+        pcall(getgenv().SpermaHubHUD.Push, text)
+    end
+
     local this = toast
     task.delay(1.9, function()
         if not (this and this.Parent) then return end
@@ -1124,6 +1131,31 @@ local function addCard(column, title, pageName)
         return c
     end
 
+    function card:button(label, cb)
+        local btn = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 36),
+            BackgroundColor3 = C.input,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            LayoutOrder = ord(),
+        }, frame)
+        corner(btn, 5)
+        stroke(btn, C.line, 0.2)
+        txt(btn, label, {
+            Size = UDim2.fromScale(1, 1),
+            TextSize = 16,
+            TextColor3 = C.text,
+            TextXAlignment = Enum.TextXAlignment.Center,
+        })
+        btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(17, 23, 33) end)
+        btn.MouseLeave:Connect(function() btn.BackgroundColor3 = C.input end)
+        btn.MouseButton1Click:Connect(function()
+            if cb then task.spawn(cb) end
+        end)
+        return btn
+    end
+
     function card:text(value)
         local c = buildLabel(frame, value)
         c.frame.LayoutOrder = ord()
@@ -1254,6 +1286,8 @@ local function setAimbot(on)
     FZ.aim.conn = RunService.RenderStepped:Connect(function()
         if not FZ.aim.on then return end
         local target = findTarget(FZ.aim.fov)
+        FZ.aim.target = target
+        FZ.aim.targetAt = os.clock()
         local head = target and target.Character and target.Character:FindFirstChild("Head")
         local cam = workspace.CurrentCamera
         if head and cam then
@@ -1297,6 +1331,8 @@ local function setSilentAim(on)
             local method = getnamecallmethod()
             if FZ.silent.on and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") then
                 local target = findTarget(FZ.silent.fov)
+                FZ.silent.target = target
+                FZ.silent.targetAt = os.clock()
                 local part = target and targetPart(target.Character)
                 if part then
                     local args = { ... }
@@ -1314,6 +1350,8 @@ local function setSilentAim(on)
             local result = oldIndex(self, key)
             if FZ.silent.on and typeof(self) == "Instance" and self:IsA("Mouse") and (key == "Hit" or key == "Target") then
                 local target = findTarget(FZ.silent.fov)
+                FZ.silent.target = target
+                FZ.silent.targetAt = os.clock()
                 local part = target and targetPart(target.Character)
                 if part then
                     if key == "Hit" then return CFrame.new(part.Position) end
@@ -1864,6 +1902,1652 @@ local function teardownFeatures()
 end
 
 --=================================================================
+--  HUD  (порт Interface.java, стиль Quick)
+--=================================================================
+--  Из исходников перенесено:
+--    Interface.java — состав и дефолты элементов, фиксированные якоря
+--                     (нотификации/ХП/скорость/хотбар), драг элементов,
+--                     контекстное меню элемента (фон / блюр / от темы),
+--                     порог оповещения о ХП, стиль "Quick".
+--    Fonts.java + bold/quick/icons_nurik.json — MSDF-атласы. Самих PNG
+--                     в архиве нет, поэтому шрифт — готика Roblox, а
+--                     иконки — глифы/примитивы из ICONS выше.
+--
+--  Замены майнкрафтовых данных на роблоксовые:
+--    Ticks          -> частота Heartbeat (TPS сервера Roblox не отдаёт)
+--    TotemCounter   -> счётчик сейвов: ХП упало ниже 25% и вернулось выше 60%
+--    Potions        -> активные функции хаба (Fly, Noclip, Aimbot, ...)
+--    StaffList      -> создатель плейса / админы группы (rank >= 200)
+--    MediaPlayer    -> Sound, который сейчас играет
+--    Hotbar         -> инструменты из Backpack, 1..9
+--    Cooldowns      -> HUD:AddCooldown(name, sec) + атрибут Cooldown у инструмента
+--
+--  API: getgenv().SpermaHubHUD
+--    SpermaHubHUD.SetEnabled(id, on) / .IsEnabled(id) / .List()
+--    .SetScale(k) / .SetLowHp(n) / .SetBgAlpha(a) / .SetHideInMenu(b)
+--    .ResetPositions() / .Rebuild() / .Destroy()
+--    .Push(text) / .AddBuff(name, sec) / .AddCooldown(name, sec)
+--    .AddKeybind(key, label) / .SetStaff(userId, rank) / .SetTarget(player)
+--=================================================================
+local HUD = {
+    gui = nil,
+    root = nil,
+    alive = true,
+    openedMenu = false,
+    scale = 1,
+    bgAlpha = 0.30,
+    lowHp = 30,
+    hideInMenu = true,
+    fps = 60,
+    ping = 0,
+    elements = {},
+    conns = {},
+    renderConn = nil,
+    buffs = {},
+    cooldowns = {},
+    keybinds = { { key = "RShift", label = "Menu" }, { key = "Esc", label = "Close" } },
+    staffIds = {},
+    saves = 0,
+    lowFlag = false,
+    target = nil,
+    state = { on = {}, pos = {}, flags = {} },
+}
+
+local HUD_FILE = "spermahub_config.json"
+
+local HUD_DEFS = {
+    { id = "watermark",     label = "Ватермарка",          on = true, x = 0.008, y = 0.048, ax = 0,   ay = 0 },
+    { id = "arraylist",     label = "Список модулей",      on = true, x = 0.992, y = 0.048, ax = 1,   ay = 0, noBg = true },
+    { id = "target",        label = "Активный таргет",     on = true, x = 0.014, y = 0.300, ax = 0,   ay = 0 },
+    { id = "keybinds",      label = "Привязанные модули",  on = true, x = 0.014, y = 0.440, ax = 0,   ay = 0 },
+    { id = "staff",         label = "Активные модераторы", on = true, x = 0.014, y = 0.560, ax = 0,   ay = 0 },
+    { id = "potions",       label = "Бафы",                on = true, x = 0.014, y = 0.660, ax = 0,   ay = 0 },
+    { id = "media",         label = "MediaPlayer",         on = true, x = 0.014, y = 0.780, ax = 0,   ay = 0 },
+    { id = "ticks",         label = "Тики",                on = true, x = 0.500, y = 0.048, ax = 0.5, ay = 0 },
+    { id = "ping",          label = "Пинг",                on = true, x = 0.500, y = 0.082, ax = 0.5, ay = 0 },
+    { id = "speed",         label = "Скорость",            on = true, x = 0.500, y = 0.545, ax = 0.5, ay = 0 },
+    { id = "totems",        label = "Счетчик сейвов",      on = true, x = 0.500, y = 0.585, ax = 0.5, ay = 0 },
+    { id = "cooldowns",     label = "Кулдауны",            on = true, x = 0.992, y = 0.720, ax = 1,   ay = 0 },
+    { id = "notifications", label = "Нотификации",         on = true, x = 0.500, y = 0.640, ax = 0.5, ay = 0, noBg = true },
+    { id = "hotbar",        label = "Хотбар",              on = true, x = 0.500, y = 0.975, ax = 0.5, ay = 1 },
+    { id = "lowhp",         label = "Оповещение о хп",     on = true, x = 0,     y = 0,     ax = 0,   ay = 0, noBg = true },
+}
+
+local DEF_BY_ID = {}
+for _, d in ipairs(HUD_DEFS) do
+    DEF_BY_ID[d.id] = d
+    HUD.state.on[d.id] = d.on
+    HUD.state.pos[d.id] = { x = d.x, y = d.y }
+    HUD.state.flags[d.id] = { bg = true, blur = true, theme = false }
+end
+
+local function hpClamp(v, a, b)
+    if v < a then return a end
+    if v > b then return b end
+    return v
+end
+
+local function hpScale(n)
+    return math.max(1, math.floor(n * HUD.scale + 0.5))
+end
+
+local function hpColor(f)
+    f = hpClamp(f, 0, 1)
+    local r = math.floor(231 + (76 - 231) * f + 0.5)
+    local g = math.floor(76 + (200 - 76) * f + 0.5)
+    local b = math.floor(60 + (120 - 60) * f + 0.5)
+    return Color3.fromRGB(r, g, b)
+end
+
+local function hudTime(sec)
+    sec = math.max(0, math.floor(sec or 0))
+    return string.format("%d:%02d", math.floor(sec / 60), sec % 60)
+end
+
+--=================================================================
+--  СОХРАНЕНИЕ / ЗАГРУЗКА
+--=================================================================
+local persistQueued = false
+
+function HUD.Persist()
+    CFG.__HUD = {
+        on = HUD.state.on,
+        pos = HUD.state.pos,
+        flags = HUD.state.flags,
+        scale = HUD.scale,
+        lowhp = HUD.lowHp,
+        hideInMenu = HUD.hideInMenu,
+        alpha = HUD.bgAlpha,
+    }
+    if persistQueued then return end
+    persistQueued = true
+    task.delay(0.6, function()
+        persistQueued = false
+        if type(writefile) ~= "function" then return end
+        local ok, json = pcall(function() return Http:JSONEncode(CFG) end)
+        if ok and type(json) == "string" then pcall(writefile, HUD_FILE, json) end
+    end)
+end
+
+local function hudLoad()
+    if type(readfile) ~= "function" then return end
+    local ok, raw = pcall(readfile, HUD_FILE)
+    if not ok or type(raw) ~= "string" or raw == "" then return end
+    local ok2, data = pcall(function() return Http:JSONDecode(raw) end)
+    if not ok2 or type(data) ~= "table" then return end
+    local blk = data.__HUD
+    if type(blk) ~= "table" then return end
+    if type(blk.on) == "table" then
+        for id, v in pairs(blk.on) do
+            if DEF_BY_ID[id] then HUD.state.on[id] = v and true or false end
+        end
+    end
+    if type(blk.pos) == "table" then
+        for id, p in pairs(blk.pos) do
+            if DEF_BY_ID[id] and type(p) == "table" and type(p.x) == "number" and type(p.y) == "number" then
+                HUD.state.pos[id] = { x = hpClamp(p.x, 0, 1), y = hpClamp(p.y, 0, 1) }
+            end
+        end
+    end
+    if type(blk.flags) == "table" then
+        for id, f in pairs(blk.flags) do
+            if DEF_BY_ID[id] and type(f) == "table" then
+                HUD.state.flags[id] = { bg = f.bg ~= false, blur = f.blur ~= false, theme = f.theme == true }
+            end
+        end
+    end
+    if type(blk.scale) == "number" then HUD.scale = hpClamp(blk.scale, 0.7, 1.4) end
+    if type(blk.lowhp) == "number" then HUD.lowHp = hpClamp(blk.lowhp, 1, 100) end
+    if type(blk.hideInMenu) == "boolean" then HUD.hideInMenu = blk.hideInMenu end
+    if type(blk.alpha) == "number" then HUD.bgAlpha = hpClamp(blk.alpha, 0.05, 0.9) end
+end
+
+--=================================================================
+--  СТИЛЬ / КОРЕНЬ
+--=================================================================
+local function hudRoot()
+    if HUD.gui and HUD.root then return HUD.root end
+    HUD.gui = new("ScreenGui", {
+        Name = "SpermaHubHUD",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        DisplayOrder = 985,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    }, PlayerGui)
+    HUD.root = new("Frame", {
+        Name = "Root",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Active = false,
+    }, HUD.gui)
+    HUD.root.Visible = not (HUD.hideInMenu and HUD.openedMenu)
+    return HUD.root
+end
+
+local function setBackpackHidden(hidden)
+    pcall(function()
+        game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, not hidden)
+    end)
+end
+
+local function applyStyle(id)
+    local el = HUD.elements[id]
+    if not el then return end
+    local def, b = el.def, el.btn
+    if def.noBg then
+        b.BackgroundTransparency = 1
+        return
+    end
+    local fl = HUD.state.flags[id] or {}
+    if fl.bg == false then
+        b.BackgroundTransparency = 1
+    else
+        b.BackgroundColor3 = fl.theme and C.accentDim or C.panel
+        b.BackgroundTransparency = HUD.bgAlpha - (fl.blur and 0.08 or 0)
+    end
+end
+
+local function makeRoot(def, w, h)
+    local root = hudRoot()
+    local b = new("TextButton", {
+        Name = "HUD_" .. def.id,
+        AnchorPoint = Vector2.new(def.ax, def.ay),
+        Position = UDim2.fromScale(HUD.state.pos[def.id].x, HUD.state.pos[def.id].y),
+        Size = UDim2.fromOffset(hpScale(w), hpScale(h)),
+        BackgroundColor3 = C.panel,
+        BackgroundTransparency = HUD.bgAlpha,
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ClipsDescendants = true,
+    }, root)
+    corner(b, hpScale(5))
+    stroke(b, C.accentDim, 0.6, 1)
+    return b
+end
+
+local function applyPos(id)
+    local el = HUD.elements[id]
+    if not el then return end
+    local p = HUD.state.pos[id]
+    el.btn.Position = UDim2.fromScale(p.x, p.y)
+end
+
+--=================================================================
+--  ДРАГ + КОНТЕКСТНОЕ МЕНЮ ЭЛЕМЕНТА
+--=================================================================
+local dragState
+local elemMenu
+
+local function closeElemMenu()
+    if elemMenu then
+        pcall(function() elemMenu:Destroy() end)
+        elemMenu = nil
+    end
+end
+
+local function openElemMenu(id, btn)
+    closeElemMenu()
+    local fl = HUD.state.flags[id]
+    if not fl then return end
+    local root = hudRoot()
+    local mouse = UIS:GetMouseLocation()
+    local w, h = hpScale(128), hpScale(78)
+    local m = new("Frame", {
+        Position = UDim2.fromOffset(mouse.X, mouse.Y),
+        Size = UDim2.fromOffset(w, h),
+        BackgroundColor3 = Color3.fromRGB(12, 17, 25),
+        BackgroundTransparency = 0.02,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        ZIndex = 30,
+    }, root)
+    corner(m, hpScale(4))
+    stroke(m, C.accentDim, 0.4, 1)
+
+    local rows = {
+        { key = "bg", label = "Фон" },
+        { key = "blur", label = "Блюр" },
+        { key = "theme", label = "От темы" },
+    }
+    for i, r in ipairs(rows) do
+        local rb = new("TextButton", {
+            Position = UDim2.fromOffset(hpScale(4), hpScale(4) + (i - 1) * hpScale(23)),
+            Size = UDim2.fromOffset(w - hpScale(8), hpScale(21)),
+            BackgroundTransparency = 1,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 31,
+        }, m)
+        txt(rb, r.label, {
+            Position = UDim2.fromOffset(hpScale(6), 0),
+            Size = UDim2.new(1, -hpScale(40), 1, 0),
+            TextSize = hpScale(11),
+            TextColor3 = C.label,
+            ZIndex = 32,
+        })
+        local tr = new("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -hpScale(6), 0.5, 0),
+            Size = UDim2.fromOffset(hpScale(20), hpScale(10)),
+            BackgroundColor3 = fl[r.key] and C.accent or C.track,
+            BorderSizePixel = 0,
+            ZIndex = 32,
+        }, rb)
+        corner(tr, hpScale(5))
+        rb.MouseButton1Click:Connect(function()
+            fl[r.key] = not fl[r.key]
+            tr.BackgroundColor3 = fl[r.key] and C.accent or C.track
+            applyStyle(id)
+            HUD.Persist()
+        end)
+    end
+    elemMenu = m
+end
+
+local function bindDrag(btn, id)
+    btn.InputBegan:Connect(function(input)
+        if not input then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local vp = HUD.viewport or Vector2.new(1280, 720)
+            local m = UIS:GetMouseLocation()
+            local p = HUD.state.pos[id]
+            dragState = { id = id, sx = m.X, sy = m.Y, bx = p.x, by = p.y, vp = vp, moved = false }
+            closeElemMenu()
+        elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+            openElemMenu(id, btn)
+        end
+    end)
+end
+
+do
+    local conn = UIS.InputChanged:Connect(function(input)
+        if not dragState then return end
+        if input and input.UserInputType and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        local m = UIS:GetMouseLocation()
+        local vp = dragState.vp
+        local dx = (m.X - dragState.sx) / math.max(1, vp.X)
+        local dy = (m.Y - dragState.sy) / math.max(1, vp.Y)
+        local p = HUD.state.pos[dragState.id]
+        p.x = hpClamp(dragState.bx + dx, 0, 1)
+        p.y = hpClamp(dragState.by + dy, 0, 1)
+        applyPos(dragState.id)
+        dragState.moved = true
+    end)
+    local conn2 = UIS.InputEnded:Connect(function(input)
+        if dragState and input and input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if dragState.moved then HUD.Persist() end
+            dragState = nil
+        end
+    end)
+    local conn3 = UIS.InputBegan:Connect(function(input)
+        if not input then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            closeElemMenu()
+        end
+    end)
+    table.insert(HUD.conns, conn)
+    table.insert(HUD.conns, conn2)
+    table.insert(HUD.conns, conn3)
+end
+
+--=================================================================
+--  ДАННЫЕ
+--=================================================================
+local function hudPing()
+    local now = os.clock()
+    if HUD.pingAt and now - HUD.pingAt < 0.5 then return HUD.ping or 0 end
+    HUD.pingAt = now
+    local ok, v = pcall(function()
+        local stats = game:GetService("Stats")
+        return stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and type(v) == "number" then
+        HUD.ping = v
+    end
+    return HUD.ping or 0
+end
+
+local function localHumanoid()
+    local ch = LP.Character
+    if not ch then return nil, nil end
+    return ch:FindFirstChildOfClass("Humanoid"), ch
+end
+
+local function targetAlive(plr)
+    if not plr or not plr.Parent then return false end
+    local ch = plr.Character
+    if not ch then return false end
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return ch:FindFirstChild("HumanoidRootPart") ~= nil
+end
+
+local function hudTarget()
+    if HUD.target and targetAlive(HUD.target) then return HUD.target end
+    local now = os.clock()
+    if FZ.aim.target and FZ.aim.targetAt and now - FZ.aim.targetAt < 1.0 and targetAlive(FZ.aim.target) then
+        return FZ.aim.target
+    end
+    if FZ.silent.target and FZ.silent.targetAt and now - FZ.silent.targetAt < 1.0 and targetAlive(FZ.silent.target) then
+        return FZ.silent.target
+    end
+    return nil
+end
+
+local function scanMedia()
+    local found = nil
+    pcall(function()
+        local svc = game:GetService("SoundService")
+        for _, s in ipairs(svc:GetDescendants()) do
+            local ok, playing = pcall(function() return s.Playing end)
+            local ok2, len = pcall(function() return s.TimeLength end)
+            if s:IsA("Sound") and ok and playing and ok2 and type(len) == "number" and len > 0 then
+                found = s
+                break
+            end
+        end
+    end)
+    if not found then
+        local ch = LP.Character
+        if ch then
+            pcall(function()
+                for _, s in ipairs(ch:GetDescendants()) do
+                    local ok, playing = pcall(function() return s.Playing end)
+                    if s:IsA("Sound") and ok and playing then
+                        found = s
+                        break
+                    end
+                end
+            end)
+        end
+    end
+    HUD._media = found
+end
+
+local function refreshStaff()
+    local out = {}
+    local creatorType = nil
+    pcall(function() creatorType = game.CreatorType end)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local rank = nil
+        if creatorType == Enum.CreatorType.User and plr.UserId == game.CreatorId then
+            rank = "OWNER"
+        elseif creatorType == Enum.CreatorType.Group then
+            local ok, r = pcall(function() return plr:GetRankInGroup(game.CreatorId) end)
+            if ok and type(r) == "number" and r >= 200 then
+                rank = (r >= 255) and "OWNER" or "MOD"
+            end
+        end
+        local custom = HUD.staffIds[plr.UserId]
+        if custom then rank = custom end
+        if rank then table.insert(out, { name = plr.Name, rank = rank }) end
+    end
+    HUD._staff = out
+end
+
+local function startScans()
+    task.spawn(function()
+        while HUD.alive do
+            pcall(scanMedia)
+            pcall(refreshStaff)
+            task.wait(4)
+        end
+    end)
+end
+
+--=================================================================
+--  ЭЛЕМЕНТЫ
+--=================================================================
+local builders = {}
+
+-- --- ватермарка ------------------------------------------------
+builders.watermark = function(def)
+    local b = makeRoot(def, 0, 24)
+    b.AutomaticSize = Enum.AutomaticSize.X
+    new("UIPadding", { PaddingLeft = UDim.new(0, hpScale(8)), PaddingRight = UDim.new(0, hpScale(9)) }, b)
+    new("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, hpScale(7)),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, b)
+    local bar = new("Frame", {
+        Size = UDim2.fromOffset(hpScale(3), hpScale(12)),
+        BackgroundColor3 = C.accent,
+        BorderSizePixel = 0,
+        LayoutOrder = 1,
+    }, b)
+    corner(bar, hpScale(1))
+    txt(b, "SPERMAHUB", {
+        Size = UDim2.new(0, 0, 1, 0),
+        AutomaticSize = Enum.AutomaticSize.X,
+        Font = F.bold,
+        TextSize = hpScale(12),
+        TextColor3 = C.text,
+        LayoutOrder = 2,
+    })
+    local stats = txt(b, "", {
+        Size = UDim2.new(0, 0, 1, 0),
+        AutomaticSize = Enum.AutomaticSize.X,
+        TextSize = hpScale(12),
+        TextColor3 = C.dim,
+        LayoutOrder = 3,
+    })
+    return b, function()
+        stats.Text = string.format("%s  |  %d FPS  |  %d ms  |  %s",
+            LP.Name, math.floor(HUD.fps + 0.5), math.floor(hudPing() + 0.5), os.date("%H:%M"))
+    end
+end
+
+-- --- arraylist -------------------------------------------------
+local AL_MODULES = {
+    { "aim", "Aimbot" },
+    { "silent", "Silent Aim" },
+    { "hitbox", "Hitbox" },
+    { "esp", "ESP" },
+    { "fly", "Fly" },
+    { "noclip", "Noclip" },
+    { "clickTp", "Click TP" },
+    { "walk", "Speed" },
+}
+
+builders.arraylist = function(def)
+    local b = makeRoot(def, 0, 0)
+    b.AutomaticSize = Enum.AutomaticSize.XY
+    new("UIListLayout", {
+        Padding = UDim.new(0, hpScale(2)),
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, b)
+
+    local rows = {}
+    local lastKey = ""
+
+    local function rebuild(names)
+        for _, r in ipairs(rows) do pcall(function() r.frame:Destroy() end) end
+        rows = {}
+        for i, name in ipairs(names) do
+            local w = hpScale(math.max(64, math.floor(#name * 6.6 + 28)))
+            local row = new("Frame", {
+                Size = UDim2.fromOffset(w, hpScale(16)),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                LayoutOrder = i,
+            }, b)
+            local fill = new("Frame", {
+                Size = UDim2.fromScale(1, 1),
+                BackgroundColor3 = C.accent,
+                BackgroundTransparency = HUD.bgAlpha + 0.16,
+                BorderSizePixel = 0,
+            }, row)
+            corner(fill, hpScale(2))
+            new("UIGradient", { Color = ColorSequence.new(C.accent, C.panel), Rotation = 0 }, fill)
+            new("Frame", {
+                AnchorPoint = Vector2.new(1, 0),
+                Position = UDim2.new(1, 0, 0, 0),
+                Size = UDim2.fromOffset(hpScale(2), hpScale(16)),
+                BackgroundColor3 = C.accent,
+                BorderSizePixel = 0,
+            }, row)
+            txt(row, name, {
+                Size = UDim2.new(1, -hpScale(8), 1, 0),
+                TextXAlignment = Enum.TextXAlignment.Right,
+                Font = F.bold,
+                TextSize = hpScale(12),
+                TextColor3 = C.text,
+            })
+            Tween:Create(fill, TweenInfo.new(0.18), { BackgroundTransparency = HUD.bgAlpha + 0.16 }):Play()
+            table.insert(rows, { frame = row, name = name })
+        end
+    end
+
+    return b, function()
+        local names = {}
+        for _, m in ipairs(AL_MODULES) do
+            local f = FZ[m[1]]
+            if f and f.on then table.insert(names, m[2]) end
+        end
+        table.sort(names, function(x, y) return #x > #y end)
+        local key = table.concat(names, "\n")
+        if key ~= lastKey then
+            lastKey = key
+            rebuild(names)
+        end
+        b.Visible = #names > 0
+    end
+end
+
+-- --- активный таргет -------------------------------------------
+builders.target = function(def)
+    local b = makeRoot(def, 202, 64)
+    b.Visible = false
+    new("Frame", {
+        Size = UDim2.fromOffset(hpScale(2), hpScale(64)),
+        BackgroundColor3 = C.accent,
+        BorderSizePixel = 0,
+    }, b)
+    local avatar = new("ImageLabel", {
+        Position = UDim2.fromOffset(hpScale(10), hpScale(11)),
+        Size = UDim2.fromOffset(hpScale(42), hpScale(42)),
+        BackgroundColor3 = C.input,
+        BorderSizePixel = 0,
+        Image = "",
+        ScaleType = Enum.ScaleType.Crop,
+    }, b)
+    corner(avatar, hpScale(4))
+
+    local nameLbl = txt(b, "", {
+        Position = UDim2.fromOffset(hpScale(60), hpScale(9)),
+        Size = UDim2.fromOffset(hpScale(132), hpScale(16)),
+        Font = F.bold,
+        TextSize = hpScale(13),
+        TextColor3 = C.text,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+    local hpBg = new("Frame", {
+        Position = UDim2.fromOffset(hpScale(60), hpScale(31)),
+        Size = UDim2.fromOffset(hpScale(132), hpScale(4)),
+        BackgroundColor3 = C.track,
+        BorderSizePixel = 0,
+    }, b)
+    corner(hpBg, hpScale(2))
+    local hpFill = new("Frame", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.fromRGB(76, 200, 120),
+        BorderSizePixel = 0,
+    }, hpBg)
+    corner(hpFill, hpScale(2))
+    local hpTxt = txt(b, "", {
+        Position = UDim2.fromOffset(hpScale(60), hpScale(39)),
+        Size = UDim2.fromOffset(hpScale(70), hpScale(14)),
+        TextSize = hpScale(11),
+        TextColor3 = C.dim,
+    })
+    local distLbl = txt(b, "", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -hpScale(10), 0, hpScale(39)),
+        Size = UDim2.fromOffset(hpScale(60), hpScale(14)),
+        TextSize = hpScale(11),
+        TextColor3 = C.dim,
+        TextXAlignment = Enum.TextXAlignment.Right,
+    })
+
+    local lastId = nil
+    return b, function()
+        local plr = hudTarget()
+        if not plr then
+            b.Visible = false
+            lastId = nil
+            return
+        end
+        b.Visible = true
+        local ch = plr.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not hum then
+            b.Visible = false
+            return
+        end
+        nameLbl.Text = plr.Name
+        if lastId ~= plr.UserId then
+            lastId = plr.UserId
+            avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(plr.UserId) .. "&w=150&h=150"
+        end
+        local frac = 0
+        if hum.MaxHealth > 0 then frac = hpClamp(hum.Health / hum.MaxHealth, 0, 1) end
+        hpFill.Size = UDim2.fromScale(frac, 1)
+        hpFill.BackgroundColor3 = hpColor(frac)
+        hpTxt.Text = string.format("%d HP", math.floor(hum.Health + 0.5))
+        local _, myCh = localHumanoid()
+        local myRoot = myCh and myCh:FindFirstChild("HumanoidRootPart")
+        local hisRoot = ch:FindFirstChild("HumanoidRootPart")
+        if myRoot and hisRoot then
+            distLbl.Text = string.format("%dm", math.floor((myRoot.Position - hisRoot.Position).Magnitude + 0.5))
+        else
+            distLbl.Text = ""
+        end
+    end
+end
+
+-- --- привязанные модули ----------------------------------------
+builders.keybinds = function(def)
+    local b = makeRoot(def, 150, 0)
+    b.AutomaticSize = Enum.AutomaticSize.Y
+    new("UIPadding", { PaddingLeft = UDim.new(0, hpScale(8)), PaddingRight = UDim.new(0, hpScale(8)), PaddingTop = UDim.new(0, hpScale(6)), PaddingBottom = UDim.new(0, hpScale(6)) }, b)
+    new("UIListLayout", { Padding = UDim.new(0, hpScale(3)), SortOrder = Enum.SortOrder.LayoutOrder }, b)
+
+    local rows = {}
+    local lastKey = ""
+    local function rebuild(list)
+        for _, r in ipairs(rows) do pcall(function() r.frame:Destroy() end) end
+        rows = {}
+        for i, kb in ipairs(list) do
+            local row = new("Frame", {
+                Size = UDim2.new(1, 0, 0, hpScale(16)),
+                BackgroundTransparency = 1,
+                LayoutOrder = i,
+            }, b)
+            local chip = new("Frame", {
+                Size = UDim2.fromOffset(hpScale(42), hpScale(14)),
+                BackgroundColor3 = C.accentDim,
+                BackgroundTransparency = 0.25,
+                BorderSizePixel = 0,
+            }, row)
+            corner(chip, hpScale(3))
+            txt(chip, kb.key, {
+                Size = UDim2.fromScale(1, 1),
+                Font = F.bold,
+                TextSize = hpScale(10),
+                TextColor3 = C.text,
+                TextXAlignment = Enum.TextXAlignment.Center,
+            })
+            txt(row, kb.label, {
+                Position = UDim2.fromOffset(hpScale(50), 0),
+                Size = UDim2.new(1, -hpScale(50), 1, 0),
+                TextSize = hpScale(12),
+                TextColor3 = C.label,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            table.insert(rows, { frame = row })
+        end
+    end
+
+    return b, function()
+        local key = ""
+        for _, kb in ipairs(HUD.keybinds) do key = key .. kb.key .. "=" .. kb.label .. ";" end
+        if key ~= lastKey then
+            lastKey = key
+            rebuild(HUD.keybinds)
+        end
+        b.Visible = #HUD.keybinds > 0
+    end
+end
+
+-- --- активные модераторы ---------------------------------------
+builders.staff = function(def)
+    local b = makeRoot(def, 170, 0)
+    b.AutomaticSize = Enum.AutomaticSize.Y
+    new("UIPadding", { PaddingLeft = UDim.new(0, hpScale(8)), PaddingRight = UDim.new(0, hpScale(8)), PaddingTop = UDim.new(0, hpScale(5)), PaddingBottom = UDim.new(0, hpScale(6)) }, b)
+    new("UIListLayout", { Padding = UDim.new(0, hpScale(3)), SortOrder = Enum.SortOrder.LayoutOrder }, b)
+
+    local rows = {}
+    local lastKey = ""
+    local function rebuild(list)
+        for _, r in ipairs(rows) do pcall(function() r.frame:Destroy() end) end
+        rows = {}
+        local head = txt(b, "STAFF", {
+            Size = UDim2.new(1, 0, 0, hpScale(14)),
+            Font = F.bold,
+            TextSize = hpScale(9),
+            TextColor3 = C.faint,
+            LayoutOrder = 1,
+        })
+        local _ = head
+        table.insert(rows, { frame = head })
+        for i, s in ipairs(list) do
+            local row = new("Frame", {
+                Size = UDim2.new(1, 0, 0, hpScale(15)),
+                BackgroundTransparency = 1,
+                LayoutOrder = i + 1,
+            }, b)
+            local dot = new("Frame", {
+                Position = UDim2.fromOffset(0, hpScale(5)),
+                Size = UDim2.fromOffset(hpScale(5), hpScale(5)),
+                BackgroundColor3 = Color3.fromRGB(238, 92, 92),
+                BorderSizePixel = 0,
+            }, row)
+            corner(dot, hpScale(3))
+            txt(row, s.name, {
+                Position = UDim2.fromOffset(hpScale(11), 0),
+                Size = UDim2.new(1, -hpScale(52), 1, 0),
+                TextSize = hpScale(12),
+                TextColor3 = C.label,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            txt(row, s.rank, {
+                AnchorPoint = Vector2.new(1, 0),
+                Position = UDim2.new(1, 0, 0, 0),
+                Size = UDim2.fromOffset(hpScale(44), hpScale(15)),
+                TextSize = hpScale(9),
+                TextColor3 = C.faint,
+                TextXAlignment = Enum.TextXAlignment.Right,
+            })
+            table.insert(rows, { frame = row })
+        end
+    end
+
+    return b, function()
+        local list = HUD._staff or {}
+        local key = ""
+        for _, s in ipairs(list) do key = key .. s.name .. s.rank .. ";" end
+        if key ~= lastKey then
+            lastKey = key
+            rebuild(list)
+        end
+        b.Visible = #list > 0
+    end
+end
+
+-- --- бафы ------------------------------------------------------
+builders.potions = function(def)
+    local b = makeRoot(def, 158, 0)
+    b.AutomaticSize = Enum.AutomaticSize.Y
+    new("UIPadding", { PaddingLeft = UDim.new(0, hpScale(8)), PaddingRight = UDim.new(0, hpScale(8)), PaddingTop = UDim.new(0, hpScale(5)), PaddingBottom = UDim.new(0, hpScale(6)) }, b)
+    new("UIListLayout", { Padding = UDim.new(0, hpScale(3)), SortOrder = Enum.SortOrder.LayoutOrder }, b)
+
+    local rows = {}
+    local lastKey = ""
+
+    local function collect()
+        local out = {}
+        if FZ.fly.on then table.insert(out, { name = "Fly", time = nil }) end
+        if FZ.noclip.on then table.insert(out, { name = "Noclip", time = nil }) end
+        if FZ.aim.on then table.insert(out, { name = "Aimbot", time = nil }) end
+        if FZ.silent.on then table.insert(out, { name = "Silent Aim", time = nil }) end
+        if FZ.esp.on then table.insert(out, { name = "ESP", time = nil }) end
+        if FZ.hitbox.on then table.insert(out, { name = "Hitbox x" .. tostring(FZ.hitbox.size), time = nil }) end
+        if FZ.walk.on then table.insert(out, { name = "Speed " .. tostring(math.floor(FZ.walk.speed + 0.5)), time = nil }) end
+        local now = os.clock()
+        for i = #HUD.buffs, 1, -1 do
+            local buff = HUD.buffs[i]
+            if buff.until_ and buff.until_ <= now then
+                table.remove(HUD.buffs, i)
+            else
+                table.insert(out, { name = buff.name, time = buff.until_ and (buff.until_ - now) or nil })
+            end
+        end
+        return out
+    end
+
+    local function rebuild(list)
+        for _, r in ipairs(rows) do pcall(function() r.frame:Destroy() end) end
+        rows = {}
+        for i, buff in ipairs(list) do
+            local row = new("Frame", {
+                Size = UDim2.new(1, 0, 0, hpScale(15)),
+                BackgroundTransparency = 1,
+                LayoutOrder = i,
+            }, b)
+            local dot = new("Frame", {
+                Position = UDim2.fromOffset(0, hpScale(4)),
+                Size = UDim2.fromOffset(hpScale(7), hpScale(7)),
+                BackgroundColor3 = C.accent,
+                BorderSizePixel = 0,
+            }, row)
+            corner(dot, hpScale(4))
+            txt(row, buff.name, {
+                Position = UDim2.fromOffset(hpScale(13), 0),
+                Size = UDim2.new(1, -hpScale(48), 1, 0),
+                TextSize = hpScale(12),
+                TextColor3 = C.label,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            if buff.time then
+                txt(row, hudTime(buff.time), {
+                    AnchorPoint = Vector2.new(1, 0),
+                    Position = UDim2.new(1, 0, 0, 0),
+                    Size = UDim2.fromOffset(hpScale(38), hpScale(15)),
+                    TextSize = hpScale(10),
+                    TextColor3 = C.dim,
+                    TextXAlignment = Enum.TextXAlignment.Right,
+                })
+            end
+            table.insert(rows, { frame = row })
+        end
+    end
+
+    return b, function()
+        local list = collect()
+        local key = ""
+        for _, buff in ipairs(list) do key = key .. buff.name .. ";" end
+        if key ~= lastKey then
+            lastKey = key
+            rebuild(list)
+        end
+        b.Visible = #list > 0
+    end
+end
+
+-- --- media player ----------------------------------------------
+builders.media = function(def)
+    local b = makeRoot(def, 200, 48)
+    b.Visible = false
+    local holder = new("Frame", {
+        Name = "HUD_box",
+        Position = UDim2.fromOffset(hpScale(8), hpScale(10)),
+        Size = UDim2.fromOffset(hpScale(28), hpScale(28)),
+        BackgroundColor3 = C.accentDim,
+        BackgroundTransparency = 0.2,
+        BorderSizePixel = 0,
+    }, b)
+    local eq = {}
+    for i = 1, 3 do
+        local bar = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, hpScale((i - 2) * 5), 0.84, 0),
+            Size = UDim2.fromOffset(hpScale(2), hpScale(8 + i * 3)),
+            BackgroundColor3 = C.text,
+            BorderSizePixel = 0,
+        }, holder)
+        eq[i] = bar
+    end
+    local title = txt(b, "", {
+        Position = UDim2.fromOffset(hpScale(44), hpScale(6)),
+        Size = UDim2.new(1, -hpScale(52), 0, hpScale(15)),
+        Font = F.bold,
+        TextSize = hpScale(11),
+        TextColor3 = C.text,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+    local sub = txt(b, "", {
+        Position = UDim2.fromOffset(hpScale(44), hpScale(21)),
+        Size = UDim2.new(1, -hpScale(52), 0, hpScale(13)),
+        TextSize = hpScale(9),
+        TextColor3 = C.dim,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+    local barBg = new("Frame", {
+        Position = UDim2.fromOffset(hpScale(44), hpScale(37)),
+        Size = UDim2.new(1, -hpScale(64), 0, hpScale(3)),
+        BackgroundColor3 = C.track,
+        BorderSizePixel = 0,
+    }, b)
+    corner(barBg, hpScale(2))
+    local barFill = new("Frame", {
+        Size = UDim2.fromScale(0, 1),
+        BackgroundColor3 = C.accent,
+        BorderSizePixel = 0,
+    }, barBg)
+    corner(barFill, hpScale(2))
+    local timeLbl = txt(b, "", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -hpScale(8), 0, hpScale(31)),
+        Size = UDim2.fromOffset(hpScale(48), hpScale(12)),
+        TextSize = hpScale(9),
+        TextColor3 = C.dim,
+        TextXAlignment = Enum.TextXAlignment.Right,
+    })
+
+    local phase = 0
+    return b, function(dt)
+        local s = HUD._media
+        local okPlaying = false
+        if s then
+            pcall(function() okPlaying = s.Playing end)
+        end
+        if not s or not okPlaying then
+            b.Visible = false
+            return
+        end
+        b.Visible = true
+        local ok, name = pcall(function() return s.Name end)
+        title.Text = ok and name or "Sound"
+        local okId, id = pcall(function() return tostring(s.SoundId) end)
+        sub.Text = okId and id:gsub("rbxassetid://", "") or ""
+        local okPos, pos = pcall(function() return s.TimePosition end)
+        local okLen, len = pcall(function() return s.TimeLength end)
+        if type(pos) == "number" and type(len) == "number" and len > 0 then
+            barFill.Size = UDim2.fromScale(hpClamp(pos / len, 0, 1), 1)
+            timeLbl.Text = hudTime(pos) .. "/" .. hudTime(len)
+        else
+            timeLbl.Text = ""
+        end
+        phase = phase + (dt or 0.05)
+        for i = 1, 3 do
+            local h = 6 + math.abs(math.sin(phase * 4 + i * 1.7)) * 12
+            eq[i].Size = UDim2.fromOffset(hpScale(2), hpScale(h))
+        end
+    end
+end
+
+-- --- тики / пинг -----------------------------------------------
+builders.ticks = function(def)
+    local b = makeRoot(def, 66, 18)
+    local lbl = txt(b, "TICK", {
+        Size = UDim2.fromScale(1, 1),
+        Font = F.bold,
+        TextSize = hpScale(11),
+        TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+    return b, function()
+        local tps = HUD.fps
+        lbl.Text = string.format("TICK %.2f", math.floor(tps * 100 + 0.5) / 100)
+        if tps >= 55 then
+            lbl.TextColor3 = Color3.fromRGB(120, 214, 140)
+        elseif tps >= 30 then
+            lbl.TextColor3 = Color3.fromRGB(232, 200, 96)
+        else
+            lbl.TextColor3 = Color3.fromRGB(236, 108, 104)
+        end
+    end
+end
+
+builders.ping = function(def)
+    local b = makeRoot(def, 70, 18)
+    local lbl = txt(b, "PING", {
+        Size = UDim2.fromScale(1, 1),
+        Font = F.bold,
+        TextSize = hpScale(11),
+        TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+    return b, function()
+        local ms = hudPing()
+        lbl.Text = string.format("PING %d", math.floor(ms + 0.5))
+        if ms <= 60 then
+            lbl.TextColor3 = Color3.fromRGB(120, 214, 140)
+        elseif ms <= 120 then
+            lbl.TextColor3 = Color3.fromRGB(232, 200, 96)
+        else
+            lbl.TextColor3 = Color3.fromRGB(236, 108, 104)
+        end
+    end
+end
+
+-- --- скорость / сейвы ------------------------------------------
+builders.speed = function(def)
+    local b = makeRoot(def, 76, 18)
+    local lbl = txt(b, "", {
+        Size = UDim2.fromScale(1, 1),
+        Font = F.bold,
+        TextSize = hpScale(11),
+        TextColor3 = C.accent,
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+    return b, function()
+        local hum = localHumanoid()
+        local spd = hum and hum.WalkSpeed or 16
+        lbl.Text = string.format("SPD %.1f", spd)
+        lbl.TextColor3 = (spd > 16.5) and C.accent or C.dim
+    end
+end
+
+builders.totems = function(def)
+    local b = makeRoot(def, 84, 18)
+    local lbl = txt(b, "SAVES 0", {
+        Size = UDim2.fromScale(1, 1),
+        Font = F.bold,
+        TextSize = hpScale(11),
+        TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+    return b, function()
+        local hum = localHumanoid()
+        if not hum or hum.MaxHealth <= 0 then
+            b.Visible = false
+            return
+        end
+        b.Visible = true
+        local frac = hum.Health / hum.MaxHealth
+        if frac <= 0.25 then
+            HUD.lowFlag = true
+        elseif HUD.lowFlag and frac >= 0.6 then
+            HUD.lowFlag = false
+            HUD.saves = HUD.saves + 1
+        end
+        lbl.Text = string.format("SAVES %d", HUD.saves)
+        lbl.TextColor3 = HUD.lowFlag and Color3.fromRGB(236, 108, 104) or C.text
+    end
+end
+
+-- --- кулдауны --------------------------------------------------
+builders.cooldowns = function(def)
+    local b = makeRoot(def, 176, 0)
+    b.AutomaticSize = Enum.AutomaticSize.Y
+    new("UIPadding", { PaddingLeft = UDim.new(0, hpScale(8)), PaddingRight = UDim.new(0, hpScale(8)), PaddingTop = UDim.new(0, hpScale(5)), PaddingBottom = UDim.new(0, hpScale(6)) }, b)
+    new("UIListLayout", { Padding = UDim.new(0, hpScale(4)), SortOrder = Enum.SortOrder.LayoutOrder }, b)
+
+    local rows = {}
+    local lastKey = ""
+
+    local function rebuild(list)
+        for _, r in ipairs(rows) do pcall(function() r.frame:Destroy() end) end
+        rows = {}
+        for i, cd in ipairs(list) do
+            local row = new("Frame", {
+                Size = UDim2.new(1, 0, 0, hpScale(19)),
+                BackgroundTransparency = 1,
+                LayoutOrder = i,
+            }, b)
+            txt(row, cd.name, {
+                Size = UDim2.new(1, -hpScale(36), 0, hpScale(13)),
+                TextSize = hpScale(11),
+                TextColor3 = C.label,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            local left = txt(row, "", {
+                AnchorPoint = Vector2.new(1, 0),
+                Position = UDim2.new(1, 0, 0, 0),
+                Size = UDim2.fromOffset(hpScale(34), hpScale(13)),
+                TextSize = hpScale(10),
+                TextColor3 = C.dim,
+                TextXAlignment = Enum.TextXAlignment.Right,
+            })
+            local barBg = new("Frame", {
+                Position = UDim2.fromOffset(0, hpScale(14)),
+                Size = UDim2.new(1, 0, 0, hpScale(3)),
+                BackgroundColor3 = C.track,
+                BorderSizePixel = 0,
+            }, row)
+            corner(barBg, hpScale(2))
+            local barFill = new("Frame", {
+                Size = UDim2.fromScale(1, 1),
+                BackgroundColor3 = C.accent,
+                BorderSizePixel = 0,
+            }, barBg)
+            corner(barFill, hpScale(2))
+            table.insert(rows, { frame = row, name = cd.name, fill = barFill, left = left, total = cd.total, until_ = cd.until_ })
+        end
+    end
+
+    return b, function()
+        local now = os.clock()
+        local list = {}
+        for i = #HUD.cooldowns, 1, -1 do
+            if HUD.cooldowns[i].until_ <= now then table.remove(HUD.cooldowns, i) end
+        end
+        for _, cd in ipairs(HUD.cooldowns) do
+            table.insert(list, cd)
+        end
+        local key = ""
+        for _, cd in ipairs(list) do key = key .. cd.name .. ";" end
+        if key ~= lastKey then
+            lastKey = key
+            rebuild(list)
+        end
+        b.Visible = #list > 0
+        for _, row in ipairs(rows) do
+            local left = row.until_ - now
+            if left < 0 then left = 0 end
+            row.left.Text = string.format("%.1f", left)
+            row.fill.Size = UDim2.fromScale(hpClamp(left / math.max(0.01, row.total), 0, 1), 1)
+        end
+    end
+end
+
+-- --- нотификации -----------------------------------------------
+builders.notifications = function(def)
+    local b = makeRoot(def, 252, 0)
+    b.AutomaticSize = Enum.AutomaticSize.Y
+    new("UIListLayout", { Padding = UDim.new(0, hpScale(4)), SortOrder = Enum.SortOrder.LayoutOrder }, b)
+    HUD._toastHolder = b
+    HUD._toastOrder = 0
+    return b, function()
+        b.Visible = true
+    end
+end
+
+function HUD.Push(text)
+    local holder = HUD._toastHolder
+    if not holder or not holder.Parent then return end
+    text = tostring(text or "")
+    HUD._toastOrder = (HUD._toastOrder or 0) + 1
+    local toast = new("Frame", {
+        Size = UDim2.new(1, 0, 0, hpScale(30)),
+        BackgroundColor3 = Color3.fromRGB(12, 17, 25),
+        BackgroundTransparency = HUD.bgAlpha,
+        BorderSizePixel = 0,
+        LayoutOrder = HUD._toastOrder,
+    }, holder)
+    corner(toast, hpScale(4))
+    stroke(toast, C.accentDim, 0.5, 1)
+    new("Frame", {
+        Size = UDim2.fromOffset(hpScale(2), hpScale(30)),
+        BackgroundColor3 = C.accent,
+        BorderSizePixel = 0,
+    }, toast)
+    txt(toast, "SPERMAHUB", {
+        Position = UDim2.fromOffset(hpScale(10), hpScale(3)),
+        Size = UDim2.new(1, -hpScale(18), 0, hpScale(11)),
+        Font = F.bold,
+        TextSize = hpScale(9),
+        TextColor3 = C.faint,
+    })
+    txt(toast, text, {
+        Position = UDim2.fromOffset(hpScale(10), hpScale(14)),
+        Size = UDim2.new(1, -hpScale(18), 0, hpScale(13)),
+        TextSize = hpScale(11),
+        TextColor3 = C.text,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+    local count = #holder:GetChildren()
+    if count > 12 then
+        for _, ch in ipairs(holder:GetChildren()) do
+            if ch:IsA("Frame") then pcall(function() ch:Destroy() end) break end
+        end
+    end
+    task.delay(3.2, function()
+        if toast and toast.Parent then
+            local ti = TweenInfo.new(0.25)
+            Tween:Create(toast, ti, { BackgroundTransparency = 1 }):Play()
+            task.delay(0.3, function()
+                if toast and toast.Parent then pcall(function() toast:Destroy() end) end
+            end)
+        end
+    end)
+end
+
+-- --- хотбар ----------------------------------------------------
+builders.hotbar = function(def)
+    local b = makeRoot(def, 9 * 25 + 8, 32)
+    local slots = {}
+    for i = 1, 9 do
+        local slot = new("Frame", {
+            Position = UDim2.fromOffset(hpScale(4) + (i - 1) * hpScale(25), hpScale(3)),
+            Size = UDim2.fromOffset(hpScale(22), hpScale(22)),
+            BackgroundColor3 = C.input,
+            BackgroundTransparency = 0.25,
+            BorderSizePixel = 0,
+        }, b)
+        corner(slot, hpScale(3))
+        local st = stroke(slot, C.accentDim, 1, 1)
+        local icon = new("ImageLabel", {
+            Position = UDim2.fromOffset(hpScale(2), hpScale(2)),
+            Size = UDim2.fromOffset(hpScale(18), hpScale(18)),
+            BackgroundTransparency = 1,
+            Image = "",
+            ScaleType = Enum.ScaleType.Fit,
+        }, slot)
+        local num = txt(slot, tostring(i), {
+            Position = UDim2.fromOffset(hpScale(2), -hpScale(2)),
+            Size = UDim2.fromOffset(hpScale(10), hpScale(10)),
+            Font = F.bold,
+            TextSize = hpScale(8),
+            TextColor3 = C.faint,
+        })
+        slots[i] = { frame = slot, stroke = st, icon = icon, num = num, tool = nil }
+    end
+
+    local function tools()
+        local out = {}
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") then table.insert(out, t) end
+            end
+        end
+        local ch = LP.Character
+        if ch then
+            for _, t in ipairs(ch:GetChildren()) do
+                if t:IsA("Tool") then table.insert(out, t) end
+            end
+        end
+        return out
+    end
+
+    local function refresh()
+        if not HUD.elements.hotbar then return end
+        local list = tools()
+        local equipped = nil
+        local ch = LP.Character
+        if ch then equipped = ch:FindFirstChildOfClass("Tool") end
+        for i = 1, 9 do
+            local s = slots[i]
+            local tool = list[i]
+            s.tool = tool
+            if tool then
+                s.icon.Visible = true
+                local ok, tex = pcall(function() return tool.TextureId end)
+                if ok and type(tex) == "string" and tex ~= "" then
+                    s.icon.Image = tex
+                    s.icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
+                else
+                    s.icon.Image = ""
+                end
+                s.stroke.Color = (tool == equipped) and C.accent or C.accentDim
+                s.stroke.Transparency = (tool == equipped) and 0 or 1
+            else
+                s.icon.Visible = false
+                s.stroke.Transparency = 1
+            end
+        end
+    end
+    HUD._hotbarRefresh = refresh
+
+    local bpConn
+    local function bindBackpack()
+        if bpConn then pcall(function() bpConn:Disconnect() end) end
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then
+            bpConn = bp.ChildAdded:Connect(refresh)
+            table.insert(HUD.conns, bpConn)
+            local removed = bp.ChildRemoved:Connect(refresh)
+            table.insert(HUD.conns, removed)
+        end
+    end
+
+    bindBackpack()
+    setBackpackHidden(true)
+
+    local keyConn = UIS.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if not HUD.elements.hotbar then return end
+        local ch = LP.Character
+        if not ch then return end
+        local code = input and input.KeyCode
+        if not code then return end
+        local idx = nil
+        if code == Enum.KeyCode.One then idx = 1
+        elseif code == Enum.KeyCode.Two then idx = 2
+        elseif code == Enum.KeyCode.Three then idx = 3
+        elseif code == Enum.KeyCode.Four then idx = 4
+        elseif code == Enum.KeyCode.Five then idx = 5
+        elseif code == Enum.KeyCode.Six then idx = 6
+        elseif code == Enum.KeyCode.Seven then idx = 7
+        elseif code == Enum.KeyCode.Eight then idx = 8
+        elseif code == Enum.KeyCode.Nine then idx = 9
+        end
+        if not idx then return end
+        local slot = slots[idx]
+        if not slot or not slot.tool then return end
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if hum and slot.tool.Parent then
+            pcall(function() hum:EquipTool(slot.tool) end)
+            task.delay(0.1, refresh)
+        end
+    end)
+    table.insert(HUD.conns, keyConn)
+
+    local chConn = LP.CharacterAdded:Connect(function()
+        task.delay(0.4, bindBackpack)
+        task.delay(0.5, refresh)
+    end)
+    table.insert(HUD.conns, chConn)
+
+    refresh()
+    return b, function()
+        refresh()
+    end
+end
+
+-- --- низкое ХП -------------------------------------------------
+builders.lowhp = function(def)
+    local root = hudRoot()
+    local b = new("Frame", {
+        Name = "HUD_lowhp",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.fromRGB(150, 24, 24),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Active = false,
+    }, root)
+    local tint = b
+    local edges = {}
+    local function edge(pos, size, anchor)
+        local f = new("Frame", {
+            AnchorPoint = anchor or Vector2.new(0, 0),
+            Position = pos,
+            Size = size,
+            BackgroundColor3 = Color3.fromRGB(214, 52, 52),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Active = false,
+        }, b)
+        table.insert(edges, f)
+        return f
+    end
+    edge(UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, hpScale(3)))
+    edge(UDim2.new(0, 0, 1, 0), UDim2.new(1, 0, 0, hpScale(3)), Vector2.new(0, 1))
+    edge(UDim2.fromOffset(0, 0), UDim2.new(0, hpScale(3), 1, 0))
+    edge(UDim2.new(1, 0, 0, 0), UDim2.new(0, hpScale(3), 1, 0), Vector2.new(1, 0))
+
+    local phase = 0
+    return b, function(dt)
+        local hum = localHumanoid()
+        local active = false
+        if hum and hum.MaxHealth > 0 and hum.Health > 0 then
+            active = (hum.Health / hum.MaxHealth) * 100 <= HUD.lowHp
+        end
+        if not active then
+            b.Visible = false
+            return
+        end
+        b.Visible = true
+        phase = phase + (dt or 0.05)
+        local pulse = 0.5 + 0.5 * math.sin(phase * 6)
+        tint.BackgroundTransparency = 0.95 - pulse * 0.03
+        for _, f in ipairs(edges) do
+            f.BackgroundTransparency = 0.62 - pulse * 0.25
+        end
+    end
+end
+
+--=================================================================
+--  СБОРКА / РАЗБОРКА
+--=================================================================
+local applyStyleAll
+local bindGlobalHud
+
+function HUD.BuildOne(def)
+    if HUD.elements[def.id] then return end
+    local builder = builders[def.id]
+    if not builder then return end
+    local ok, b, update = pcall(builder, def)
+    if not ok or not b then
+        warn("[SpermaHubHUD] build '" .. def.id .. "': " .. tostring(b))
+        return
+    end
+    HUD.elements[def.id] = { def = def, btn = b, update = update }
+    if def.id ~= "lowhp" then bindDrag(b, def.id) end
+    applyStyle(def.id)
+end
+
+function HUD.DestroyElement(id)
+    local el = HUD.elements[id]
+    if not el then return end
+    HUD.elements[id] = nil
+    pcall(function() el.btn:Destroy() end)
+    if id == "notifications" then HUD._toastHolder = nil end
+    if id == "hotbar" then
+        HUD._hotbarRefresh = nil
+        setBackpackHidden(false)
+    end
+end
+
+function HUD.Build()
+    hudRoot()
+    HUD.viewport = nil
+    pcall(function() HUD.viewport = workspace.CurrentCamera.ViewportSize end)
+    for _, def in ipairs(HUD_DEFS) do
+        if HUD.state.on[def.id] then
+            HUD.BuildOne(def)
+        end
+    end
+    applyStyleAll()
+end
+
+function HUD.SetEnabled(id, on)
+    if not DEF_BY_ID[id] then return end
+    HUD.state.on[id] = on and true or false
+    if on then
+        HUD.BuildOne(DEF_BY_ID[id])
+    else
+        HUD.DestroyElement(id)
+    end
+    HUD.Persist()
+end
+
+function HUD.IsEnabled(id)
+    return HUD.state.on[id] == true
+end
+
+function HUD.List()
+    return HUD_DEFS
+end
+
+applyStyleAll = function()
+    for id in pairs(HUD.elements) do
+        applyStyle(id)
+    end
+end
+
+function HUD.SetScale(v)
+    v = hpClamp(tonumber(v) or 1, 0.7, 1.4)
+    if math.abs(v - HUD.scale) < 0.001 then return end
+    HUD.scale = v
+    HUD.Rebuild()
+    HUD.Persist()
+end
+
+function HUD.GetScale()
+    return HUD.scale
+end
+
+function HUD.SetLowHp(v)
+    HUD.lowHp = hpClamp(tonumber(v) or 30, 1, 100)
+    HUD.Persist()
+end
+
+function HUD.GetLowHp()
+    return HUD.lowHp
+end
+
+function HUD.SetBgAlpha(v)
+    HUD.bgAlpha = hpClamp(tonumber(v) or 0.3, 0.05, 0.9)
+    applyStyleAll()
+    HUD.Persist()
+end
+
+function HUD.GetBgAlpha()
+    return HUD.bgAlpha
+end
+
+function HUD.SetHideInMenu(v)
+    HUD.hideInMenu = v and true or false
+    if HUD.root then
+        HUD.root.Visible = not (HUD.hideInMenu and HUD.openedMenu)
+    end
+    HUD.Persist()
+end
+
+function HUD.GetHideInMenu()
+    return HUD.hideInMenu
+end
+
+function HUD.SetMenuOpen(state)
+    HUD.openedMenu = state and true or false
+    if HUD.root then
+        HUD.root.Visible = not (HUD.hideInMenu and HUD.openedMenu)
+    end
+end
+
+function HUD.ResetPositions()
+    for _, d in ipairs(HUD_DEFS) do
+        HUD.state.pos[d.id] = { x = d.x, y = d.y }
+        applyPos(d.id)
+    end
+    HUD.Persist()
+end
+
+function HUD.AddBuff(name, sec)
+    table.insert(HUD.buffs, { name = tostring(name), until_ = os.clock() + (tonumber(sec) or 10) })
+end
+
+function HUD.AddCooldown(name, sec)
+    table.insert(HUD.cooldowns, {
+        name = tostring(name),
+        total = math.max(0.1, tonumber(sec) or 1),
+        until_ = os.clock() + math.max(0.1, tonumber(sec) or 1),
+    })
+end
+
+function HUD.AddKeybind(key, label)
+    table.insert(HUD.keybinds, 1, { key = tostring(key), label = tostring(label) })
+end
+
+function HUD.SetStaff(userId, rank)
+    HUD.staffIds[userId] = rank or "MOD"
+end
+
+function HUD.SetTarget(plr)
+    HUD.target = plr
+end
+
+function HUD.Tick(dt)
+    for id, el in pairs(HUD.elements) do
+        if el.update then
+            local ok, err = pcall(el.update, dt)
+            if not ok then
+                el.err = err
+            end
+        end
+    end
+end
+
+function HUD.DestroyVisual()
+    for _, c in ipairs(HUD.conns) do pcall(function() c:Disconnect() end) end
+    HUD.conns = {}
+    closeElemMenu()
+    dragState = nil
+    for id in pairs(HUD.elements) do HUD.elements[id] = nil end
+    HUD._toastHolder = nil
+    HUD._hotbarRefresh = nil
+    if HUD.gui then pcall(function() HUD.gui:Destroy() end) end
+    HUD.gui = nil
+    HUD.root = nil
+    setBackpackHidden(false)
+end
+
+function HUD.Rebuild()
+    HUD.DestroyVisual()
+    HUD.Build()
+    bindGlobalHud()
+end
+
+function HUD.Destroy()
+    HUD.alive = false
+    HUD.DestroyVisual()
+    if HUD.renderConn then
+        pcall(function() HUD.renderConn:Disconnect() end)
+        HUD.renderConn = nil
+    end
+    if getgenv and getgenv().SpermaHubHUD == HUD then
+        getgenv().SpermaHubHUD = nil
+    end
+end
+
+--=================================================================
+--  ГЛОБАЛЬНЫЕ КОННЕКТЫ (ресайз и т.п.)
+--=================================================================
+bindGlobalHud = function()
+    local cam = workspace.CurrentCamera
+    if cam and cam.GetPropertyChangedSignal then
+        local c = cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            HUD.viewport = cam.ViewportSize
+        end)
+        table.insert(HUD.conns, c)
+    end
+end
+
+--=================================================================
+--  СТАРТ
+--=================================================================
+hudLoad()
+
+HUD.viewport = nil
+pcall(function() HUD.viewport = workspace.CurrentCamera.ViewportSize end)
+HUD.Build()
+bindGlobalHud()
+
+do
+    local acc = 0
+    local sample = 0
+    local frames = 0
+    HUD.renderConn = RunService.RenderStepped:Connect(function(dt)
+        frames = frames + 1
+        sample = sample + (dt or 0)
+        if sample >= 0.5 then
+            HUD.fps = frames / sample
+            frames = 0
+            sample = 0
+        end
+        acc = acc + (dt or 0)
+        if acc < 0.05 then return end
+        local step = acc
+        acc = 0
+        HUD.Tick(step)
+    end)
+end
+
+startScans()
+
+getgenv().SpermaHubHUD = HUD
+HUD.viewport = HUD.viewport or Vector2.new(1280, 720)
+
+--=================================================================
+--  СТРАНИЦА НАСТРОЕК HUD
+--=================================================================
+local function buildInterface(p)
+    local hud = p:card("HUD")
+    hud:dropdown("Стиль HUD", { "Quick" }, "Quick", false)
+    hud:slider("Размер HUD", 70, 140, math.floor(HUD.GetScale() * 100 + 0.5), 5, function(v)
+        HUD.SetScale(v / 100)
+    end)
+    hud:slider("Прозрачность фона", 5, 90, math.floor(HUD.GetBgAlpha() * 100 + 0.5), 1, function(v)
+        HUD.SetBgAlpha(v / 100)
+    end)
+    hud:slider("Порог ХП", 1, 100, math.floor(HUD.GetLowHp() + 0.5), 1, function(v)
+        HUD.SetLowHp(v)
+    end)
+    hud:toggle("Скрывать в меню", HUD.GetHideInMenu(), false, function(on)
+        HUD.SetHideInMenu(on)
+    end)
+    hud:button("Сбросить позиции", function()
+        HUD.ResetPositions()
+        notify("HUD: позиции сброшены")
+    end)
+    hud:text("Правый клик по элементу — фон / блюр / от темы. Тяни мышкой, чтобы двигать.")
+
+    local elems = p:card("Элементы", "right")
+    for _, d in ipairs(HUD.List()) do
+        elems:toggle(d.label, HUD.IsEnabled(d.id), false, function(on)
+            HUD.SetEnabled(d.id, on)
+        end)
+    end
+end
+
+--=================================================================
 --  КОНТЕНТ СТРАНИЦ (демо по референсу)
 --=================================================================
 local function buildWorld(p)
@@ -1982,6 +3666,7 @@ local PAGES = {
     {group = "Visuals",       name = "Bomb",      icon = "bomb"},
     {group = "Visuals",       name = "World",     icon = "world"},
     {group = "Visuals",       name = "View",      icon = "view"},
+    {group = "Visuals",       name = "Interface", icon = "eye"},
     {group = "Miscellaneous", name = "Main",      icon = "main"},
     {group = "Miscellaneous", name = "Inventory", icon = "inventory"},
     {group = "Miscellaneous", name = "Scripts",   icon = "scripts"},
@@ -1994,6 +3679,7 @@ local BUILDERS = {
     Players = buildPlayers,
     Weapon = buildWeapon,
     Main = buildMain,
+    Interface = buildInterface,
 }
 
 local pageByName = {}
@@ -2162,6 +3848,7 @@ local function setOpen(state)
     opened = state
     gui.Enabled = state
     Tween:Create(blur, TweenInfo.new(0.2), {Size = state and 14 or 0}):Play()
+    if HUD and HUD.SetMenuOpen then pcall(HUD.SetMenuOpen, state) end
 end
 
 local uiConn = UIS.InputBegan:Connect(function(input, gameProcessed)
@@ -2188,6 +3875,7 @@ unload = function()
     pcall(function() if camWatch then camWatch:Disconnect() end end)
     pcall(function() if camConn then camConn:Disconnect() end end)
     pcall(teardownFeatures)
+    pcall(function() if HUD then HUD.Destroy() end end)
     pcall(function() gui:Destroy() end)
     pcall(function() blur:Destroy() end)
     if getgenv then
@@ -2213,6 +3901,7 @@ local api = {
     SetIcon = setIcon,
     RefreshIcons = refreshIcons,
     Features = FZ,
+    HUD = HUD,
     SetAimbot = setAimbot,
     SetSilentAim = setSilentAim,
     SetHitbox = setHitbox,
