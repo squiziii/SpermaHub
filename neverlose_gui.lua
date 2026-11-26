@@ -163,6 +163,25 @@ local ICONS = {
 
 local iconSlots = {}
 
+-------------------------------------------------------------------
+--  АТЛАС ИКОНОК (запечённый MSDF -> tools/bake_msdf_atlas.py)
+-------------------------------------------------------------------
+--  Сам MSDF-атлас Roblox показать не может: в RGB лежит карта расстояний до
+--  края, а не цвет, поэтому на экране была бы радужная каша. tools/bake_msdf_atlas.py
+--  декодирует поле, печёт обычный лист icons_atlas.png с альфой и печатает
+--  прямоугольники (icons_atlas_rects.lua). Лист грузится в Roblox как картинка,
+--  id вставляется сюда:
+--     local ICON_ATLAS = "rbxassetid://1234567890"
+--     local ATLAS_RECTS = { weapon = { x = 6, y = 6, w = 88, h = 84, sheet = 1024 }, ... }
+--
+--  На лету:
+--     getgenv().SpermaHubUI.SetAtlas("rbxassetid://1234567890", rects)
+--     getgenv().SpermaHubUI.SetAtlas(nil)   -- назад к глифам
+--  Пока атлас не подключён, рисуются прежние глифы/примитивы.
+--=================================================================
+local ICON_ATLAS = ""    -- "rbxassetid://..." или "" (глифы)
+local ATLAS_RECTS = {}   -- [имя иконки] = { x, y, w, h, sheet }
+
 -- строка "rbxassetid://..." из def.image (принимает и голый числовой id)
 local function iconSrc(def)
     local img = def.image
@@ -178,6 +197,34 @@ local function iconSrc(def)
     return nil
 end
 
+-- прямоугольник иконки в атласе (nil, если атлас не подключён)
+local function atlasRect(name)
+    if ICON_ATLAS == "" then return nil end
+    return ATLAS_RECTS[name]
+end
+
+-- вернуть ImageLabel к целой картинке (без среза атласа)
+local function resetAtlas(slot)
+    slot.image.Image = ""
+    slot.image.ImageRectOffset = Vector2.new(0, 0)
+    slot.image.ImageRectSize = Vector2.new(0, 0)
+    slot.image.ScaleType = Enum.ScaleType.Fit
+    slot.image.Size = UDim2.fromOffset(slot.side, slot.side)
+end
+
+-- натянуть иконку из атласа: срез + масштаб по пропорциям глифа
+local function applyAtlas(slot, rect)
+    local w = math.max(rect.w or 1, 1)
+    local h = math.max(rect.h or 1, 1)
+    slot.image.ImageRectOffset = Vector2.new(rect.x or 0, rect.y or 0)
+    slot.image.ImageRectSize = Vector2.new(w, h)
+    slot.image.ScaleType = Enum.ScaleType.Stretch
+    local k = math.min(slot.side / w, slot.side / h)
+    slot.image.Size = UDim2.fromOffset(
+        math.max(2, math.floor(w * k + 0.5)),
+        math.max(2, math.floor(h * k + 0.5)))
+end
+
 local function drawIcon(slot)
     local def = ICONS[slot.name] or {}
     if slot.drawn then
@@ -188,8 +235,13 @@ local function drawIcon(slot)
     end
 
     local src = iconSrc(def)
+    local rect = (not src) and atlasRect(slot.name) or nil
+    if rect then src = ICON_ATLAS end
+    if not rect then resetAtlas(slot) end
+
     if src then
         slot.image.Image = src
+        if rect then applyAtlas(slot, rect) end
         slot.image.Visible = true
         slot.label.Visible = false
     elseif def.glyph and def.glyph ~= "" then
@@ -240,7 +292,7 @@ local function iconSlot(parent, name, cfg)
         ZIndex = cfg.zIndex or 1,
     }, holder)
 
-    local slot = { name = name, holder = holder, label = label, image = image, builtin = cfg.builtin }
+    local slot = { name = name, holder = holder, label = label, image = image, side = side, builtin = cfg.builtin }
     table.insert(iconSlots, slot)
     drawIcon(slot)
     return slot
@@ -263,6 +315,19 @@ local function setIcon(name, def)
     for _, slot in ipairs(iconSlots) do
         if slot.name == name then drawIcon(slot) end
     end
+end
+
+-- подключить/сменить атлас: asset id + (необязательно) таблица прямоугольников.
+-- setAtlas(nil) возвращает прежние глифы.
+local function setAtlas(asset, rects)
+    local src = iconSrc({ image = asset })
+    ICON_ATLAS = src or ""
+    if type(rects) == "table" then
+        for k in pairs(ATLAS_RECTS) do ATLAS_RECTS[k] = nil end
+        for k, v in pairs(rects) do ATLAS_RECTS[k] = v end
+    end
+    refreshIcons()
+    return ICON_ATLAS
 end
 
 -- лупа из примитивов: замена глифа ⌕
@@ -3900,6 +3965,8 @@ local api = {
     Icons = ICONS,
     SetIcon = setIcon,
     RefreshIcons = refreshIcons,
+    Atlas = ATLAS_RECTS,
+    SetAtlas = setAtlas,
     Features = FZ,
     HUD = HUD,
     SetAimbot = setAimbot,
