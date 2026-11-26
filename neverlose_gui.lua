@@ -830,6 +830,9 @@ local function normSetter(fn)
     end
 end
 
+-- реестр всех контролов по ключу конфига: нужен, чтобы накатить сохранённые значения
+local CONTROLS = {}
+
 local function buildToggle(parent, label, default, hasEye, key, onChange)
     local row = new("Frame", {
         Size = UDim2.new(1, 0, 0, 26),
@@ -927,10 +930,70 @@ local function buildToggle(parent, label, default, hasEye, key, onChange)
         end)
     end
 
-    return {
+    local ctrl = {
         frame = row,
         set = normSetter(set),
         get = function() return state end,
+    }
+    if key then CONTROLS[key] = ctrl end
+    return ctrl
+end
+
+local function buildInput(parent, label, default, onChange)
+    local row = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 26),
+        BackgroundTransparency = 1,
+    }, parent)
+
+    txt(row, label, {
+        Size = UDim2.new(1, -134, 1, 0),
+        TextSize = 11,
+        TextColor3 = C.dim,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+
+    local box = new("TextBox", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.fromOffset(124, 20),
+        BackgroundColor3 = C.input,
+        BackgroundTransparency = 0.1,
+        BorderSizePixel = 0,
+        Text = "",
+        PlaceholderText = tostring(default or ""),
+        Font = F.reg,
+        TextSize = 11,
+        TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false,
+    }, row)
+    corner(box, 3)
+    stroke(box, C.line, 0.2)
+    new("UIPadding", {
+        PaddingLeft = UDim.new(0, 7),
+        PaddingRight = UDim.new(0, 7),
+    }, box)
+
+    local value = tostring(default or "")
+
+    local function set(v, silent)
+        value = tostring(v or "")
+        box.Text = value
+        if not silent and onChange then
+            task.spawn(function()
+                local ok, err = pcall(onChange, value)
+                if not ok then warn("[SpermaHubUI] input callback: " .. tostring(err)) end
+            end)
+        end
+    end
+
+    box.FocusLost:Connect(function() set(box.Text) end)
+    set(value, true)
+
+    return {
+        frame = row,
+        set = normSetter(set),
+        get = function() return value end,
     }
 end
 
@@ -1061,11 +1124,13 @@ local function buildSlider(parent, label, minV, maxV, default, step, key, onChan
     if key then CFG[key] = value end
     paint()
 
-    return {
+    local ctrl = {
         frame = row,
         set = normSetter(set),
         get = function() return value end,
     }
+    if key then CONTROLS[key] = ctrl end
+    return ctrl
 end
 
 local function buildDropdown(parent, label, options, default, hasEye, key, onChange)
@@ -1152,11 +1217,13 @@ local function buildDropdown(parent, label, options, default, hasEye, key, onCha
 
     if key then CFG[key] = value end
 
-    return {
+    local ctrl = {
         frame = row,
         set = normSetter(set),
         get = function() return value end,
     }
+    if key then CONTROLS[key] = ctrl end
+    return ctrl
 end
 
 local function buildLabel(parent, text)
@@ -1253,6 +1320,12 @@ local function addCard(column, title, pageName)
 
     function card:dropdown(label, options, default, hasEye, cb)
         local c = buildDropdown(frame, label, options, default, hasEye, keyFor(label), cb)
+        c.frame.LayoutOrder = ord()
+        return c
+    end
+
+    function card:input(label, default, cb)
+        local c = buildInput(frame, label, default, cb)
         c.frame.LayoutOrder = ord()
         return c
     end
@@ -4182,6 +4255,153 @@ local function buildMain(p)
 end
 
 --=================================================================
+--  КОНФИГИ (сохранение в файлы, несколько штук)
+--=================================================================
+local CONFIG_DIR = "SpermaHubConfigs"
+local configName = "default"
+
+local function fsOk()
+    return type(readfile) == "function" and type(writefile) == "function"
+end
+
+local function ensureConfigDir()
+    if type(isfolder) == "function" and type(makefolder) == "function" then
+        local ok, exists = pcall(isfolder, CONFIG_DIR)
+        if ok and not exists then pcall(makefolder, CONFIG_DIR) end
+    end
+end
+
+local function sanitizeName(name)
+    name = tostring(name or ""):gsub("[^%w_%-%. ]", "")
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then name = "default" end
+    return name
+end
+
+local function configPath(name)
+    return CONFIG_DIR .. "/" .. sanitizeName(name) .. ".json"
+end
+
+local function listConfigs()
+    local out = {}
+    if type(listfiles) ~= "function" then return out end
+    local ok, files = pcall(listfiles, CONFIG_DIR)
+    if not ok or type(files) ~= "table" then return out end
+    for _, f in ipairs(files) do
+        local base = tostring(f):match("([^/\\]+)%.json$")
+        if base then table.insert(out, base) end
+    end
+    table.sort(out)
+    return out
+end
+
+local function saveConfigAs(name)
+    if not fsOk() then return false, "нет writefile" end
+    name = sanitizeName(name)
+    ensureConfigDir()
+    local ok, json = pcall(function() return Http:JSONEncode(CFG) end)
+    if not ok or type(json) ~= "string" then return false, "JSONEncode failed" end
+    local wok, err = pcall(writefile, configPath(name), json)
+    if not wok then return false, tostring(err) end
+    configName = name
+    return true
+end
+
+local function loadConfigFrom(name)
+    if not fsOk() then return false, "нет readfile" end
+    name = sanitizeName(name)
+    local path = configPath(name)
+    if type(isfile) == "function" then
+        local ok, exists = pcall(isfile, path)
+        if ok and not exists then return false, "нет файла " .. name end
+    end
+    local ok, raw = pcall(readfile, path)
+    if not ok or type(raw) ~= "string" or raw == "" then return false, "нет файла " .. name end
+    local dok, data = pcall(function() return Http:JSONDecode(raw) end)
+    if not dok or type(data) ~= "table" then return false, "битый json" end
+    local applied = 0
+    for key, value in pairs(data) do
+        local ctrl = CONTROLS[key]
+        if ctrl then
+            pcall(function() ctrl:set(value) end)
+            applied = applied + 1
+        end
+        CFG[key] = value
+    end
+    configName = name
+    return true, applied
+end
+
+local function deleteConfig(name)
+    if type(delfile) ~= "function" then return false, "нет delfile" end
+    local ok = pcall(delfile, configPath(name))
+    return ok and true or false
+end
+
+local function buildConfigs(p)
+    local refresh
+
+    local main = p:card("Config")
+    local nameBox = main:input("Name", configName)
+    local status = main:text("")
+
+    main:button("Save", function()
+        local ok, err = saveConfigAs(nameBox:get())
+        if ok then
+            notify("Config saved: " .. configName)
+            status:set("saved: " .. configName)
+        else
+            notify("Save: " .. tostring(err))
+            status:set("error: " .. tostring(err))
+        end
+        refresh()
+    end)
+
+    main:button("Load", function()
+        local ok, res = loadConfigFrom(nameBox:get())
+        if ok then
+            notify("Config loaded: " .. configName .. " (" .. tostring(res) .. " опций)")
+            status:set("loaded: " .. configName .. " (" .. tostring(res) .. ")")
+        else
+            notify("Load: " .. tostring(res))
+            status:set("error: " .. tostring(res))
+        end
+    end)
+
+    main:button("Delete", function()
+        local name = sanitizeName(nameBox:get())
+        if deleteConfig(name) then
+            notify("Config deleted: " .. name)
+            status:set("deleted: " .. name)
+        else
+            notify("Delete: не вышло (нет файла или delfile)")
+            status:set("delete failed: " .. name)
+        end
+        refresh()
+    end)
+
+    main:text("Файлы лежат в workspace/" .. CONFIG_DIR .. ". Shift LS — меню, Save в шапке пишет в текущий конфиг.")
+
+    local saved = p:card("Saved", "right")
+    local listLbl = saved:text("")
+    saved:button("Refresh", function() refresh() end)
+
+    refresh = function()
+        if not fsOk() then
+            listLbl:set("executor без readfile/writefile")
+            return
+        end
+        local files = listConfigs()
+        if #files == 0 then
+            listLbl:set("пусто")
+        else
+            listLbl:set(table.concat(files, "\n"))
+        end
+    end
+    refresh()
+end
+
+--=================================================================
 --  СПИСОК СТРАНИЦ
 --=================================================================
 -- icon = ключ из ICONS (таблица иконок выше), а не сам глиф
@@ -4193,8 +4413,6 @@ local PAGES = {
     {group = "Visuals",       name = "Bomb",      icon = "bomb"},
     {group = "Visuals",       name = "Interface", icon = "eye"},
     {group = "Miscellaneous", name = "Main",      icon = "main"},
-    {group = "Miscellaneous", name = "Inventory", icon = "inventory"},
-    {group = "Miscellaneous", name = "Scripts",   icon = "scripts"},
     {group = "Miscellaneous", name = "Configs",   icon = "configs"},
 }
 
@@ -4202,6 +4420,7 @@ local BUILDERS = {
     Ragebot = buildRagebot,
     Players = buildPlayers,
     Main = buildMain,
+    Configs = buildConfigs,
     Interface = buildInterface,
 }
 
@@ -4283,14 +4502,15 @@ end
 --  ДЕЙСТВИЯ ШАПКИ
 --=================================================================
 local function saveConfig()
-    local ok, json = pcall(function() return Http:JSONEncode(CFG) end)
-    if ok and type(writefile) == "function" then
-        pcall(writefile, "spermahub_config.json", json)
-        notify("Config saved")
-    elseif ok then
+    if type(writefile) ~= "function" then
         notify("Saved (no writefile)")
+        return
+    end
+    local ok, err = saveConfigAs(configName)
+    if ok then
+        notify("Config saved: " .. configName)
     else
-        notify("Save failed")
+        notify("Save failed: " .. tostring(err))
     end
 end
 
@@ -4390,6 +4610,11 @@ local api = {
     Config = CFG,
     Notify = notify,
     Save = saveConfig,
+    SaveConfig = saveConfigAs,
+    LoadConfig = loadConfigFrom,
+    DeleteConfig = deleteConfig,
+    ListConfigs = listConfigs,
+    Configs = CONFIG_DIR,
     Unload = unload,
     Toggle = setOpen,
     Pages = pageByName,

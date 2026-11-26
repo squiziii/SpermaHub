@@ -21,6 +21,106 @@ E.CFrame.new = function(...)
     return cf
 end
 
+-- файловая система в памяти: проверяем save/load конфига
+local fs = {}
+E.writefile = function(p, d) fs[p] = d end
+E.readfile = function(p) return fs[p] or "" end
+E.isfile = function(p) return fs[p] ~= nil end
+E.isfolder = function() return true end
+E.makefolder = function() end
+E.delfile = function(p) fs[p] = nil end
+E.listfiles = function(p)
+    local out = {}
+    local prefix = p .. "/"
+    for k in pairs(fs) do
+        if k:sub(1, #prefix) == prefix then
+            local base = k:sub(#prefix + 1)
+            if not base:find("/", 1, true) then table.insert(out, base) end
+        end
+    end
+    return out
+end
+
+-- JSON: мок умеет только заглушки — делаем минимальный энкодер/декодер плоских таблиц
+local function jenc(v)
+    local t = type(v)
+    if t == "string" then
+        return '"' .. v:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n') .. '"'
+    elseif t == "number" or t == "boolean" then
+        return tostring(v)
+    elseif t == "table" then
+        local parts = {}
+        for k, val in pairs(v) do
+            if type(k) == "string" and (type(val) == "string" or type(val) == "number" or type(val) == "boolean") then
+                parts[#parts + 1] = jenc(k) .. ":" .. jenc(val)
+            end
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    return "null"
+end
+
+local function jdec(s)
+    local out = {}
+    local i, n = 1, #s
+    local function skipws()
+        while i <= n and s:sub(i, i):match("%s") do i = i + 1 end
+    end
+    local function readstr()
+        i = i + 1
+        local buf = {}
+        while i <= n do
+            local c = s:sub(i, i)
+            if c == "\\" then
+                buf[#buf + 1] = s:sub(i + 1, i + 1)
+                i = i + 2
+            elseif c == '"' then
+                i = i + 1
+                return table.concat(buf)
+            else
+                buf[#buf + 1] = c
+                i = i + 1
+            end
+        end
+        return table.concat(buf)
+    end
+    skipws()
+    i = i + 1
+    while true do
+        skipws()
+        if s:sub(i, i) ~= '"' then break end
+        local key = readstr()
+        skipws()
+        if s:sub(i, i) == ":" then i = i + 1 end
+        skipws()
+        local val
+        if s:sub(i, i) == '"' then
+            val = readstr()
+        else
+            local rest = s:sub(i):match("^([%w%+%-%.]+)")
+            if not rest then break end
+            i = i + #rest
+            if rest == "true" then val = true
+            elseif rest == "false" then val = false
+            else val = tonumber(rest) end
+        end
+        out[key] = val
+        skipws()
+        if s:sub(i, i) == "," then i = i + 1 else break end
+    end
+    return out
+end
+
+local GSold = E.game.GetService
+E.game.GetService = function(self, name)
+    local svc = GSold(self, name)
+    if name == "HttpService" and svc then
+        svc.JSONEncode = function(_, x) return jenc(x) end
+        svc.JSONDecode = function(_, s) return jdec(s) end
+    end
+    return svc
+end
+
 -- Instance.new: регистрируем ребёнка по Parent (мок этого не делает)
 local Iold = E.Instance.new
 local pmap = setmetatable({}, { __mode = "k" })  -- proxy -> сырой инстанс
@@ -93,6 +193,14 @@ if main and main.page then
     table.sort(found)
     print("MAIN cards: " .. table.concat(found, ", "))
 end
+
+-- конфиги: save -> load -> list -> delete
+local sok, serr = api.SaveConfig("test")
+print("SAVE: " .. tostring(sok) .. " " .. tostring(serr or ""))
+local lok, lres = api.LoadConfig("test")
+print("LOAD: " .. tostring(lok) .. " applied=" .. tostring(lres))
+print("LIST: " .. table.concat(api.ListConfigs(), ","))
+print("DELETE: " .. tostring(api.DeleteConfig("test")) .. " left=" .. #api.ListConfigs())
 """
 
 
