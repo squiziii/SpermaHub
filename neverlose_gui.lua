@@ -1439,6 +1439,8 @@ local FZ = {
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
     airstuck = { on = false, conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false },
+    ghost   = { on = false, conn = nil, charConn = nil, root = nil, hum = nil, camPos = nil,
+                camCF = nil, camType = nil, mouse = nil, wasAnchored = false },
     clickTp = { on = false, height = 3, conn = nil },
     walk    = { on = false, speed = 16, conn = nil },
 }
@@ -2241,6 +2243,140 @@ local function setAirstuck(on)
     end)
 end
 
+--===================  GHOST STAND (server freeze)  ===================
+--  Для других игроков ты стоишь на месте, пока камера летает; выключил —
+--  тело появилось там, куда прилетел. Работает только через якорь: клиент —
+--  сетевой владелец персонажа, его CFrame/Anchored уходят на сервер, и
+--  заякоренная фигура стоит для всех. Настоящий десинк «двигаюсь локально,
+--  серверу позицию не отдаю» — это lag switch (блокировка пакетов), в чистом
+--  Luau недоступен.
+local GHOST_CAM = { yaw = 0, pitch = 0, speed = 60 }
+local GHOST_EYE = 1.5  -- камера висит выше HRP примерно столько
+
+local function ghostCamFromLook(look)
+    if not look then return end
+    GHOST_CAM.yaw = math.atan2(-look.X, -look.Z)
+    GHOST_CAM.pitch = math.asin(math.clamp(look.Y, -1, 1))
+end
+
+local function ghostStep(dt)
+    local G = FZ.ghost
+    if not G.on then return end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local delta
+    pcall(function() delta = UIS:GetMouseDelta() end)
+    if delta then
+        GHOST_CAM.yaw = GHOST_CAM.yaw - delta.X * 0.003
+        GHOST_CAM.pitch = math.clamp(GHOST_CAM.pitch - delta.Y * 0.003, -1.45, 1.45)
+    end
+
+    local yaw, pitch = GHOST_CAM.yaw, GHOST_CAM.pitch
+    local fwd = Vector3.new(-math.sin(yaw) * math.cos(pitch), math.sin(pitch), -math.cos(yaw) * math.cos(pitch))
+    local right = Vector3.new(math.cos(yaw), 0, -math.sin(yaw))
+    local d = Vector3.new(0, 0, 0)
+    if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + fwd end
+    if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - fwd end
+    if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + right end
+    if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - right end
+    if UIS:IsKeyDown(Enum.KeyCode.Space) then d = d + Vector3.new(0, 1, 0) end
+    if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then d = d - Vector3.new(0, 1, 0) end
+
+    local pos = G.camPos or (cam.CFrame and cam.CFrame.Position) or Vector3.new(0, 0, 0)
+    if d.Magnitude > 0 then
+        pos = pos + d.Unit * GHOST_CAM.speed * (dt or 0.016)
+    end
+    G.camPos = pos
+    G.camCF = CFrame.new(pos) * (CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0))
+    pcall(function()
+        cam.CameraType = Enum.CameraType.Scriptable
+        cam.CFrame = G.camCF
+    end)
+end
+
+-- заякорить текущее тело и отцепить камеру
+local function ghostAttach()
+    local G = FZ.ghost
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or hum.Health <= 0 then return end
+    G.root = root
+    G.hum = hum
+    G.wasAnchored = root.Anchored and true or false
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        root.Anchored = true
+    end)
+    local cam = workspace.CurrentCamera
+    if cam then
+        G.camPos = cam.CFrame and cam.CFrame.Position
+        pcall(function() ghostCamFromLook(cam.CFrame.LookVector) end)
+    end
+end
+
+local function setGhostFreeze(on)
+    local G = FZ.ghost
+    G.on = on and true or false
+    if G.conn then pcall(function() G.conn:Disconnect() end) G.conn = nil end
+    if G.charConn then pcall(function() G.charConn:Disconnect() end) G.charConn = nil end
+
+    local cam = workspace.CurrentCamera
+
+    if not G.on then
+        if cam then
+            pcall(function()
+                if G.hum then cam.CameraSubject = G.hum end
+                cam.CameraType = G.camType or Enum.CameraType.Custom
+            end)
+        end
+        pcall(function()
+            UIS.MouseBehavior = G.mouse or Enum.MouseBehavior.Default
+            UIS.MouseIconEnabled = true
+        end)
+
+        local root, hum, dest = G.root, G.hum, G.camPos
+        if root and hum and hum.Health > 0 and dest then
+            -- ставим тело в точку камеры, пока ещё заякорено, и снимаем якорь
+            local target = dest - Vector3.new(0, GHOST_EYE, 0)
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                root.CFrame = CFrame.new(target)
+            end)
+            noclipTeleport(root, target, 0.25)
+            pcall(function() root.Anchored = G.wasAnchored and true or false end)
+        end
+
+        G.root, G.hum, G.camPos, G.camCF = nil, nil, nil, nil
+        return
+    end
+
+    -- Air Stuck каждый шаг возвращает CFrame и сорвал бы якорь
+    if FZ.airstuck.on then
+        setAirstuck(false)
+        local c = CONTROLS["Miscellaneous/Main/Air Stuck"]
+        if c and c.set then pcall(function() c:set(false, true) end) end
+    end
+
+    if cam then
+        G.camType = cam.CameraType
+        G.mouse = UIS.MouseBehavior
+    end
+    ghostAttach()
+    pcall(function()
+        UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+        UIS.MouseIconEnabled = false
+    end)
+    G.conn = RunService.RenderStepped:Connect(ghostStep)
+    G.charConn = LP.CharacterAdded:Connect(function()
+        task.wait(0.2)
+        if FZ.ghost.on then ghostAttach() end
+    end)
+end
+
 --===================  CLICK TP  ===================
 local function setClickTp(on)
     FZ.clickTp.on = on and true or false
@@ -2347,6 +2483,7 @@ local function teardownFeatures()
     pcall(function() setFly(false) end)
     pcall(function() setNoclip(false) end)
     pcall(function() setAirstuck(false) end)
+    pcall(function() setGhostFreeze(false) end)
     pcall(function() setClickTp(false) end)
     pcall(function() setWalkSpeed(false) end)
     if FZ.esp.gui then pcall(function() FZ.esp.gui:Destroy() end) FZ.esp.gui = nil end
@@ -2899,6 +3036,7 @@ local AL_MODULES = {
     { "fly", "Fly" },
     { "noclip", "Noclip" },
     { "airstuck", "Air Stuck" },
+    { "ghost", "Ghost Stand" },
     { "clickTp", "Click TP" },
     { "walk", "Speed" },
 }
@@ -3194,6 +3332,7 @@ builders.potions = function(def)
         if FZ.fly.on then table.insert(out, { name = "Fly", time = nil }) end
         if FZ.noclip.on then table.insert(out, { name = "Noclip", time = nil }) end
         if FZ.airstuck.on then table.insert(out, { name = "Air Stuck", time = nil }) end
+        if FZ.ghost.on then table.insert(out, { name = "Ghost Stand", time = nil }) end
         if FZ.aim.on then table.insert(out, { name = "Aimbot", time = nil }) end
         if FZ.silent.on then table.insert(out, { name = "Silent Aim", time = nil }) end
         if FZ.esp.on then table.insert(out, { name = "ESP", time = nil }) end
@@ -4415,6 +4554,9 @@ local function buildMain(p)
     move:slider("Fly Speed", 10, 300, 50, 1, function(v) FZ.fly.speed = v end)
     move:toggle("Noclip", false, true, function(on) setNoclip(on) end)
     move:toggle("Air Stuck", false, true, function(on) setAirstuck(on) end)
+    move:toggle("Ghost Stand", false, true, function(on) setGhostFreeze(on) end)
+    move:slider("Ghost Cam Speed", 10, 300, GHOST_CAM.speed, 1, function(v) GHOST_CAM.speed = v end)
+    move:text("Для других стоишь на месте, камера летит на WASD/Space/Ctrl. Выключишь — появишься там, куда прилетел.")
     move:toggle("Click TP", false, true, function(on) setClickTp(on) end)
     move:slider("TP Height", 0, 20, 3, 1, function(v) FZ.clickTp.height = v end)
 
@@ -4865,6 +5007,7 @@ local api = {
     SetFly = setFly,
     SetNoclip = setNoclip,
     SetAirstuck = setAirstuck,
+    SetGhostFreeze = setGhostFreeze,
     NoclipTeleport = noclipTeleport,
     SetClickTp = setClickTp,
     SetWalkSpeed = setWalkSpeed,

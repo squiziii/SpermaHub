@@ -17,9 +17,19 @@ end
 local CFold = E.CFrame.new
 E.CFrame.new = function(...)
     local cf = CFold(...)
-    if select('#', ...) >= 3 then cf.Position = E.Vector3.new(...) end
+    if select('#', ...) >= 3 then
+        cf.Position = E.Vector3.new(...)
+    else
+        local a = ...
+        if type(a) == "table" and a.X then cf.Position = E.Vector3.new(a.X, a.Y, a.Z) end
+    end
     return cf
 end
+
+-- UIS в моке не умеет клавиши/мышь — заглушки, чтобы фрикам не падало
+local uis = E.game:GetService("UserInputService")
+uis.IsKeyDown = function() return false end
+uis.GetMouseDelta = function() return E.Vector2.new(0, 0) end
 
 -- файловая система в памяти: проверяем save/load конфига
 local fs = {}
@@ -283,6 +293,17 @@ local ap = lroot.CFrame.Position
 print(("AIRSTUCK hold: %.1f,%.1f,%.1f"):format(ap.X, ap.Y, ap.Z))
 api.SetAirstuck(false)
 print("AIRSTUCK off: platform=" .. tostring(lhum.PlatformStand))
+
+-- Ghost Stand: якорь (для других стоишь) + телепорт к камере при выключении
+local wsG = E.game:GetService("Workspace")
+wsG.CurrentCamera.CFrame = E.CFrame.new(12, 50, 12)
+api.SetGhostFreeze(true)
+print("GHOST on: anchored=" .. tostring(lroot.Anchored))
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
+M.resumeAll()
+api.SetGhostFreeze(false)
+local gp = lroot.CFrame.Position
+print(("GHOST off: anchored=%s pos=%.1f,%.1f,%.1f"):format(tostring(lroot.Anchored), gp.X, gp.Y, gp.Z))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")
