@@ -1427,7 +1427,15 @@ local FZ = {
     aim     = { on = false, fov = 120, smooth = 0.3, conn = nil },
     silent  = { on = false, fov = 150, conn = nil },
     hitbox  = { on = false, size = 5, conn = nil, sizes = {} },
-    esp     = { on = false, skel = true, conn = nil, gui = nil, objects = {}, skelFrames = {} },
+    esp     = {
+        on = false, skel = true, conn = nil, gui = nil, objects = {}, skelFrames = {}, plConn = nil, remConn = nil,
+        -- фильтры
+        ignoreTeam = true, ignoreFriends = true, maxDist = 500, visibleOnly = false,
+        -- что рисовать
+        box = true, name = true, hp = true, dist = true,
+        -- цвета (ключи из ESP_COLORS)
+        colorBox = "Белый", colorSkel = "Голубой", colorText = "Серый", colorChams = "Голубой",
+    },
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
     clickTp = { on = false, height = 3, conn = nil },
@@ -1645,10 +1653,65 @@ local function espGui()
     return FZ.esp.gui
 end
 
--- палитра ESP
-local ESP_FRAME = Color3.fromRGB(236, 244, 255)   -- рамка и уголки
-local ESP_SKEL  = Color3.fromRGB(126, 206, 255)   -- скелет
-local ESP_TEXT  = Color3.fromRGB(150, 168, 190)   -- HP / дистанция
+-- палитра ESP: в конфиге хранится имя цвета, сам Color3 берём отсюда
+local ESP_COLORS = {
+    ["Белый"]   = Color3.fromRGB(236, 244, 255),
+    ["Серый"]   = Color3.fromRGB(150, 168, 190),
+    ["Акцент"]  = Color3.fromRGB(150, 140, 255),
+    ["Красный"] = Color3.fromRGB(235, 80, 95),
+    ["Зелёный"] = Color3.fromRGB(95, 220, 140),
+    ["Голубой"] = Color3.fromRGB(126, 206, 255),
+    ["Жёлтый"]  = Color3.fromRGB(245, 215, 110),
+    ["Розовый"] = Color3.fromRGB(240, 130, 190),
+}
+local ESP_COLOR_LIST = { "Белый", "Серый", "Акцент", "Красный", "Зелёный", "Голубой", "Жёлтый", "Розовый" }
+
+local function espColor(name)
+    return ESP_COLORS[name] or ESP_COLORS["Белый"]
+end
+
+-- свои / друзья: IsFriendsWith дорогой, поэтому кэшируем ответ на игрока
+local espFriendCache = {}
+
+local function espSameTeam(plr)
+    local me, other = LP.Team, plr.Team
+    return me ~= nil and other ~= nil and other == me
+end
+
+local function espIsFriend(plr)
+    local cached = espFriendCache[plr]
+    if cached ~= nil then return cached end
+    local ok, res = pcall(function() return plr:IsFriendsWith(LP.UserId) end)
+    local v = (ok and res) and true or false
+    espFriendCache[plr] = v
+    return v
+end
+
+local function espHiddenByFilter(plr)
+    local esp = FZ.esp
+    if plr == LP then return true end
+    if esp.ignoreTeam and espSameTeam(plr) then return true end
+    if esp.ignoreFriends and espIsFriend(plr) then return true end
+    return false
+end
+
+-- only-visible: луч из камеры в голову; свой персонаж и цель исключены из фильтра
+local function espVisible(char, pos)
+    local cam = workspace.CurrentCamera
+    if not cam then return true end
+    local ok, res = pcall(function()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local ignore = { char }
+        if LP.Character then table.insert(ignore, LP.Character) end
+        params.FilterDescendantsInstances = ignore
+        local origin = cam.CFrame.Position
+        local hit = workspace:Raycast(origin, pos - origin, params)
+        return hit == nil
+    end)
+    if not ok then return true end  -- мок/старый executor без Raycast: считаем видимым
+    return res
+end
 
 -- цвет полоски HP: зелёный (1.0) -> красный (0.0)
 local function hpColor(r)
@@ -1672,8 +1735,8 @@ local function createESP(plr)
 
     -- мягкая подсветка модели, без кричащих цветов
     data.highlight = new("Highlight", {
-        FillColor = Color3.fromRGB(70, 165, 235),
-        OutlineColor = Color3.fromRGB(150, 215, 255),
+        FillColor = espColor(FZ.esp.colorChams),
+        OutlineColor = espColor(FZ.esp.colorChams),
         FillTransparency = 0.85,
         OutlineTransparency = 0.6,
         DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
@@ -1732,6 +1795,7 @@ local function removeESP(plr)
 end
 
 local function hideESP(data)
+    data.hidden = true
     for _, o in ipairs(data.box) do o.Visible = false end
     for _, o in ipairs(data.corners) do o.Visible = false end
     if data.hpBg then data.hpBg.Visible = false end
@@ -1746,34 +1810,55 @@ end
 local function updateESP()
     local cam = workspace.CurrentCamera
     if not cam then return end
+    local esp = FZ.esp
+    local camPos = cam.CFrame.Position
+    local boxColor = espColor(esp.colorBox)
+    local textColor = espColor(esp.colorText)
+
     for plr, data in pairs(FZ.esp.objects) do
         local ch = plr.Character
-        if ch and alive(plr) then
-            local head = ch:FindFirstChild("Head")
-            local hum = ch:FindFirstChildOfClass("Humanoid")
-            local hrp = ch:FindFirstChild("HumanoidRootPart")
-            local headPos = head and head.Position or (hrp and hrp.Position + Vector3.new(0, 1.5, 0))
+        local head = ch and ch:FindFirstChild("Head")
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+        local headPos = head and head.Position or (hrp and hrp.Position + Vector3.new(0, 1.5, 0))
+        local dist = hrp and (camPos - hrp.Position).Magnitude or nil
 
+        local draw = ch ~= nil and alive(plr) and not espHiddenByFilter(plr)
+        if draw and dist and dist > esp.maxDist then draw = false end
+
+        -- «только видимые»: рейкаст не чаще ~8 раз в секунду на игрока
+        if draw and esp.visibleOnly and headPos then
+            local now = os.clock()
+            if not data.visCheck or now >= data.visCheck then
+                data.visOk = espVisible(ch, headPos)
+                data.visCheck = now + 0.12
+            end
+            if not data.visOk then draw = false end
+        end
+
+        if not draw then
+            hideESP(data)
+        elseif headPos and hrp then
             if data.highlight then
                 data.highlight.Adornee = ch
+                data.highlight.FillColor = espColor(esp.colorChams)
+                data.highlight.OutlineColor = espColor(esp.colorChams)
                 data.highlight.Enabled = true
             end
 
-            if headPos and hrp then
-                local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.65, 0))
-                local botV, botOn = cam:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
-                if topOn and botOn then
-                    local height = math.abs(botV.Y - topV.Y)
-                    local width = height * 0.5
-                    local x, y = topV.X - width / 2, topV.Y
-                    local right, bottom = x + width, y + height
+            local topV, topOn = cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.65, 0))
+            local botV, botOn = cam:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+            if topOn and botOn then
+                local height = math.abs(botV.Y - topV.Y)
+                local width = height * 0.5
+                local x, y = topV.X - width / 2, topV.Y
+                local right, bottom = x + width, y + height
 
-                    local dist = (cam.CFrame.Position - hrp.Position).Magnitude
-                    local fade = math.clamp(1 - dist / 400, 0.35, 1)
-                    local frameA = 0.7 + (1 - fade) * 0.2
-                    local cornerA = 0.15 + (1 - fade) * 0.3
+                local fade = math.clamp(1 - (dist or 0) / 400, 0.35, 1)
+                local frameA = 0.7 + (1 - fade) * 0.2
+                local cornerA = 0.15 + (1 - fade) * 0.3
 
-                    -- тонкая рамка
+                if esp.box then
                     local edges = {
                         { x, y, width, 1 }, { x, bottom, width, 1 },
                         { x, y, 1, height }, { right, y, 1, height },
@@ -1782,11 +1867,11 @@ local function updateESP()
                         local line = data.box[i]
                         line.Size = UDim2.new(0, e[3], 0, e[4])
                         line.Position = UDim2.new(0, e[1], 0, e[2])
+                        line.BackgroundColor3 = boxColor
                         line.BackgroundTransparency = frameA
                         line.Visible = true
                     end
 
-                    -- уголки
                     local arm = math.clamp(height * 0.16, 6, 16)
                     local corners = {
                         { x, y, arm, 1 }, { x, y, 1, arm },
@@ -1798,31 +1883,45 @@ local function updateESP()
                         local line = data.corners[i]
                         line.Size = UDim2.new(0, c[3], 0, c[4])
                         line.Position = UDim2.new(0, c[1], 0, c[2])
+                        line.BackgroundColor3 = boxColor
                         line.BackgroundTransparency = cornerA
                         line.Visible = true
                     end
-
-                    -- полоска HP
-                    if hum then
-                        local ratio = math.clamp(hum.Health / math.max(1, hum.MaxHealth), 0, 1)
-                        data.hpBg.Size = UDim2.new(0, 3, 0, height)
-                        data.hpBg.Position = UDim2.new(0, x - 7, 0, y)
-                        data.hpBg.Visible = true
-                        data.hpFill.Size = UDim2.new(0, 3, 0, height * ratio)
-                        data.hpFill.Position = UDim2.new(0, x - 7, 0, bottom - height * ratio)
-                        data.hpFill.BackgroundColor3 = hpColor(ratio)
-                        data.hpFill.Visible = true
-
-                        if data.infoLabel then
-                            data.infoLabel.Text = string.format("%d HP  \u{2022}  %dm", math.floor(hum.Health), math.floor(dist))
-                        end
-                    end
-
-                    if data.billboard then data.billboard.Adornee = head or hrp end
-                    if data.nameLabel then data.nameLabel.Text = plr.Name end
                 else
-                    hideESP(data)
+                    for _, line in ipairs(data.box) do line.Visible = false end
+                    for _, line in ipairs(data.corners) do line.Visible = false end
                 end
+
+                if hum and esp.hp then
+                    local ratio = math.clamp(hum.Health / math.max(1, hum.MaxHealth), 0, 1)
+                    data.hpBg.Size = UDim2.new(0, 3, 0, height)
+                    data.hpBg.Position = UDim2.new(0, x - 7, 0, y)
+                    data.hpBg.Visible = true
+                    data.hpFill.Size = UDim2.new(0, 3, 0, height * ratio)
+                    data.hpFill.Position = UDim2.new(0, x - 7, 0, bottom - height * ratio)
+                    data.hpFill.BackgroundColor3 = hpColor(ratio)
+                    data.hpFill.Visible = true
+                else
+                    data.hpBg.Visible = false
+                    data.hpFill.Visible = false
+                end
+
+                local info = {}
+                if hum and esp.hp then table.insert(info, string.format("%d HP", math.floor(hum.Health))) end
+                if esp.dist and dist then table.insert(info, string.format("%dm", math.floor(dist))) end
+                if data.infoLabel then
+                    data.infoLabel.Text = table.concat(info, "  \u{2022}  ")
+                    data.infoLabel.Visible = #info > 0
+                    data.infoLabel.TextColor3 = textColor
+                end
+                if data.nameLabel then
+                    data.nameLabel.Visible = esp.name
+                    data.nameLabel.Text = plr.Name
+                    data.nameLabel.TextColor3 = textColor
+                end
+
+                if data.billboard then data.billboard.Adornee = head or hrp end
+                data.hidden = false
             else
                 hideESP(data)
             end
@@ -1835,9 +1934,12 @@ end
 local function drawSkeleton()
     local cam = workspace.CurrentCamera
     if not cam then return end
-    for plr in pairs(FZ.esp.objects) do
+    local skelColor = espColor(FZ.esp.colorSkel)
+    for plr, data in pairs(FZ.esp.objects) do
         local ch = plr.Character
-        if ch and alive(plr) then
+        if data.hidden then
+            for _, f in ipairs(FZ.esp.skelFrames[plr] or {}) do f.Visible = false end
+        elseif ch and alive(plr) then
             local parts = {}
             for _, p in ipairs(ch:GetChildren()) do
                 if p:IsA("BasePart") then parts[p.Name] = p end
@@ -1877,6 +1979,7 @@ local function drawSkeleton()
                             }, g)
                         end
                         local f = frames[i]
+                        f.BackgroundColor3 = skelColor
                         local dx, dy = v2.X - v1.X, v2.Y - v1.Y
                         f.Size = UDim2.new(0, math.sqrt(dx * dx + dy * dy), 0, 1)
                         f.Position = UDim2.new(0, v1.X, 0, v1.Y)
@@ -1902,6 +2005,8 @@ local function setESP(on)
         FZ.esp.conn = nil
     end
     if not FZ.esp.on then
+        if FZ.esp.plConn then pcall(function() FZ.esp.plConn:Disconnect() end) FZ.esp.plConn = nil end
+        if FZ.esp.remConn then pcall(function() FZ.esp.remConn:Disconnect() end) FZ.esp.remConn = nil end
         for plr in pairs(FZ.esp.objects) do removeESP(plr) end
         FZ.esp.objects = {}
         for _, frames in pairs(FZ.esp.skelFrames) do
@@ -1912,8 +2017,22 @@ local function setESP(on)
     end
 
     espGui()
+    espFriendCache = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LP then createESP(plr) end
+    end
+
+    -- без этого ESP не появлялся у тех, кто зашёл уже после включения
+    if not FZ.esp.plConn then
+        FZ.esp.plConn = Players.PlayerAdded:Connect(function(plr)
+            if FZ.esp.on and plr ~= LP then createESP(plr) end
+        end)
+        FZ.esp.remConn = Players.PlayerRemoving:Connect(function(plr)
+            espFriendCache[plr] = nil
+            removeESP(plr)
+            for _, f in ipairs(FZ.esp.skelFrames[plr] or {}) do pcall(function() f:Destroy() end) end
+            FZ.esp.skelFrames[plr] = nil
+        end)
     end
     FZ.esp.conn = RunService.RenderStepped:Connect(function()
         if not FZ.esp.on then return end
@@ -4142,8 +4261,39 @@ end
 local function buildPlayers(p)
     local esp = p:card("ESP")
     esp:toggle("Enabled", false, true, function(on) setESP(on) end)
-    esp:toggle("Skeleton", true, false, function(on) FZ.esp.skel = on end)
-    esp:text("Highlight, бокс, ник и HP над головой.")
+    esp:toggle("Skeleton", FZ.esp.skel, false, function(on) FZ.esp.skel = on end)
+    esp:toggle("Ignore Team", FZ.esp.ignoreTeam, false, function(on)
+        FZ.esp.ignoreTeam = on and true or false
+    end)
+    esp:toggle("Ignore Friends", FZ.esp.ignoreFriends, false, function(on)
+        FZ.esp.ignoreFriends = on and true or false
+        espFriendCache = {}   -- пересчитать кэш заново
+    end)
+    esp:slider("Max Dist", 50, 2000, FZ.esp.maxDist, 50, function(v)
+        FZ.esp.maxDist = v
+    end)
+    esp:toggle("Only Visible", FZ.esp.visibleOnly, false, function(on)
+        FZ.esp.visibleOnly = on and true or false
+    end)
+    esp:text("Выше — фильтры: тиммейты/друзья/дистанция/видимость.")
+
+    local draw = p:card("Draw", "right")
+    draw:toggle("Box", FZ.esp.box, false, function(on) FZ.esp.box = on and true or false end)
+    draw:toggle("Name", FZ.esp.name, false, function(on) FZ.esp.name = on and true or false end)
+    draw:toggle("HP", FZ.esp.hp, false, function(on) FZ.esp.hp = on and true or false end)
+    draw:toggle("Distance", FZ.esp.dist, false, function(on) FZ.esp.dist = on and true or false end)
+    draw:dropdown("Box Color", ESP_COLOR_LIST, FZ.esp.colorBox, false, function(v)
+        FZ.esp.colorBox = v
+    end)
+    draw:dropdown("Skeleton Color", ESP_COLOR_LIST, FZ.esp.colorSkel, false, function(v)
+        FZ.esp.colorSkel = v
+    end)
+    draw:dropdown("Text Color", ESP_COLOR_LIST, FZ.esp.colorText, false, function(v)
+        FZ.esp.colorText = v
+    end)
+    draw:dropdown("Chams Color", ESP_COLOR_LIST, FZ.esp.colorChams, false, function(v)
+        FZ.esp.colorChams = v
+    end)
 
     local te = p:card("Target ESP", "right")
     te:toggle("Enabled", HUD.GetTargetESP(), false, function(on) HUD.SetTargetESP(on) end)
@@ -4624,6 +4774,7 @@ local api = {
     Atlas = ATLAS_RECTS,
     SetAtlas = setAtlas,
     Features = FZ,
+    ESP = FZ.esp,
     HUD = HUD,
     SetAimbot = setAimbot,
     SetSilentAim = setSilentAim,

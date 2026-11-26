@@ -152,10 +152,11 @@ if not ok then
 end
 M.resumeAll()
 
+local RSm = E.game:GetService("RunService")
 for i = 1, 3 do
-    pcall(function() M.rs.Heartbeat:Fire(0.016) end)
-    pcall(function() M.rs.Stepped:Fire(0.016, 0) end)
-    pcall(function() M.rs.RenderStepped:Fire(0.016) end)
+    pcall(function() RSm.Heartbeat:Fire(0.016) end)
+    pcall(function() RSm.Stepped:Fire(0.016, 0) end)
+    pcall(function() RSm.RenderStepped:Fire(0.016) end)
     M.resumeAll()
 end
 print("BOOT OK")
@@ -193,6 +194,78 @@ if main and main.page then
     table.sort(found)
     print("MAIN cards: " .. table.concat(found, ", "))
 end
+
+-- ESP: фильтры по команде/друзьям/дистанции + тоглы отрисовки + цвета
+local PS = E.game:GetService("Players")
+local lp = PS.LocalPlayer
+local function mkPlayer(name, pos, isFriend, team)
+    local plr = E.Instance.new("Player")
+    plr.Name = name
+    plr.UserId = 4242
+    plr.Team = team
+    local ch = E.Instance.new("Model")
+    local hrp = E.Instance.new("Part"); hrp.Name = "HumanoidRootPart"
+    hrp.Position = E.Vector3.new(pos[1], pos[2], pos[3])
+    local head = E.Instance.new("Part"); head.Name = "Head"
+    head.Position = E.Vector3.new(pos[1], pos[2] + 1.5, pos[3])
+    local hum = E.Instance.new("Humanoid"); hum.Health = 100; hum.MaxHealth = 100
+    table.insert(ch._children, hrp)
+    table.insert(ch._children, head)
+    table.insert(ch._children, hum)
+    plr.Character = ch
+    if isFriend then plr.IsFriendsWith = function() return true end end
+    return plr
+end
+local myTeam = E.Instance.new("Team"); myTeam.Name = "Blue"
+lp.Team = myTeam
+local enemy = mkPlayer("Enemy", { 0, 0, 10 }, false, nil)
+local mate = mkPlayer("Mate", { 0, 0, 20 }, false, myTeam)
+local buddy = mkPlayer("Buddy", { 0, 0, 30 }, true, nil)
+PS.GetPlayers = function() return { lp, enemy, mate, buddy } end
+
+local RSf = E.game:GetService("RunService")
+local function frame()
+    pcall(function() RSf.RenderStepped:Fire(0.016) end)
+    M.resumeAll()
+end
+
+api.SetESP(true)
+frame()
+local function dump(tag)
+    local out = {}
+    for plr, data in pairs(api.ESP.objects) do
+        table.insert(out, plr.Name .. "=" .. (data.hidden and "hidden" or "shown"))
+    end
+    table.sort(out)
+    print("ESP " .. tag .. ": " .. table.concat(out, ", "))
+end
+dump("default")
+api.ESP.ignoreTeam = false; frame(); dump("team shown")
+api.ESP.ignoreFriends = false; frame(); dump("friends shown")
+api.ESP.maxDist = 15; frame(); dump("maxDist=15")
+api.ESP.maxDist = 500
+api.ESP.visibleOnly = true; frame(); print("ESP visibleOnly: no crash")
+api.ESP.visibleOnly = false
+api.ESP.box = false; frame()
+local anyBox = false
+for _, data in pairs(api.ESP.objects) do
+    for _, l in ipairs(data.box) do if l.Visible then anyBox = true end end
+end
+print("ESP box=off -> box lines visible: " .. tostring(anyBox))
+api.ESP.box = true
+api.ESP.colorBox = "Красный"
+frame()
+local c = nil
+for _, data in pairs(api.ESP.objects) do if not data.hidden then c = data.box[1].BackgroundColor3 end end
+print("ESP box color: " .. (c and string.format("%d,%d,%d", math.floor(c.R * 255 + 0.5),
+    math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5)) or "none"))
+api.ESP.name = false; frame()
+local nameVisible = nil
+for _, data in pairs(api.ESP.objects) do if not data.hidden then nameVisible = data.nameLabel.Visible end end
+print("ESP name=off -> label visible: " .. tostring(nameVisible))
+api.SetESP(false)
+frame()
+print("ESP off -> objects: " .. tostring(next(api.ESP.objects) == nil and 0 or 1))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")
