@@ -267,6 +267,23 @@ api.SetESP(false)
 frame()
 print("ESP off -> objects: " .. tostring(next(api.ESP.objects) == nil and 0 or 1))
 
+-- Air Stuck: держит точку включения и гасит PlatformStand при выключении
+local lpc = lp.Character
+local lroot = lpc:FindFirstChild("HumanoidRootPart")
+local lhum = lpc:FindFirstChildOfClass("Humanoid")
+lroot.CFrame = E.CFrame.new(3, 40, 3)
+api.SetAirstuck(true)
+pcall(function() RSf.Stepped:Fire(0.016, 0) end)
+M.resumeAll()
+print("AIRSTUCK on: platform=" .. tostring(lhum.PlatformStand))
+lroot.CFrame = E.CFrame.new(99, 0, 99)
+pcall(function() RSf.Stepped:Fire(0.016, 0) end)
+M.resumeAll()
+local ap = lroot.CFrame.Position
+print(("AIRSTUCK hold: %.1f,%.1f,%.1f"):format(ap.X, ap.Y, ap.Z))
+api.SetAirstuck(false)
+print("AIRSTUCK off: platform=" .. tostring(lhum.PlatformStand))
+
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")
 print("SAVE: " .. tostring(sok) .. " " .. tostring(serr or ""))

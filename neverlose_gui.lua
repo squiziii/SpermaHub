@@ -1438,6 +1438,7 @@ local FZ = {
     },
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
+    airstuck = { on = false, conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false },
     clickTp = { on = false, height = 3, conn = nil },
     walk    = { on = false, speed = 16, conn = nil },
 }
@@ -2163,6 +2164,83 @@ local function setNoclip(on)
     end
 end
 
+--===================  AIR STUCK  ===================
+--  Фризит персонажа в точке, где включили: на каждом физическом шаге
+--  возвращает сохранённый CFrame и гасит скорость, PlatformStand не даёт
+--  хуманоиду идти. Земля/гравитация под персонажем не нужны.
+local function airstuckSnap()
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or hum.Health <= 0 then return end
+    FZ.airstuck.hum = hum
+    FZ.airstuck.root = root
+    FZ.airstuck.platform = hum.PlatformStand and true or false
+    FZ.airstuck.cf = root.CFrame
+    pcall(function() hum.PlatformStand = true end)
+end
+
+local function airstuckStep()
+    if not FZ.airstuck.on then return end
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or hum.Health <= 0 then
+        -- померли или персонаж сменился: ждём CharacterAdded
+        FZ.airstuck.root = nil
+        FZ.airstuck.cf = nil
+        return
+    end
+    if FZ.airstuck.root ~= root or not FZ.airstuck.cf then
+        airstuckSnap()
+        return
+    end
+    if not hum.PlatformStand then pcall(function() hum.PlatformStand = true end) end
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.CFrame = FZ.airstuck.cf
+    end)
+end
+
+local function setAirstuck(on)
+    FZ.airstuck.on = on and true or false
+    if FZ.airstuck.conn then
+        pcall(function() FZ.airstuck.conn:Disconnect() end)
+        FZ.airstuck.conn = nil
+    end
+    if FZ.airstuck.charConn then
+        pcall(function() FZ.airstuck.charConn:Disconnect() end)
+        FZ.airstuck.charConn = nil
+    end
+
+    if not FZ.airstuck.on then
+        local hum = FZ.airstuck.hum
+        local root = FZ.airstuck.root
+        if hum then
+            -- если включён Fly, PlatformStand ему нужен — не гасим
+            pcall(function() hum.PlatformStand = FZ.fly.on and true or FZ.airstuck.platform end)
+        end
+        if root then
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+        FZ.airstuck.root = nil
+        FZ.airstuck.hum = nil
+        FZ.airstuck.cf = nil
+        return
+    end
+
+    airstuckSnap()
+    FZ.airstuck.conn = RunService.Stepped:Connect(airstuckStep)
+    FZ.airstuck.charConn = LP.CharacterAdded:Connect(function()
+        task.wait(0.15)  -- ждём, пока соберётся персонаж
+        if FZ.airstuck.on then airstuckSnap() end
+    end)
+end
+
 --===================  CLICK TP  ===================
 local function setClickTp(on)
     FZ.clickTp.on = on and true or false
@@ -2268,6 +2346,7 @@ local function teardownFeatures()
     pcall(function() setESP(false) end)
     pcall(function() setFly(false) end)
     pcall(function() setNoclip(false) end)
+    pcall(function() setAirstuck(false) end)
     pcall(function() setClickTp(false) end)
     pcall(function() setWalkSpeed(false) end)
     if FZ.esp.gui then pcall(function() FZ.esp.gui:Destroy() end) FZ.esp.gui = nil end
@@ -2819,6 +2898,7 @@ local AL_MODULES = {
     { "esp", "ESP" },
     { "fly", "Fly" },
     { "noclip", "Noclip" },
+    { "airstuck", "Air Stuck" },
     { "clickTp", "Click TP" },
     { "walk", "Speed" },
 }
@@ -3113,6 +3193,7 @@ builders.potions = function(def)
         local out = {}
         if FZ.fly.on then table.insert(out, { name = "Fly", time = nil }) end
         if FZ.noclip.on then table.insert(out, { name = "Noclip", time = nil }) end
+        if FZ.airstuck.on then table.insert(out, { name = "Air Stuck", time = nil }) end
         if FZ.aim.on then table.insert(out, { name = "Aimbot", time = nil }) end
         if FZ.silent.on then table.insert(out, { name = "Silent Aim", time = nil }) end
         if FZ.esp.on then table.insert(out, { name = "ESP", time = nil }) end
@@ -4333,6 +4414,7 @@ local function buildMain(p)
     move:toggle("Fly", false, true, function(on) setFly(on) end)
     move:slider("Fly Speed", 10, 300, 50, 1, function(v) FZ.fly.speed = v end)
     move:toggle("Noclip", false, true, function(on) setNoclip(on) end)
+    move:toggle("Air Stuck", false, true, function(on) setAirstuck(on) end)
     move:toggle("Click TP", false, true, function(on) setClickTp(on) end)
     move:slider("TP Height", 0, 20, 3, 1, function(v) FZ.clickTp.height = v end)
 
@@ -4782,6 +4864,7 @@ local api = {
     SetESP = setESP,
     SetFly = setFly,
     SetNoclip = setNoclip,
+    SetAirstuck = setAirstuck,
     NoclipTeleport = noclipTeleport,
     SetClickTp = setClickTp,
     SetWalkSpeed = setWalkSpeed,
