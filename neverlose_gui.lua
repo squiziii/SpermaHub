@@ -820,6 +820,16 @@ end
 --=================================================================
 --  КОНТРОЛЫ
 --=================================================================
+-- вызовы бывают и control:Set(v), и control.Set(v) — нормализуем аргументы
+local function normSetter(fn)
+    return function(a, b, c)
+        if type(a) == "table" and a.frame then
+            return fn(b, c)
+        end
+        return fn(a, b)
+    end
+end
+
 local function buildToggle(parent, label, default, hasEye, key, onChange)
     local row = new("Frame", {
         Size = UDim2.new(1, 0, 0, 26),
@@ -919,7 +929,7 @@ local function buildToggle(parent, label, default, hasEye, key, onChange)
 
     return {
         frame = row,
-        set = set,
+        set = normSetter(set),
         get = function() return state end,
     }
 end
@@ -1053,7 +1063,7 @@ local function buildSlider(parent, label, minV, maxV, default, step, key, onChan
 
     return {
         frame = row,
-        set = set,
+        set = normSetter(set),
         get = function() return value end,
     }
 end
@@ -1144,7 +1154,7 @@ local function buildDropdown(parent, label, options, default, hasEye, key, onCha
 
     return {
         frame = row,
-        set = set,
+        set = normSetter(set),
         get = function() return value end,
     }
 end
@@ -1155,7 +1165,7 @@ local function buildLabel(parent, text)
         AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1,
     }, parent)
-    txt(row, text, {
+    local lbl = txt(row, text, {
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         TextWrapped = true,
@@ -1163,7 +1173,11 @@ local function buildLabel(parent, text)
         TextColor3 = C.faint,
         TextYAlignment = Enum.TextYAlignment.Top,
     })
-    return {frame = row}
+    return {
+        frame = row,
+        set = normSetter(function(v) lbl.Text = tostring(v) end),
+        get = function() return lbl.Text end,
+    }
 end
 
 --=================================================================
@@ -4070,6 +4084,26 @@ local function buildWeapon(p)
     kill:text("Телепорт в цель и 30 ударов текущим инструментом.")
 end
 
+--=================================================================
+--  POSITION FINDER  (перенос из WindUI-скрипта, но на нашем гуи)
+--=================================================================
+local GRAB_POS = nil
+
+local function grabRoot()
+    local ch = LP.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function fmtVec(v)
+    return string.format("Vector3.new(%.3f, %.3f, %.3f)", v.X, v.Y, v.Z)
+end
+
+local function copyText(text)
+    local fn = setclipboard or toclipboard
+    if type(fn) ~= "function" then return false end
+    return pcall(fn, text)
+end
+
 local function buildMain(p)
     local move = p:card("Movement")
     move:toggle("Fly", false, true, function(on) setFly(on) end)
@@ -4083,6 +4117,47 @@ local function buildMain(p)
     ws:slider("Speed", 16, 300, 16, 1, function(v)
         FZ.walk.speed = v
         applyWalkSpeed()
+    end)
+
+    local loc = p:card("Position", "right")
+    local locLbl = loc:text("nothing grabbed yet")
+    loc:button("Grab", function()
+        local root = grabRoot()
+        if not root then
+            notify("Grab: нет персонажа")
+            return
+        end
+        GRAB_POS = root.Position
+        locLbl:set(fmtVec(GRAB_POS))
+        notify("Позиция взята: " .. fmtVec(GRAB_POS))
+    end)
+    loc:button("Copy", function()
+        if not GRAB_POS then
+            notify("Copy: сначала Grab")
+            return
+        end
+        if copyText(fmtVec(GRAB_POS)) then
+            notify("Скопировано")
+        else
+            notify("Copy: в executor'е нет setclipboard")
+        end
+    end)
+    loc:button("Teleport", function()
+        if not GRAB_POS then
+            notify("Teleport: сначала Grab")
+            return
+        end
+        local root = grabRoot()
+        if not root then
+            notify("Teleport: нет персонажа")
+            return
+        end
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = CFrame.new(GRAB_POS)
+        end)
+        notify("Телепорт на точку")
     end)
 end
 
