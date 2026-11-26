@@ -4039,38 +4039,6 @@ end
 --=================================================================
 --  КОНТЕНТ СТРАНИЦ (демо по референсу)
 --=================================================================
-local function buildWorld(p)
-    local main = p:card("Main")
-    main:toggle("Night Mode", true, true)
-    main:dropdown("SkyBox", {"Night 1", "Night 2", "Night 3", "None"}, "Night 2", true)
-    main:toggle("Post Processing", false, true)
-    main:slider("Asus Walls", 0, 100, 0, 1)
-    main:slider("Asus Props", 0, 100, 40, 1)
-    main:dropdown("Removals", {"Smoke, HE, Flashb", "Smoke, HE", "Smoke", "None"}, "Smoke, HE, Flashb")
-    main:dropdown("Ragdoll Physics", {"Disabled", "Enabled"}, "Disabled")
-
-    local fog = p:card("Fog")
-    fog:toggle("Enable Fog", false, true)
-    fog:slider("Start Distance", 0, 100, 0, 1)
-    fog:slider("End Distance", 0, 100, 100, 1)
-    fog:slider("Density", 0, 100, 50, 1)
-
-    local misc = p:card("Misc", "right")
-    misc:toggle("NoScope Crosshair", true)
-    misc:dropdown("Autowall Crosshair", {"Dot", "Cross", "Circle", "None"}, "Dot")
-    misc:toggle("Damage Indicator", true, true)
-    misc:toggle("Preserve Kill Feed", true)
-    misc:dropdown("Reveals", {"Ranks", "All", "None"}, "Ranks")
-
-    local hit = p:card("Hit", "right")
-    hit:toggle("Hit Marker", true, true)
-    hit:toggle("Hit Sound", true)
-    hit:slider("Volume", 0, 100, 50, 1)
-    hit:toggle("Client Bullet Impacts", true, true)
-    hit:toggle("Server Bullet Impacts", true, true)
-    hit:slider("Duration", 0, 4, 4.0, 0.1)
-end
-
 local function buildPlaceholder(p, name)
     local main = p:card("Main")
     main:toggle(name .. " Enabled", false, true)
@@ -4117,26 +4085,6 @@ local function buildPlayers(p)
     ar:dropdown("Texture", {"1", "2"}, tostring(HUD.GetArrowMode()), false, function(v) HUD.SetArrowMode(tonumber(v) or 1) end)
 end
 
-local function buildWeapon(p)
-    local kill = p:card("Kill Player")
-    local names = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then table.insert(names, plr.Name) end
-    end
-    if #names == 0 then names = { "(никого)" } end
-    kill:dropdown("Target", names, names[1], false)
-
-    local killToggle
-    killToggle = kill:toggle("Kill", false, false, function(on)
-        if not on then return end
-        killToggle:set(false, true)
-        local name = CFG["Weapon/Kill Player/Target"]
-        local plr = name and Players:FindFirstChild(name)
-        killPlayer(plr)
-    end)
-    kill:text("Телепорт в цель и 30 ударов текущим инструментом.")
-end
-
 --=================================================================
 --  POSITION FINDER  (перенос из WindUI-скрипта, но на нашем гуи)
 --=================================================================
@@ -4171,6 +4119,24 @@ local function buildMain(p)
         FZ.walk.speed = v
         applyWalkSpeed()
     end)
+
+    local kill = p:card("Kill Player", "right")
+    local names = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then table.insert(names, plr.Name) end
+    end
+    if #names == 0 then names = { "(никого)" } end
+    local targetSel = kill:dropdown("Target", names, names[1], false)
+
+    local killToggle
+    killToggle = kill:toggle("Kill", false, false, function(on)
+        if not on then return end
+        killToggle:set(false, true)
+        local name = targetSel and targetSel:get()
+        local plr = name and Players:FindFirstChild(name)
+        killPlayer(plr)
+    end)
+    kill:text("Телепорт в цель и 30 ударов текущим инструментом.")
 
     local loc = p:card("Position", "right")
     local locLbl = loc:text("nothing grabbed yet")
@@ -4224,11 +4190,7 @@ local PAGES = {
     {group = "Aimbot",        name = "Anti Aim",  icon = "antiaim"},
     {group = "Aimbot",        name = "Legitbot",  icon = "legitbot"},
     {group = "Visuals",       name = "Players",   icon = "players"},
-    {group = "Visuals",       name = "Weapon",    icon = "weapon"},
-    {group = "Visuals",       name = "Grenades",  icon = "grenades"},
     {group = "Visuals",       name = "Bomb",      icon = "bomb"},
-    {group = "Visuals",       name = "World",     icon = "world"},
-    {group = "Visuals",       name = "View",      icon = "view"},
     {group = "Visuals",       name = "Interface", icon = "eye"},
     {group = "Miscellaneous", name = "Main",      icon = "main"},
     {group = "Miscellaneous", name = "Inventory", icon = "inventory"},
@@ -4237,10 +4199,8 @@ local PAGES = {
 }
 
 local BUILDERS = {
-    World = buildWorld,
     Ragebot = buildRagebot,
     Players = buildPlayers,
-    Weapon = buildWeapon,
     Main = buildMain,
     Interface = buildInterface,
 }
@@ -4456,5 +4416,5 @@ getgenv().SpermaHubUI = api
 getgenv().NeverloseUI = api  -- старое имя, оставлено для совместимости
 
 -- стартовая страница
-setSelected(pageByName.World or PAGES[1])
+setSelected(pageByName.Main or PAGES[1])
 notify("SPERMAHUB loaded \u{2022} RShift")
