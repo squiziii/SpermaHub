@@ -1356,7 +1356,7 @@ local FZ = {
     hitbox  = { on = false, size = 5, conn = nil, sizes = {} },
     esp     = { on = false, skel = true, conn = nil, gui = nil, objects = {}, skelFrames = {} },
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
-    noclip  = { on = false, conn = nil },
+    noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
     clickTp = { on = false, height = 3, conn = nil },
     walk    = { on = false, speed = 16, conn = nil },
 }
@@ -1893,29 +1893,82 @@ local function setFly(on)
 end
 
 --===================  NOCLIP  ===================
-local function setNoclip(on)
-    FZ.noclip.on = on and true or false
+--  Гасит коллизии у всех частей персонажа и держит их выключенными
+--  (Stepped), поэтому из стен и пола не выталкивает. Что было включено —
+--  запоминается и возвращается при выключении.
+local function noclipRestore()
+    for part, canCollide in pairs(FZ.noclip.saved) do
+        pcall(function() part.CanCollide = canCollide end)
+    end
+    FZ.noclip.saved = {}
+end
+
+local function noclipApply()
+    local ch = LP.Character
+    if not ch then return end
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then return end
+    local saved = FZ.noclip.saved
+    for _, p in ipairs(ch:GetDescendants()) do
+        if p:IsA("BasePart") and p.CanCollide then
+            if saved[p] == nil then saved[p] = true end
+            pcall(function() p.CanCollide = false end)
+        end
+    end
+end
+
+local function noclipStopLoop()
     if FZ.noclip.conn then
         pcall(function() FZ.noclip.conn:Disconnect() end)
         FZ.noclip.conn = nil
     end
-    if not FZ.noclip.on then
-        local ch = LP.Character
-        if ch then
-            for _, p in ipairs(ch:GetDescendants()) do
-                if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then p.CanCollide = true end
-            end
+end
+
+local function noclipStep()
+    local now = os.clock()
+    local hold = FZ.noclip.holdPart
+    if hold then
+        if now < FZ.noclip.holdUntil then
+            pcall(function() hold.CFrame = CFrame.new(FZ.noclip.holdPos) end)
+        else
+            FZ.noclip.holdPart = nil
         end
-        return
     end
-    FZ.noclip.conn = RunService.Stepped:Connect(function()
-        if not FZ.noclip.on then return end
-        local ch = LP.Character
-        if not ch then return end
-        for _, p in ipairs(ch:GetDescendants()) do
-            if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
-        end
-    end)
+    if FZ.noclip.on or now < FZ.noclip.burstUntil then
+        noclipApply()
+    else
+        noclipRestore()
+        noclipStopLoop()
+    end
+end
+
+local function noclipLoop()
+    if FZ.noclip.conn then return end
+    FZ.noclip.conn = RunService.Stepped:Connect(noclipStep)
+end
+
+-- короткое окно без коллизий + удержание точки: телепорт не откидывает назад
+local function noclipTeleport(part, pos, seconds)
+    local t = os.clock() + (seconds or 0.25)
+    FZ.noclip.holdPart = part
+    FZ.noclip.holdPos = pos
+    FZ.noclip.holdUntil = t
+    if t > FZ.noclip.burstUntil then FZ.noclip.burstUntil = t end
+    noclipLoop()
+    noclipApply()
+end
+
+local function setNoclip(on)
+    FZ.noclip.on = on and true or false
+    if FZ.noclip.on then
+        noclipLoop()
+        noclipApply()
+    else
+        FZ.noclip.burstUntil = 0
+        FZ.noclip.holdPart = nil
+        noclipRestore()
+        noclipStopLoop()
+    end
 end
 
 --===================  CLICK TP  ===================
@@ -4155,9 +4208,10 @@ local function buildMain(p)
         pcall(function()
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = CFrame.new(GRAB_POS)
         end)
-        notify("Телепорт на точку")
+        noclipTeleport(root, GRAB_POS, 0.25)
+        pcall(function() root.CFrame = CFrame.new(GRAB_POS) end)
+        notify("Телепорт на точку (noclip 0.25 с)")
     end)
 end
 
@@ -4392,6 +4446,7 @@ local api = {
     SetESP = setESP,
     SetFly = setFly,
     SetNoclip = setNoclip,
+    NoclipTeleport = noclipTeleport,
     SetClickTp = setClickTp,
     SetWalkSpeed = setWalkSpeed,
     KillPlayer = killPlayer,
