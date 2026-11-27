@@ -1446,7 +1446,9 @@ local FZ = {
     },
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
-    airstuck = { on = false, conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false },
+    airstuck = { on = false, mode = "Packet", throttle = 10, maxHold = 20, lock = false,
+                 conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false,
+                 net = false, froze = false, since = 0, stop = nil },
     ghost   = { on = false, conn = nil, charConn = nil, root = nil, hum = nil, camPos = nil,
                 camCF = nil, camType = nil, mouse = nil, wasAnchored = false },
     clickTp = { on = false, height = 3, conn = nil },
@@ -1502,6 +1504,36 @@ end
 --  на больших углах (обычный Lerp по CFrame там заметно «залипает»).
 --  Всё лежит в FEAT: у главного чанка лимит 200 локалов, а функций тут много.
 local FEAT = {}
+
+-- Пакетный Air Stuck: NetworkClient:SetOutgoingKBPSLimit под Plugin Security.
+-- В executor'ах зовётся напрямую, иначе пробуем поднять identity. Движок
+-- клампит значение в 10..10000, так что «полного нуля» нет — 10 кбит/с уже
+-- почти не пропускает апдейты позиции.
+FEAT.net = { MIN = 10, MAX = 10000 }
+
+function FEAT.net.set(kbps)
+    local ok, svc = pcall(function() return game:GetService("NetworkClient") end)
+    if not ok or not svc then return false end
+    local limit = math.clamp(kbps or FEAT.net.MIN, FEAT.net.MIN, FEAT.net.MAX)
+    if pcall(function() svc:SetOutgoingKBPSLimit(limit) end) then return true end
+    -- не хватило прав: пробуем из-под plugin/executor identity
+    local getI = getthreadidentity
+    local setI = setthreadidentity or set_thread_identity or (syn and syn.set_thread_identity)
+    if type(setI) ~= "function" then return false end
+    local prev = type(getI) == "function" and getI() or nil
+    local done = false
+    for _, id in ipairs({ 7, 8, 2 }) do
+        if pcall(function()
+            setI(id)
+            svc:SetOutgoingKBPSLimit(limit)
+        end) then
+            done = true
+            break
+        end
+    end
+    if prev then pcall(function() setI(prev) end) end
+    return done
+end
 
 do
     local A = {}
@@ -2424,79 +2456,163 @@ local function setNoclip(on)
 end
 
 --===================  AIR STUCK  ===================
---  Фризит персонажа в точке, где включили: на каждом физическом шаге
---  возвращает сохранённый CFrame и гасит скорость, PlatformStand не даёт
---  хуманоиду идти. Земля/гравитация под персонажем не нужны.
-local function airstuckSnap()
+--  Два режима (Air Stuck Mode):
+--   Physics — как было: каждый Stepped возвращаем сохранённый CFrame, гасим
+--             скорость, PlatformStand не даёт хуманоиду шагать. Тело прибито
+--             к точке и локально, и у сервера.
+--   Packet  — лаг-свитч, как в майнкрафте: режем ИСХОДЯЩИЙ трафик через
+--             NetworkClient:SetOutgoingKBPSLimit. Клиент продолжает жить
+--             (двигаешься, крутишь камеру, бьёшь), но апдейты не доходят, и
+--             для других ты стоишь где стоял. Выключил — трафик пошёл, и
+--             тебя дёргает туда, где ты на самом деле стоишь. Нет доступа к
+--             NetworkClient — откатываемся на локальный фриз тела.
+--  Max Hold сам отпускает трафик, иначе сервер кикнет за потерю связи.
+local function airstuckSnap(holdBody)
+    local A = FZ.airstuck
     local ch = LP.Character
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
     local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    if not hum or not root or hum.Health <= 0 then return end
-    FZ.airstuck.hum = hum
-    FZ.airstuck.root = root
-    FZ.airstuck.platform = hum.PlatformStand and true or false
-    FZ.airstuck.cf = root.CFrame
-    pcall(function() hum.PlatformStand = true end)
+    if not hum or not root or hum.Health <= 0 then return false end
+    A.hum = hum
+    A.root = root
+    A.platform = hum.PlatformStand and true or false
+    A.cf = root.CFrame
+    if holdBody then
+        A.froze = true
+        pcall(function() hum.PlatformStand = true end)
+    end
+    return true
 end
 
 local function airstuckStep()
-    if not FZ.airstuck.on then return end
+    local A = FZ.airstuck
+    if not A.on then return end
+
+    if A.mode == "Packet" then
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        local release = (not hum) or hum.Health <= 0
+        if A.maxHold and A.maxHold > 0 and os.clock() - A.since >= A.maxHold then
+            release = true
+        end
+        if release then
+            if A.stop then A.stop(false) end  -- сами отпускаем трафик
+            return
+        end
+        if A.lock then
+            -- тело тоже держим, но без PlatformStand: хуманоид должен слушаться
+            local root = ch and ch:FindFirstChild("HumanoidRootPart")
+            if root and A.cf then
+                pcall(function()
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    root.CFrame = A.cf
+                end)
+            end
+        end
+        return
+    end
+
     local ch = LP.Character
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
     local root = ch and ch:FindFirstChild("HumanoidRootPart")
     if not hum or not root or hum.Health <= 0 then
         -- померли или персонаж сменился: ждём CharacterAdded
-        FZ.airstuck.root = nil
-        FZ.airstuck.cf = nil
+        A.root = nil
+        A.cf = nil
         return
     end
-    if FZ.airstuck.root ~= root or not FZ.airstuck.cf then
-        airstuckSnap()
+    if A.root ~= root or not A.cf then
+        airstuckSnap(true)
         return
     end
     if not hum.PlatformStand then pcall(function() hum.PlatformStand = true end) end
     pcall(function()
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
-        root.CFrame = FZ.airstuck.cf
+        root.CFrame = A.cf
     end)
 end
 
 local function setAirstuck(on)
-    FZ.airstuck.on = on and true or false
-    if FZ.airstuck.conn then
-        pcall(function() FZ.airstuck.conn:Disconnect() end)
-        FZ.airstuck.conn = nil
+    local A = FZ.airstuck
+    A.on = on and true or false
+    if A.conn then
+        pcall(function() A.conn:Disconnect() end)
+        A.conn = nil
     end
-    if FZ.airstuck.charConn then
-        pcall(function() FZ.airstuck.charConn:Disconnect() end)
-        FZ.airstuck.charConn = nil
+    if A.charConn then
+        pcall(function() A.charConn:Disconnect() end)
+        A.charConn = nil
     end
 
-    if not FZ.airstuck.on then
-        local hum = FZ.airstuck.hum
-        local root = FZ.airstuck.root
-        if hum then
-            -- если включён Fly, PlatformStand ему нужен — не гасим
-            pcall(function() hum.PlatformStand = FZ.fly.on and true or FZ.airstuck.platform end)
+    if not A.on then
+        -- трафик возвращаем первым делом: иначе сервер так и не узнает, где мы
+        if A.net then
+            FEAT.net.set(FEAT.net.MAX)
+            A.net = false
         end
-        if root then
-            pcall(function()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
+        if A.froze then
+            if A.hum then
+                -- если включён Fly, PlatformStand ему нужен — не гасим
+                pcall(function() A.hum.PlatformStand = FZ.fly.on and true or A.platform end)
+            end
+            if A.root then
+                pcall(function()
+                    A.root.AssemblyLinearVelocity = Vector3.zero
+                    A.root.AssemblyAngularVelocity = Vector3.zero
+                end)
+            end
         end
-        FZ.airstuck.root = nil
-        FZ.airstuck.hum = nil
-        FZ.airstuck.cf = nil
+        -- Max Hold гасит фичу сам — синхронизируем тогл, чтобы не висел включённым
+        local c = CONTROLS["Miscellaneous/Main/Air Stuck"]
+        if c and c.get and c:get() then pcall(function() c:set(false, true) end) end
+        A.root = nil
+        A.hum = nil
+        A.cf = nil
+        A.platform = false
+        A.froze = false
+        A.since = 0
         return
     end
 
-    airstuckSnap()
-    FZ.airstuck.conn = RunService.Stepped:Connect(airstuckStep)
-    FZ.airstuck.charConn = LP.CharacterAdded:Connect(function()
+    -- перезапуск режима на ходу: снимаем прошлый фриз и возвращаем трафик
+    if A.net then
+        FEAT.net.set(FEAT.net.MAX)
+        A.net = false
+    end
+    if A.froze and A.hum then
+        pcall(function() A.hum.PlatformStand = A.platform end)
+    end
+    A.froze = false
+
+    A.since = os.clock()
+    if A.mode == "Packet" then
+        A.net = FEAT.net.set(A.throttle)
+        airstuckSnap(false)
+        if not A.net then
+            warn("[SpermaHub] Air Stuck: NetworkClient недоступен — держу тело локально")
+            if A.hum then pcall(function() A.hum.PlatformStand = true end) end
+            A.froze = true
+        end
+    else
+        airstuckSnap(true)
+    end
+
+    A.stop = setAirstuck  -- шаг сам отпускает по Max Hold
+    A.conn = RunService.Stepped:Connect(airstuckStep)
+    A.charConn = LP.CharacterAdded:Connect(function()
         task.wait(0.15)  -- ждём, пока соберётся персонаж
-        if FZ.airstuck.on then airstuckSnap() end
+        if not A.on then return end
+        if A.mode == "Packet" then
+            airstuckSnap(false)
+            if not A.net and A.hum then
+                pcall(function() A.hum.PlatformStand = true end)
+                A.froze = true
+            end
+        else
+            airstuckSnap(true)
+        end
     end)
 end
 
@@ -5117,6 +5233,17 @@ local function buildMain(p)
     move:slider("Fly Speed", 10, 300, 50, 1, function(v) FZ.fly.speed = v end)
     move:toggle("Noclip", false, true, function(on) setNoclip(on) end)
     move:toggle("Air Stuck", false, true, function(on) setAirstuck(on) end)
+    move:dropdown("Air Stuck Mode", { "Packet", "Physics" }, FZ.airstuck.mode, false, function(v)
+        FZ.airstuck.mode = v
+        if FZ.airstuck.on then setAirstuck(true) end  -- перезапуск на новом режиме
+    end)
+    move:slider("Throttle", 10, 500, FZ.airstuck.throttle, 5, function(v)
+        FZ.airstuck.throttle = v
+        if FZ.airstuck.on and FZ.airstuck.net then FEAT.net.set(v) end
+    end)
+    move:slider("Max Hold", 0, 60, FZ.airstuck.maxHold, 1, function(v) FZ.airstuck.maxHold = v end)
+    move:toggle("Lock Body", false, false, function(on) FZ.airstuck.lock = on and true or false end)
+    move:text("Packet — лаг-свитч: режет исходящий трафик, локально двигаешься, для других стоишь. Max Hold сам отпускает, иначе кик. Physics — старый фриз тела в точке.")
     move:toggle("Ghost Stand", false, true, function(on) setGhostFreeze(on) end)
     move:slider("Ghost Cam Speed", 10, 300, GHOST_CAM.speed, 1, function(v) GHOST_CAM.speed = v end)
     move:text("Для других стоишь на месте, камера летит на WASD/Space/Ctrl. Выключишь — появишься там, куда прилетел.")

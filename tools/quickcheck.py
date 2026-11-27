@@ -152,6 +152,19 @@ E.game.GetService = function(self, name)
     return svc
 end
 
+-- NetworkClient: через него пакетный Air Stuck режет исходящий трафик
+local netSvc = { limit = 10000, calls = 0 }
+netSvc.SetOutgoingKBPSLimit = function(self, kbps)
+    self.limit = kbps
+    self.calls = self.calls + 1
+end
+E.netStub = netSvc
+local GSoldSvc = E.game.GetService
+E.game.GetService = function(self, name)
+    if name == "NetworkClient" then return netSvc end
+    return GSoldSvc(self, name)
+end
+
 -- Instance.new: регистрируем ребёнка по Parent (мок этого не делает)
 local Iold = E.Instance.new
 local pmap = setmetatable({}, { __mode = "k" })  -- proxy -> сырой инстанс
@@ -312,10 +325,12 @@ api.SetESP(false)
 frame()
 print("ESP off -> objects: " .. tostring(next(api.ESP.objects) == nil and 0 or 1))
 
--- Air Stuck: держит точку включения и гасит PlatformStand при выключении
+-- Air Stuck (Physics): держит точку включения и гасит PlatformStand при выключении
 local lpc = lp.Character
 local lroot = lpc:FindFirstChild("HumanoidRootPart")
 local lhum = lpc:FindFirstChildOfClass("Humanoid")
+api.Features.airstuck.mode = "Physics"
+api.Features.airstuck.maxHold = 0
 lroot.CFrame = E.CFrame.new(3, 40, 3)
 api.SetAirstuck(true)
 pcall(function() RSf.Stepped:Fire(0.016, 0) end)
@@ -328,6 +343,33 @@ local ap = lroot.CFrame.Position
 print(("AIRSTUCK hold: %.1f,%.1f,%.1f"):format(ap.X, ap.Y, ap.Z))
 api.SetAirstuck(false)
 print("AIRSTUCK off: platform=" .. tostring(lhum.PlatformStand))
+
+-- Air Stuck (Packet): лаг-свитч режет исходящий трафик, тело локально живое
+api.Features.airstuck.mode = "Packet"
+api.Features.airstuck.throttle = 10
+api.Features.airstuck.maxHold = 0
+lroot.CFrame = E.CFrame.new(3, 40, 3)
+api.SetAirstuck(true)
+print("AIRSTUCK packet on: net=" .. tostring(api.Features.airstuck.net)
+    .. " limit=" .. tostring(E.netStub and E.netStub.limit))
+lroot.CFrame = E.CFrame.new(20, 40, 20)
+pcall(function() RSf.Stepped:Fire(0.016, 0) end)
+M.resumeAll()
+local pp = lroot.CFrame.Position
+print(("AIRSTUCK packet move: %.1f,%.1f,%.1f platform=%s"):format(pp.X, pp.Y, pp.Z, tostring(lhum.PlatformStand)))
+api.SetAirstuck(false)
+print("AIRSTUCK packet off: limit=" .. tostring(E.netStub and E.netStub.limit)
+    .. " net=" .. tostring(api.Features.airstuck.net))
+
+-- Max Hold сам отпускает трафик (иначе сервер кикнет за потерю связи)
+api.Features.airstuck.maxHold = 0.05
+api.SetAirstuck(true)
+simClock = simClock + 0.2
+pcall(function() RSf.Stepped:Fire(0.016, 0) end)
+M.resumeAll()
+print("AIRSTUCK maxHold: on=" .. tostring(api.Features.airstuck.on)
+    .. " limit=" .. tostring(E.netStub and E.netStub.limit))
+api.Features.airstuck.mode = "Physics"
 
 -- Ghost Stand: якорь (для других стоишь) + телепорт к камере при выключении
 local wsG = E.game:GetService("Workspace")
