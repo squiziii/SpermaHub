@@ -1449,7 +1449,11 @@ local FZ = {
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
     freecam = { on = false, speed = 80, sens = 1, freeze = true, conn = nil, pos = nil, yaw = 0, pitch = 0,
                 camType = nil, mouse = nil, walk = nil, jump = nil },
-    antiaim = { on = false, dir = "Вверх", angle = 50, conn = nil, orig = {}, neck = nil, char = nil },
+    antiaim = { on = false, mode = "Static", yaw = 90, jitter = 35, spinSpeed = 180, randRange = 180,
+                pitch = "Нет", pitchAngle = 89, noAutoRotate = true, headTilt = false,
+                conn = nil, orig = {}, neck = nil, char = nil,
+                lastYaw = 0, lastPitch = 0, baseYaw = nil, spin = 0, jitterSign = 1,
+                randOff = 0, randAt = 0, pitchAt = 0, pitchRnd = 0, autoRotate = nil },
     airstuck = { on = false, mode = "Packet", throttle = 10, maxHold = 20, lock = false,
                  conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false,
                  net = false, froze = false, since = 0, stop = nil },
@@ -2928,15 +2932,22 @@ FEAT.setFreecam = function(on)
     end)
 end
 
---===================  ANTI AIM  ===================
---  Голова задирается вверх или вниз через Motor6D Neck. Анимации пишут в
---  Transform, а мы — в C0, поэтому поза не сбивается и держится каждый кадр.
---  Поворот идёт вокруг оси шеи (правая ось головы), а не центра торса, иначе
---  голова бы отъезжала в сторону.
+--===================  ANTI AIM (не визуальный)  ===================
+--  Крутим сам HumanoidRootPart, а не только голову: тело и хитбоксы реально
+--  стоят под другим углом, поэтому аим, который целится в голову по модели,
+--  уезжает. Каждый Heartbeat пересобираем ориентацию от «настоящего» yaw
+--  (текущий минус наш прошлый сдвиг) — иначе поворот копился бы.
+--  Head Tilt — отдельная опция, задирает шею через Motor6D.
 FEAT.setAntiAim = function(on)
     local AA = FZ.antiaim
     AA.on = on and true or false
     if AA.conn then pcall(function() AA.conn:Disconnect() end) AA.conn = nil end
+
+    local function humAndRoot()
+        local ch = LP.Character
+        if not ch then return nil, nil, nil end
+        return ch, ch:FindFirstChildOfClass("Humanoid"), ch:FindFirstChild("HumanoidRootPart")
+    end
 
     if not AA.on then
         for motor, c0 in pairs(AA.orig) do
@@ -2944,12 +2955,18 @@ FEAT.setAntiAim = function(on)
         end
         AA.orig = {}
         AA.neck, AA.char = nil, nil
+        local _, hum = humAndRoot()
+        if hum and AA.autoRotate ~= nil then
+            pcall(function() hum.AutoRotate = AA.autoRotate end)
+        end
+        AA.autoRotate = nil
+        AA.lastYaw, AA.lastPitch, AA.baseYaw = 0, 0, nil
+        AA.spin, AA.randOff, AA.pitchRnd = 0, 0, 0
         return
     end
 
-    local function apply()
-        local ch = LP.Character
-        if not ch then return end
+    local function tiltHead(ch)
+        if not AA.headTilt then return end
         if AA.char ~= ch then
             AA.char = ch
             AA.neck = nil
@@ -2960,8 +2977,8 @@ FEAT.setAntiAim = function(on)
         local neck = AA.neck
         if not neck or not neck.Parent then return end
         if AA.orig[neck] == nil then AA.orig[neck] = neck.C0 end
-        local sign = AA.dir == "Вниз" and -1 or 1
-        local angle = math.rad(AA.angle or 0) * sign
+        local angle = math.rad(AA.pitchAngle or 0)
+        if AA.pitch == "Вниз" then angle = -angle end
         local ok = pcall(function()
             neck.C0 = AA.orig[neck] * CFrame.fromAxisAngle(Vector3.new(1, 0, 0), angle)
         end)
@@ -2970,8 +2987,74 @@ FEAT.setAntiAim = function(on)
         end
     end
 
-    apply()
-    AA.conn = RunService.RenderStepped:Connect(apply)
+    AA.conn = RunService.Heartbeat:Connect(function(dt)
+        if not FZ.antiaim.on then return end
+        local ch, hum, root = humAndRoot()
+        if not ch or not hum or not root or hum.Health <= 0 then return end
+        dt = dt or 0.016
+
+        -- контроллер движения перезаписывает yaw, пока AutoRotate включён
+        if AA.noAutoRotate then
+            if AA.autoRotate == nil then AA.autoRotate = hum.AutoRotate end
+            if hum.AutoRotate then pcall(function() hum.AutoRotate = false end) end
+        end
+
+        -- сдвиг по yaw
+        local off = 0
+        if AA.mode == "Jitter" then
+            AA.jitterSign = -(AA.jitterSign or 1)
+            off = math.rad(AA.jitter or 0) * AA.jitterSign
+        elseif AA.mode == "Spin" then
+            AA.spin = ((AA.spin or 0) + math.rad(AA.spinSpeed or 0) * dt) % (math.pi * 2)
+            off = AA.spin
+        elseif AA.mode == "Random" then
+            local now = os.clock()
+            if now >= (AA.randAt or 0) then
+                AA.randAt = now + 0.1
+                AA.randOff = (math.random() * 2 - 1) * math.rad(AA.randRange or 0) * 0.5
+            end
+            off = AA.randOff or 0
+        else -- Static
+            off = math.rad(AA.yaw or 0)
+        end
+
+        -- наклон корпуса
+        local pitch = 0
+        if AA.pitch == "Вверх" then
+            pitch = math.rad(AA.pitchAngle or 0)
+        elseif AA.pitch == "Вниз" then
+            pitch = -math.rad(AA.pitchAngle or 0)
+        elseif AA.pitch == "Случайно" then
+            local now = os.clock()
+            if now >= (AA.pitchAt or 0) then
+                AA.pitchAt = now + 0.15
+                AA.pitchRnd = (math.random() < 0.5) and math.rad(AA.pitchAngle or 0) or -math.rad(AA.pitchAngle or 0)
+            end
+            pitch = AA.pitchRnd or 0
+        end
+
+        -- настоящий yaw: текущий минус наш прошлый сдвиг; при наклоне
+        -- LookVector почти вертикальный, тогда держим прошлую базу
+        local pos = root.CFrame.Position
+        local lv = root.CFrame.LookVector
+        local baseYaw = AA.baseYaw or 0
+        if math.abs(pitch) < 0.5 then
+            baseYaw = math.atan2(-lv.X, -lv.Z) - (AA.lastYaw or 0)
+        end
+        local move = hum.MoveDirection
+        if move and move.Magnitude > 0.1 then
+            baseYaw = math.atan2(-move.X, -move.Z)
+        end
+        AA.baseYaw = baseYaw
+        AA.lastYaw = off
+        AA.lastPitch = pitch
+
+        pcall(function()
+            root.CFrame = CFrame.new(pos) * CFrame.Angles(pitch, baseYaw + off, 0)
+        end)
+
+        tiltHead(ch)
+    end)
 end
 
 --===================  SCAFFOLD  ===================
@@ -5774,13 +5857,28 @@ local BUILDERS = {
     ["Anti Aim"] = function(p)
         local aa = p:card("Anti Aim")
         aa:toggle("Enabled", FZ.antiaim.on, true, function(on) FEAT.setAntiAim(on) end)
-        aa:dropdown("Direction", { "Вверх", "Вниз" }, FZ.antiaim.dir, false, function(v) FZ.antiaim.dir = v end)
-        aa:slider("Angle", 5, 90, FZ.antiaim.angle, 1, function(v) FZ.antiaim.angle = v end)
-        aa:text("Вверх — голова смотрит в потолок, Вниз — в пол. Угол — насколько сильно задрать.")
+        aa:dropdown("Mode", { "Static", "Jitter", "Spin", "Random" }, FZ.antiaim.mode, false, function(v)
+            FZ.antiaim.mode = v
+        end)
+        aa:slider("Yaw", -180, 180, FZ.antiaim.yaw, 1, function(v) FZ.antiaim.yaw = v end)
+        aa:slider("Jitter", 0, 180, FZ.antiaim.jitter, 1, function(v) FZ.antiaim.jitter = v end)
+        aa:slider("Spin Speed", 10, 720, FZ.antiaim.spinSpeed, 10, function(v) FZ.antiaim.spinSpeed = v end)
+        aa:slider("Random Range", 0, 180, FZ.antiaim.randRange, 5, function(v) FZ.antiaim.randRange = v end)
+        aa:text("Static — фиксированный доворот, Jitter — дёргает влево/вправо каждый кадр, Spin — крутится со скоростью Spin Speed, Random — новый угол каждые 0.1 с.")
 
-        local how = p:card("Как работает", "right")
-        how:text("Крутим только шею (Motor6D Neck): тело и хитбоксы не трогаем, но для чужого аима голова уезжает с привычной точки. Анимации пишут в Transform, мы — в C0, поэтому поза держится и не сбивается.")
-        how:text("Выключил — C0 вернулся к исходному автоматически.")
+        local body = p:card("Body", "right")
+        body:dropdown("Pitch", { "Нет", "Вверх", "Вниз", "Случайно" }, FZ.antiaim.pitch, false, function(v)
+            FZ.antiaim.pitch = v
+        end)
+        body:slider("Pitch Angle", 0, 90, FZ.antiaim.pitchAngle, 1, function(v) FZ.antiaim.pitchAngle = v end)
+        body:toggle("No AutoRotate", FZ.antiaim.noAutoRotate, false, function(on)
+            FZ.antiaim.noAutoRotate = on and true or false
+        end)
+        body:toggle("Head Tilt", FZ.antiaim.headTilt, false, function(on)
+            FZ.antiaim.headTilt = on and true or false
+        end)
+        body:text("Крутится сам HumanoidRootPart: хитбоксы реально стоят под другим углом, это не картинка. No AutoRotate обязателен, иначе движение возвращает тело. Head Tilt — отдельно задирает шею.")
+        body:text("Pitch 90° кладёт корпус горизонтально: по голове почти не попасть, но и ходить будет странно.")
     end,
     Legitbot = buildLegitbot,
     Players = buildPlayers,

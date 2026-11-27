@@ -275,7 +275,7 @@ local aap = api.Pages["Anti Aim"]
 if aap and aap.page then
     local found = {}
     for _, o in ipairs(aap.page.holder:GetDescendants()) do
-        if o.ClassName == "TextLabel" and (o.Text == "Direction" or o.Text == "Angle" or o.Text == "Enabled") then
+        if o.ClassName == "TextLabel" and (o.Text == "Mode" or o.Text == "Pitch" or o.Text == "Enabled") then
             table.insert(found, o.Text)
         end
     end
@@ -669,25 +669,36 @@ print("FREECAM off: custom=" .. tostring(fcamt.CameraType == E.Enum.CameraType.C
     .. " pos=" .. tostring(api.Features.freecam.pos)
     .. " walk=" .. tostring(lhum and lhum.WalkSpeed))
 
--- Anti Aim: шея крутится, а на выключении C0 возвращается как был
+-- Anti Aim: корпус реально доворачивается + режимы + head tilt
 local neckM = E.Instance.new("Motor6D")
 neckM.Name = "Neck"
 neckM.C0 = E.CFrame.new(0, 1, 0)
 neckM.Parent = lp.Character
 table.insert(lp.Character._children, neckM)  -- в моке Parent сам в детей не добавляет
+local AA = api.Features.antiaim
+AA.mode = "Static"; AA.yaw = 90; AA.pitch = "Нет"; AA.headTilt = true; AA.pitchAngle = 50
 api.SetAntiAim(true)
-frame()
-local aaMotor = api.Features.antiaim.neck
-local aaOrig = aaMotor and api.Features.antiaim.orig[aaMotor]
-print("ANTIAIM on: neck=" .. tostring(aaMotor ~= nil)
-    .. " tilted=" .. tostring(aaOrig ~= nil and aaMotor.C0 ~= aaOrig)
-    .. " dir=" .. tostring(api.Features.antiaim.dir))
-api.Features.antiaim.dir = "Вниз"
-frame()
-local downTilt = aaMotor.C0 ~= aaOrig
+pcall(function() RSf.Heartbeat:Fire(0.016) end)
+M.resumeAll()
+local aaNeck = AA.neck
+local aaOrig = aaNeck and AA.orig[aaNeck]
+print(("ANTIAIM static: yaw=%.1f autoRotate=%s headTilt=%s"):format(
+    math.deg(AA.lastYaw), tostring(AA.autoRotate ~= nil),
+    tostring(aaOrig ~= nil and aaNeck.C0 ~= aaOrig)))
+for _, m in ipairs({ "Jitter", "Spin", "Random" }) do
+    AA.mode = m
+    pcall(function() RSf.Heartbeat:Fire(0.05) end)
+    M.resumeAll()
+end
+print("ANTIAIM modes: spin=" .. tostring((AA.spin or 0) ~= 0) .. " rand=" .. tostring(AA.randOff ~= nil))
+AA.mode = "Static"; AA.yaw = 0; AA.pitch = "Вверх"; AA.pitchAngle = 89
+pcall(function() RSf.Heartbeat:Fire(0.016) end)
+M.resumeAll()
+print(("ANTIAIM pitch: last=%.1f"):format(math.deg(AA.lastPitch or 0)))
 api.SetAntiAim(false)
-print("ANTIAIM off: restored=" .. tostring(aaOrig ~= nil and aaMotor.C0 == aaOrig)
-    .. " tiltDown=" .. tostring(downTilt))
+print("ANTIAIM off: neckRestored=" .. tostring(aaOrig ~= nil and aaNeck.C0 == aaOrig)
+    .. " autoRotate=" .. tostring(AA.autoRotate == nil and lhum.AutoRotate == true)
+    .. " conn=" .. tostring(AA.conn == nil))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")
