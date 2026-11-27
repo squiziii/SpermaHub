@@ -2860,7 +2860,9 @@ do
         pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end)
     end
 
-    -- камера сверху-сзади, смотрит в точку установки
+    -- камера сверху-сзади, смотрит в точку установки. Ведём её КАЖДЫЙ кадр:
+    -- раньше step выходил раньше при отсутствии клетки, и камера, уже
+    -- переведённая в Scriptable, застывала в воздухе, пока персонаж уходил.
     function SCF.camera(root, point, dt)
         local cam = workspace.CurrentCamera
         if not cam then return end
@@ -2872,9 +2874,18 @@ do
         end
         local g = FZ.scaffold.grid or 4
         local desired = root.Position - Vector3.new(fx, 0, fz) * (g * 2.2) + Vector3.new(0, g * 2.2 + 6, 0)
+        if not point then
+            -- ставить некуда (сплошной пол) — смотрим вперёд-вниз, но не стоим
+            point = root.Position + Vector3.new(fx, 0, fz) * (g * 2) - Vector3.new(0, g * 2, 0)
+        end
         local from = cam.CFrame.Position
-        local a = 1 - (1 - 0.3) ^ ((dt or 0.016) * 60)
-        local camPos = from + (desired - from) * a
+        local camPos
+        if (desired - from).Magnitude > g * 6 then
+            camPos = desired  -- телепорт/респавн: не догоняем через полкарты
+        else
+            local a = 1 - (1 - 0.3) ^ ((dt or 0.016) * 60)
+            camPos = from + (desired - from) * a
+        end
         local yaw, pitch = FEAT.aim.anglesTo(camPos, point)
         if not yaw then return end
         local dir = FEAT.aim.anglesToDir(yaw, pitch)
@@ -2937,14 +2948,20 @@ do
             pcall(function() hum.Jump = true end)
         end
 
-        local cell = SCF.cell(root, hum)
+        -- камеру ведём всегда, даже если ставить некуда: иначе Scriptable-
+        -- камера висит на месте, а персонаж уже двигается. Ошибки рейкаста
+        -- не должны уносить с собой и камеру, поэтому pcall.
+        local okCell, cell = pcall(SCF.cell, root, hum)
+        if not okCell then cell = nil end
         S.cell = cell
-        if not cell then return end
-        local point = SCF.point(cell)
+        local point = nil
+        if cell then
+            local okPoint, pt = pcall(SCF.point, cell)
+            if okPoint then point = pt end
+        end
         S.point = point
-        if not point then return end
-
         SCF.camera(root, point, dt)
+        if not cell or not point then return end
 
         if os.clock() - S.lastPlace < (S.delay or 0.12) then return end
         local cam = workspace.CurrentCamera
@@ -2973,10 +2990,22 @@ do
 
         local cam = workspace.CurrentCamera
         if not S.on then
-            if cam then
+            -- камеру возвращаем игре: Scriptable не восстанавливаем никогда,
+            -- иначе камера остаётся висеть в точке и не идёт за персонажем
+            if cam and not FZ.ghost.on then
+                local ch = LP.Character
+                local hum = ch and ch:FindFirstChildOfClass("Humanoid")
                 pcall(function()
-                    cam.CameraType = S.camType or Enum.CameraType.Custom
-                    if S.camSubject then cam.CameraSubject = S.camSubject end
+                    local back = S.camType
+                    if back == nil or back == Enum.CameraType.Scriptable then
+                        back = Enum.CameraType.Custom
+                    end
+                    cam.CameraType = back
+                    if S.camSubject and S.camSubject.Parent ~= nil then
+                        cam.CameraSubject = S.camSubject
+                    elseif hum then
+                        cam.CameraSubject = hum
+                    end
                 end)
             end
             pcall(function() UIS.MouseBehavior = S.mouse or Enum.MouseBehavior.Default end)

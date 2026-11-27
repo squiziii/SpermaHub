@@ -437,8 +437,27 @@ frame()
 local sv = lroot.AssemblyLinearVelocity
 print(("SAFEWALK vel=%.1f,%.1f,%.1f"):format(sv.X, sv.Y, sv.Z))
 
+-- камера должна идти за персонажем и когда ставить некуда (сплошной пол)
+lroot.CFrame = E.CFrame.new(0, 3, 0)
+lroot.Position = E.Vector3.new(0, 3, 0)  -- в моке CFrame и Position не связаны
+lroot.AssemblyLinearVelocity = E.Vector3.new(0, 0, 0)
+for _ = 1, 20 do frame() end
+local camHole = camG.CFrame.Position
+lroot.CFrame = E.CFrame.new(40, 3, 40)
+lroot.Position = E.Vector3.new(40, 3, 40)
+for _ = 1, 20 do frame() end
+local camSolid = camG.CFrame.Position
+print(("SCAFFOLD cam follow: hole=%.1f,%.1f,%.1f solid=%.1f,%.1f,%.1f"):format(
+    camHole.X, camHole.Y, camHole.Z, camSolid.X, camSolid.Y, camSolid.Z))
+
 api.SetScaffold(false)
 print("SCAFFOLD off: scriptable=" .. tostring(camG.CameraType == E.Enum.CameraType.Scriptable) .. " placed=" .. tostring(scf.placed))
+
+-- камера осталась в Scriptable от прошлого запуска — выключение лечит
+camG.CameraType = E.Enum.CameraType.Scriptable
+api.SetScaffold(true)
+api.SetScaffold(false)
+print("SCAFFOLD heal: custom=" .. tostring(camG.CameraType == E.Enum.CameraType.Custom))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")

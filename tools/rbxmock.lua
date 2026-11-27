@@ -178,14 +178,27 @@ end
 
 M.E = {newInst = newInst, calls = {}}
 
--- Enum
-local enumMT = {
-    __index = function(_, k)
-        local v = {Name = tostring(k)}
-        return v
-    end,
-}
-local Enum = setmetatable({}, {__index = function(_, k) return setmetatable({}, enumMT) end})
+-- Enum: значения кешируются по ключу — в Roblox это синглтоны, и код
+-- сравнивает их через ==, значит мок должен вести себя так же
+local enumGroups = {}
+local function enumGroup(name)
+    local g = enumGroups[name]
+    if g then return g end
+    local cache = {}
+    g = setmetatable({}, {
+        __index = function(_, k)
+            local v = cache[k]
+            if not v then
+                v = {Name = tostring(k)}
+                cache[k] = v
+            end
+            return v
+        end,
+    })
+    enumGroups[name] = g
+    return g
+end
+local Enum = setmetatable({}, {__index = function(_, k) return enumGroup(k) end})
 
 -- дататайпы
 V3 = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, {
@@ -334,7 +347,7 @@ local UIS = {
 }
 local WS = newInst("Workspace") WS.Name = "Workspace"
 WS.Raycast = function() return nil end
-WS.CurrentCamera = {ViewportSize = Vector2.new(1920, 1080), CFrame = CF.new(), WorldToViewportPoint = function() return V3(960, 540, 10), 10, true end, WorldToScreenPoint = function() return V3(960, 576, 10), 10, true end, FieldOfView = 70}
+WS.CurrentCamera = {CameraType = Enum.CameraType.Custom, ViewportSize = Vector2.new(1920, 1080), CFrame = CF.new(), WorldToViewportPoint = function() return V3(960, 540, 10), 10, true end, WorldToScreenPoint = function() return V3(960, 576, 10), 10, true end, FieldOfView = 70}
 WS.Terrain = newInst("Terrain")
 
 local Lighting = newInst("Lighting") Lighting.GlobalShadows = true Lighting.FogStart = 0 Lighting.FogEnd = 1000
