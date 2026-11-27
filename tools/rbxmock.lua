@@ -237,6 +237,7 @@ CF = {
         return t
     end,
     Angles = function(...) return cfBase() end,
+    fromAxisAngle = function(...) return cfBase() end,
     lookAt = function(from, to)
         local t = cfBase()
         t.Position = from

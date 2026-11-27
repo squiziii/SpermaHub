@@ -271,6 +271,19 @@ if legit and legit.page then
     print("LEGITBOT cards: " .. table.concat(found, ", "))
 end
 
+local aap = api.Pages["Anti Aim"]
+if aap and aap.page then
+    local found = {}
+    for _, o in ipairs(aap.page.holder:GetDescendants()) do
+        if o.ClassName == "TextLabel" and (o.Text == "Direction" or o.Text == "Angle" or o.Text == "Enabled") then
+            table.insert(found, o.Text)
+        end
+    end
+    table.sort(found)
+    print("ANTIAIM cards: " .. table.concat(found, ", ")
+        .. " ctrl=" .. tostring(api.Config["Anti Aim/Anti Aim/Enabled"] ~= nil))
+end
+
 -- ESP: фильтры по команде/друзьям/дистанции + тоглы отрисовки + цвета
 local PS = E.game:GetService("Players")
 local lp = PS.LocalPlayer
@@ -628,6 +641,53 @@ for _, d in ipairs(skelDots) do if d.Visible then dotsOn = dotsOn + 1 end end
 print("SKELETON dots: total=" .. #skelDots .. " visible=" .. dotsOn)
 api.SetESP(false)
 PS.GetPlayers = playersOld
+
+-- NoClip: гасит коллизии частей и возвращает их назад
+local nroot = lp.Character:FindFirstChild("HumanoidRootPart")
+nroot.CanCollide = true
+api.SetNoclip(true)
+print("NOCLIP on: collide=" .. tostring(nroot.CanCollide))
+api.SetNoclip(false)
+print("NOCLIP off: collide=" .. tostring(nroot.CanCollide))
+
+-- Free Camera: камера отцепляется и летит на WASD, тело стоит
+local fcamt = wsG.CurrentCamera
+uis.IsKeyDown = function(_, key) return key == E.Enum.KeyCode.W end
+uis.GetMouseDelta = function() return E.Vector2.new(0, 4) end
+api.SetFreecam(true)
+local cp1 = api.Features.freecam.pos
+pcall(function() RSf.RenderStepped:Fire(0.1) end)
+M.resumeAll()
+local cp2 = api.Features.freecam.pos
+print(("FREECAM on: scriptable=%s from=%.1f,%.1f,%.1f to=%.1f,%.1f,%.1f walk=%s"):format(
+    tostring(fcamt.CameraType == E.Enum.CameraType.Scriptable), cp1.X, cp1.Y, cp1.Z, cp2.X, cp2.Y, cp2.Z,
+    tostring(api.Features.freecam.walk)))
+api.SetFreecam(false)
+uis.IsKeyDown = function() return false end
+uis.GetMouseDelta = function() return E.Vector2.new(0, 0) end
+print("FREECAM off: custom=" .. tostring(fcamt.CameraType == E.Enum.CameraType.Custom)
+    .. " pos=" .. tostring(api.Features.freecam.pos)
+    .. " walk=" .. tostring(lhum and lhum.WalkSpeed))
+
+-- Anti Aim: шея крутится, а на выключении C0 возвращается как был
+local neckM = E.Instance.new("Motor6D")
+neckM.Name = "Neck"
+neckM.C0 = E.CFrame.new(0, 1, 0)
+neckM.Parent = lp.Character
+table.insert(lp.Character._children, neckM)  -- в моке Parent сам в детей не добавляет
+api.SetAntiAim(true)
+frame()
+local aaMotor = api.Features.antiaim.neck
+local aaOrig = aaMotor and api.Features.antiaim.orig[aaMotor]
+print("ANTIAIM on: neck=" .. tostring(aaMotor ~= nil)
+    .. " tilted=" .. tostring(aaOrig ~= nil and aaMotor.C0 ~= aaOrig)
+    .. " dir=" .. tostring(api.Features.antiaim.dir))
+api.Features.antiaim.dir = "Вниз"
+frame()
+local downTilt = aaMotor.C0 ~= aaOrig
+api.SetAntiAim(false)
+print("ANTIAIM off: restored=" .. tostring(aaOrig ~= nil and aaMotor.C0 == aaOrig)
+    .. " tiltDown=" .. tostring(downTilt))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")

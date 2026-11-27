@@ -1447,6 +1447,9 @@ local FZ = {
     },
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
+    freecam = { on = false, speed = 80, sens = 1, freeze = true, conn = nil, pos = nil, yaw = 0, pitch = 0,
+                camType = nil, mouse = nil, walk = nil, jump = nil },
+    antiaim = { on = false, dir = "Вверх", angle = 50, conn = nil, orig = {}, neck = nil, char = nil },
     airstuck = { on = false, mode = "Packet", throttle = 10, maxHold = 20, lock = false,
                  conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false,
                  net = false, froze = false, since = 0, stop = nil },
@@ -2835,6 +2838,140 @@ local function setGhostFreeze(on)
         task.wait(0.2)
         if FZ.ghost.on then ghostAttach() end
     end)
+end
+
+--===================  FREE CAMERA  ===================
+--  Камера отцепляется от тела и летает сама: WASD/Space/Ctrl, мышь крутит
+--  обзор, Shift — ускорение. Персонаж при этом стоит: на время включаем ему
+--  WalkSpeed/JumpPower = 0 (Freeze Body), иначе W уводил бы и тело тоже.
+--  Это именно камера, а не полёт тела — для полёта есть Fly.
+FEAT.setFreecam = function(on)
+    local FC = FZ.freecam
+    FC.on = on and true or false
+    if FC.conn then pcall(function() FC.conn:Disconnect() end) FC.conn = nil end
+    local cam = workspace.CurrentCamera
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+
+    if not FC.on then
+        pcall(function()
+            if cam then
+                cam.CameraType = FC.camType or Enum.CameraType.Custom
+                if hum then cam.CameraSubject = hum end
+            end
+            UIS.MouseBehavior = FC.mouse or Enum.MouseBehavior.Default
+            UIS.MouseIconEnabled = true
+        end)
+        if hum and FC.walk then pcall(function() hum.WalkSpeed = FC.walk end) end
+        if hum and FC.jump then pcall(function() hum.JumpPower = FC.jump end) end
+        FC.pos, FC.camType, FC.mouse, FC.walk, FC.jump = nil, nil, nil, nil, nil
+        return
+    end
+
+    if not cam then FC.on = false return end
+    FC.pos = cam.CFrame.Position
+    local lv = cam.CFrame.LookVector
+    FC.yaw = math.atan2(-lv.X, -lv.Z)
+    FC.pitch = math.asin(math.clamp(lv.Y, -1, 1))
+    pcall(function()
+        FC.camType = cam.CameraType
+        cam.CameraType = Enum.CameraType.Scriptable
+    end)
+    pcall(function()
+        FC.mouse = UIS.MouseBehavior
+        UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+        UIS.MouseIconEnabled = false
+    end)
+    if hum and FC.freeze then
+        FC.walk = hum.WalkSpeed
+        FC.jump = hum.JumpPower
+        pcall(function()
+            hum.WalkSpeed = 0
+            hum.JumpPower = 0
+        end)
+    end
+
+    FC.conn = RunService.RenderStepped:Connect(function(dt)
+        if not FZ.freecam.on then return end
+        local c = workspace.CurrentCamera
+        if not c then return end
+
+        local delta
+        pcall(function() delta = UIS:GetMouseDelta() end)
+        if delta then
+            local sens = 0.003 * (FC.sens or 1)
+            FC.yaw = FC.yaw - delta.X * sens
+            FC.pitch = math.clamp(FC.pitch - delta.Y * sens, -1.5, 1.5)
+        end
+
+        local yaw, pitch = FC.yaw, FC.pitch
+        local fwd = Vector3.new(-math.sin(yaw) * math.cos(pitch), math.sin(pitch), -math.cos(yaw) * math.cos(pitch))
+        local right = Vector3.new(math.cos(yaw), 0, -math.sin(yaw))
+        local d = Vector3.new(0, 0, 0)
+        if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + fwd end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - fwd end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + right end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - right end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then d = d + Vector3.new(0, 1, 0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then d = d - Vector3.new(0, 1, 0) end
+
+        local pos = FC.pos or c.CFrame.Position
+        if d.Magnitude > 0 then
+            local boost = UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 2.5 or 1
+            pos = pos + d.Unit * FC.speed * boost * (dt or 0.016)
+        end
+        FC.pos = pos
+        pcall(function()
+            c.CameraType = Enum.CameraType.Scriptable
+            c.CFrame = CFrame.new(pos) * (CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0))
+        end)
+    end)
+end
+
+--===================  ANTI AIM  ===================
+--  Голова задирается вверх или вниз через Motor6D Neck. Анимации пишут в
+--  Transform, а мы — в C0, поэтому поза не сбивается и держится каждый кадр.
+--  Поворот идёт вокруг оси шеи (правая ось головы), а не центра торса, иначе
+--  голова бы отъезжала в сторону.
+FEAT.setAntiAim = function(on)
+    local AA = FZ.antiaim
+    AA.on = on and true or false
+    if AA.conn then pcall(function() AA.conn:Disconnect() end) AA.conn = nil end
+
+    if not AA.on then
+        for motor, c0 in pairs(AA.orig) do
+            pcall(function() motor.C0 = c0 end)
+        end
+        AA.orig = {}
+        AA.neck, AA.char = nil, nil
+        return
+    end
+
+    local function apply()
+        local ch = LP.Character
+        if not ch then return end
+        if AA.char ~= ch then
+            AA.char = ch
+            AA.neck = nil
+            for _, d in ipairs(ch:GetDescendants()) do
+                if d:IsA("Motor6D") and d.Name == "Neck" then AA.neck = d break end
+            end
+        end
+        local neck = AA.neck
+        if not neck or not neck.Parent then return end
+        if AA.orig[neck] == nil then AA.orig[neck] = neck.C0 end
+        local sign = AA.dir == "Вниз" and -1 or 1
+        local angle = math.rad(AA.angle or 0) * sign
+        local ok = pcall(function()
+            neck.C0 = AA.orig[neck] * CFrame.fromAxisAngle(Vector3.new(1, 0, 0), angle)
+        end)
+        if not ok then
+            pcall(function() neck.C0 = AA.orig[neck] * CFrame.Angles(angle, 0, 0) end)
+        end
+    end
+
+    apply()
+    AA.conn = RunService.RenderStepped:Connect(apply)
 end
 
 --===================  SCAFFOLD  ===================
@@ -5366,6 +5503,11 @@ local function buildMain(p)
     move:toggle("Fly", false, true, function(on) setFly(on) end)
     move:slider("Fly Speed", 10, 300, 50, 1, function(v) FZ.fly.speed = v end)
     move:toggle("Noclip", false, true, function(on) setNoclip(on) end)
+    move:toggle("Free Camera", false, true, function(on) FEAT.setFreecam(on) end)
+    move:slider("Cam Speed", 10, 400, FZ.freecam.speed, 5, function(v) FZ.freecam.speed = v end)
+    move:slider("Cam Sens", 10, 300, math.floor((FZ.freecam.sens or 1) * 100), 5, function(v) FZ.freecam.sens = v / 100 end)
+    move:toggle("Freeze Body", FZ.freecam.freeze, false, function(on) FZ.freecam.freeze = on and true or false end)
+    move:text("Free Camera — камера летит на WASD/Space/Ctrl, мышь крутит обзор, Shift ускоряет. Тело стоит (Freeze Body). Через стены летает сама камера, тело — Noclip + Fly.")
     move:toggle("Air Stuck", false, true, function(on) setAirstuck(on) end)
     move:dropdown("Air Stuck Mode", { "Packet", "Physics" }, FZ.airstuck.mode, false, function(v)
         FZ.airstuck.mode = v
@@ -5628,6 +5770,18 @@ local PAGES = {
 
 local BUILDERS = {
     Ragebot = buildRagebot,
+    -- без отдельного local: в чанке уже упираемся в лимит 200 локалов
+    ["Anti Aim"] = function(p)
+        local aa = p:card("Anti Aim")
+        aa:toggle("Enabled", FZ.antiaim.on, true, function(on) FEAT.setAntiAim(on) end)
+        aa:dropdown("Direction", { "Вверх", "Вниз" }, FZ.antiaim.dir, false, function(v) FZ.antiaim.dir = v end)
+        aa:slider("Angle", 5, 90, FZ.antiaim.angle, 1, function(v) FZ.antiaim.angle = v end)
+        aa:text("Вверх — голова смотрит в потолок, Вниз — в пол. Угол — насколько сильно задрать.")
+
+        local how = p:card("Как работает", "right")
+        how:text("Крутим только шею (Motor6D Neck): тело и хитбоксы не трогаем, но для чужого аима голова уезжает с привычной точки. Анимации пишут в Transform, мы — в C0, поэтому поза держится и не сбивается.")
+        how:text("Выключил — C0 вернулся к исходному автоматически.")
+    end,
     Legitbot = buildLegitbot,
     Players = buildPlayers,
     Main = buildMain,
@@ -5845,6 +5999,8 @@ local api = {
     SetESP = setESP,
     SetFly = setFly,
     SetNoclip = setNoclip,
+    SetFreecam = FEAT.setFreecam,
+    SetAntiAim = FEAT.setAntiAim,
     SetAirstuck = setAirstuck,
     SetGhostFreeze = setGhostFreeze,
     NoclipTeleport = noclipTeleport,
