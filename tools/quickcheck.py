@@ -340,6 +340,35 @@ api.ESP.name = false; frame()
 local nameVisible = nil
 for _, data in pairs(api.ESP.objects) do if not data.hidden then nameVisible = data.nameLabel.Visible end end
 print("ESP name=off -> label visible: " .. tostring(nameVisible))
+
+-- визуалы как в обзоре Vanish: уголки по умолчанию, дистанция и тег команды под боксом
+api.ESP.name = true
+api.ESP.box = true
+api.ESP.boxStyle = "Уголки"
+api.ESP.dist = true
+api.ESP.teamTag = true
+frame()
+local function styleState()
+    local cornersOn, frameOn, distTxt, teamTxt = false, false, nil, nil
+    for plr, data in pairs(api.ESP.objects) do
+        if not data.hidden then
+            for _, l in ipairs(data.corners) do if l.Visible then cornersOn = true end end
+            for _, l in ipairs(data.box) do if l.Visible then frameOn = true end end
+            if plr.Name == "Mate" then
+                distTxt = data.distLabel.Text
+                teamTxt = data.teamLabel.Text
+            end
+        end
+    end
+    return cornersOn, frameOn, distTxt, teamTxt
+end
+local co, fo, dt, tt = styleState()
+print("ESP style=Уголки: corners=" .. tostring(co) .. " frame=" .. tostring(fo))
+print("ESP under-box: dist=" .. tostring(dt) .. " team=" .. tostring(tt))
+api.ESP.boxStyle = "Рамка"; frame()
+co, fo = styleState()
+print("ESP style=Рамка: corners=" .. tostring(co) .. " frame=" .. tostring(fo))
+api.ESP.boxStyle = "Уголки"
 api.SetESP(false)
 frame()
 print("ESP off -> objects: " .. tostring(next(api.ESP.objects) == nil and 0 or 1))
@@ -593,6 +622,10 @@ print(("SKELETON head-top: pos=%.1f,%.1f size=%.1f rot=%.1f"):format(
     lineHT.Position.X.Offset, lineHT.Position.Y.Offset, lineHT.Size.X.Offset, lineHT.Rotation))
 print(("SKELETON arm: pos=%.1f,%.1f size=%.1f rot=%.1f"):format(
     lineLA.Position.X.Offset, lineLA.Position.Y.Offset, lineLA.Size.X.Offset, lineLA.Rotation))
+local skelDots = api.Features.esp.skelDotFrames[skelPlr] or {}
+local dotsOn = 0
+for _, d in ipairs(skelDots) do if d.Visible then dotsOn = dotsOn + 1 end end
+print("SKELETON dots: total=" .. #skelDots .. " visible=" .. dotsOn)
 api.SetESP(false)
 PS.GetPlayers = playersOld
 

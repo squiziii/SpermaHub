@@ -1436,13 +1436,14 @@ local FZ = {
     silent  = { on = false, fov = 150, conn = nil },
     hitbox  = { on = false, size = 5, conn = nil, sizes = {} },
     esp     = {
-        on = false, skel = true, conn = nil, gui = nil, objects = {}, skelFrames = {}, plConn = nil, remConn = nil,
+        on = false, skel = true, skelDots = true, conn = nil, gui = nil, objects = {},
+        skelFrames = {}, skelDotFrames = {}, plConn = nil, remConn = nil,
         -- фильтры
         ignoreTeam = true, ignoreFriends = true, maxDist = 500, visibleOnly = false,
         -- что рисовать
-        box = true, name = true, hp = true, dist = true,
+        box = true, boxStyle = "Уголки", name = true, hp = true, dist = true, teamTag = true,
         -- цвета (ключи из ESP_COLORS)
-        colorBox = "Белый", colorSkel = "Голубой", colorText = "Серый", colorChams = "Голубой",
+        colorBox = "Белый", colorSkel = "Белый", colorText = "Белый", colorChams = "Голубой",
     },
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
@@ -2036,9 +2037,9 @@ local function createESP(plr)
     }, g)
 
     -- тонкая рамка (4 линии)
-    for i = 1, 4 do data.box[i] = espLine(g, ESP_FRAME, 4) end
+    for i = 1, 4 do data.box[i] = espLine(g, espColor(FZ.esp.colorBox), 4) end
     -- уголки (8 коротких линий)
-    for i = 1, 8 do data.corners[i] = espLine(g, ESP_FRAME, 5) end
+    for i = 1, 8 do data.corners[i] = espLine(g, espColor(FZ.esp.colorBox), 5) end
 
     -- полоска здоровья слева
     data.hpBg = espLine(g, Color3.fromRGB(6, 9, 13), 4)
@@ -2061,25 +2062,45 @@ local function createESP(plr)
         TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
         TextXAlignment = Enum.TextXAlignment.Center,
     })
-    data.infoLabel = txt(bb, "", {
-        Position = UDim2.new(0, 0, 0, 19),
-        Size = UDim2.new(1, 0, 0, 16),
+    data.billboard = bb
+
+    -- дистанция и тег команды — под боксом, как в обзоре Vanish
+    data.distLabel = txt(g, "", {
+        AnchorPoint = Vector2.new(0.5, 0),
+        Size = UDim2.new(0, 140, 0, 14),
         Font = F.med,
         TextSize = 12,
-        TextColor3 = ESP_TEXT,
+        TextColor3 = ESP_COLORS["Белый"],
+        TextStrokeTransparency = 0.35,
+        TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+        TextXAlignment = Enum.TextXAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        ZIndex = 6,
+        Visible = false,
+    })
+    data.teamLabel = txt(g, "", {
+        AnchorPoint = Vector2.new(0.5, 0),
+        Size = UDim2.new(0, 140, 0, 14),
+        Font = F.bold,
+        TextSize = 11,
+        TextColor3 = ESP_COLORS["Зелёный"],
         TextStrokeTransparency = 0.45,
         TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
         TextXAlignment = Enum.TextXAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        ZIndex = 6,
+        Visible = false,
     })
-    data.billboard = bb
 end
 
 local function removeESP(plr)
     local data = FZ.esp.objects[plr]
     if not data then return end
-    local loose = { data.highlight, data.billboard, data.hpBg, data.hpFill }
+    local loose = { data.highlight, data.billboard, data.hpBg, data.hpFill, data.distLabel, data.teamLabel }
     for _, obj in ipairs(data.box) do table.insert(loose, obj) end
     for _, obj in ipairs(data.corners) do table.insert(loose, obj) end
+    for _, obj in ipairs(FZ.esp.skelDotFrames[plr] or {}) do table.insert(loose, obj) end
+    FZ.esp.skelDotFrames[plr] = nil
     for _, obj in ipairs(loose) do
         if obj then pcall(function() obj:Destroy() end) end
     end
@@ -2092,6 +2113,8 @@ local function hideESP(data)
     for _, o in ipairs(data.corners) do o.Visible = false end
     if data.hpBg then data.hpBg.Visible = false end
     if data.hpFill then data.hpFill.Visible = false end
+    if data.distLabel then data.distLabel.Visible = false end
+    if data.teamLabel then data.teamLabel.Visible = false end
     if data.highlight then
         data.highlight.Adornee = nil
         data.highlight.Enabled = false
@@ -2148,9 +2171,11 @@ local function updateESP()
 
                 local fade = math.clamp(1 - (dist or 0) / 400, 0.35, 1)
                 local frameA = 0.7 + (1 - fade) * 0.2
-                local cornerA = 0.15 + (1 - fade) * 0.3
+                local cornerA = 0.2 + (1 - fade) * 0.3
+                -- стиль бокса: у Vanish по умолчанию только уголки, рамка целиком — опция
+                local style = esp.boxStyle or "Уголки"
 
-                if esp.box then
+                if esp.box and style ~= "Уголки" then
                     local edges = {
                         { x, y, width, 1 }, { x, bottom, width, 1 },
                         { x, y, 1, height }, { right, y, 1, height },
@@ -2163,7 +2188,11 @@ local function updateESP()
                         line.BackgroundTransparency = frameA
                         line.Visible = true
                     end
+                else
+                    for _, line in ipairs(data.box) do line.Visible = false end
+                end
 
+                if esp.box and style ~= "Рамка" then
                     local arm = math.clamp(height * 0.16, 6, 16)
                     local corners = {
                         { x, y, arm, 1 }, { x, y, 1, arm },
@@ -2180,7 +2209,6 @@ local function updateESP()
                         line.Visible = true
                     end
                 else
-                    for _, line in ipairs(data.box) do line.Visible = false end
                     for _, line in ipairs(data.corners) do line.Visible = false end
                 end
 
@@ -2198,13 +2226,27 @@ local function updateESP()
                     data.hpFill.Visible = false
                 end
 
-                local info = {}
-                if hum and esp.hp then table.insert(info, string.format("%d HP", math.floor(hum.Health))) end
-                if esp.dist and dist then table.insert(info, string.format("%dm", math.floor(dist))) end
-                if data.infoLabel then
-                    data.infoLabel.Text = table.concat(info, "  \u{2022}  ")
-                    data.infoLabel.Visible = #info > 0
-                    data.infoLabel.TextColor3 = textColor
+                -- подписи под боксом: сначала дистанция, под ней тег команды
+                local tagY = bottom + 3
+                if esp.dist and dist then
+                    data.distLabel.Text = string.format("%d m", math.floor(dist + 0.5))
+                    data.distLabel.TextColor3 = textColor
+                    data.distLabel.Position = UDim2.new(0, x + width * 0.5, 0, tagY)
+                    data.distLabel.Visible = true
+                    tagY = tagY + 13
+                else
+                    data.distLabel.Visible = false
+                end
+                local tag = plr.Team and plr.Team.Name
+                if esp.teamTag and tag and tag ~= "" then
+                    local teamColor = nil
+                    pcall(function() teamColor = plr.Team.TeamColor.Color end)
+                    data.teamLabel.Text = string.upper(tag)
+                    data.teamLabel.TextColor3 = teamColor or ESP_COLORS["Зелёный"]
+                    data.teamLabel.Position = UDim2.new(0, x + width * 0.5, 0, tagY)
+                    data.teamLabel.Visible = true
+                else
+                    data.teamLabel.Visible = false
                 end
                 if data.nameLabel then
                     data.nameLabel.Visible = esp.name
@@ -2223,6 +2265,32 @@ local function updateESP()
     end
 end
 
+-- точка на суставе: в референсе скелет — линии плюс кружки в узлах
+-- держим в FZ.esp, чтобы не упираться в лимит 200 локалов на чанк
+FZ.esp.dot = function(dots, count, g, color, key, view, seen)
+    if seen[key] then return count end
+    seen[key] = true
+    count = count + 1
+    local d = dots[count]
+    if not d then
+        d = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = color,
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Size = UDim2.new(0, 3, 0, 3),
+            ZIndex = 3,
+            Visible = false,
+        }, g)
+        new("UICorner", { CornerRadius = UDim.new(1, 0) }, d)
+        dots[count] = d
+    end
+    d.BackgroundColor3 = color
+    d.Position = UDim2.new(0, view.X, 0, view.Y)
+    d.Visible = true
+    return count
+end
+
 local function drawSkeleton()
     local cam = workspace.CurrentCamera
     if not cam then return end
@@ -2231,6 +2299,7 @@ local function drawSkeleton()
         local ch = plr.Character
         if data.hidden then
             for _, f in ipairs(FZ.esp.skelFrames[plr] or {}) do f.Visible = false end
+            for _, d in ipairs(FZ.esp.skelDotFrames[plr] or {}) do d.Visible = false end
         elseif ch and alive(plr) then
             local parts = {}
             for _, p in ipairs(ch:GetChildren()) do
@@ -2255,6 +2324,9 @@ local function drawSkeleton()
             end
             local frames = FZ.esp.skelFrames[plr]
             if not frames then frames = {} FZ.esp.skelFrames[plr] = frames end
+            local dots = FZ.esp.skelDotFrames[plr]
+            if not dots then dots = {} FZ.esp.skelDotFrames[plr] = dots end
+            local seen, dotCount = {}, 0
             local g = espGui()
             for i, link in ipairs(links) do
                 local p1, p2 = parts[link[1]], parts[link[2]]
@@ -2284,6 +2356,10 @@ local function drawSkeleton()
                         local angle = math.atan2 and math.atan2(dy, dx) or math.atan(dy, dx)
                         f.Rotation = math.deg(angle)
                         f.Visible = len > 1
+                        if FZ.esp.skelDots then
+                            dotCount = FZ.esp.dot(dots, dotCount, g, skelColor, link[1], v1, seen)
+                            dotCount = FZ.esp.dot(dots, dotCount, g, skelColor, link[2], v2, seen)
+                        end
                     elseif frames[i] then
                         frames[i].Visible = false
                     end
@@ -2292,6 +2368,7 @@ local function drawSkeleton()
                 end
             end
             for i = #links + 1, #frames do frames[i].Visible = false end
+            for i = dotCount + 1, #dots do dots[i].Visible = false end
         end
     end
 end
@@ -2311,6 +2388,10 @@ local function setESP(on)
             for _, f in ipairs(frames) do pcall(function() f:Destroy() end) end
         end
         FZ.esp.skelFrames = {}
+        for _, dots in pairs(FZ.esp.skelDotFrames) do
+            for _, d in ipairs(dots) do pcall(function() d:Destroy() end) end
+        end
+        FZ.esp.skelDotFrames = {}
         return
     end
 
@@ -5206,9 +5287,12 @@ local function buildLegitbot(p)
 end
 
 local function buildPlayers(p)
+    -- как в Vanish: рамка целиком, только уголки или всё сразу
+    local boxStyles = { "Уголки", "Рамка", "Уголки + Рамка" }
     local esp = p:card("ESP")
     esp:toggle("Enabled", false, true, function(on) setESP(on) end)
     esp:toggle("Skeleton", FZ.esp.skel, false, function(on) FZ.esp.skel = on end)
+    esp:toggle("Skeleton Dots", FZ.esp.skelDots, false, function(on) FZ.esp.skelDots = on and true or false end)
     esp:toggle("Ignore Team", FZ.esp.ignoreTeam, false, function(on)
         FZ.esp.ignoreTeam = on and true or false
     end)
@@ -5226,9 +5310,11 @@ local function buildPlayers(p)
 
     local draw = p:card("Draw", "right")
     draw:toggle("Box", FZ.esp.box, false, function(on) FZ.esp.box = on and true or false end)
+    draw:dropdown("Box Style", boxStyles, FZ.esp.boxStyle, false, function(v) FZ.esp.boxStyle = v end)
     draw:toggle("Name", FZ.esp.name, false, function(on) FZ.esp.name = on and true or false end)
     draw:toggle("HP", FZ.esp.hp, false, function(on) FZ.esp.hp = on and true or false end)
     draw:toggle("Distance", FZ.esp.dist, false, function(on) FZ.esp.dist = on and true or false end)
+    draw:toggle("Team Tag", FZ.esp.teamTag, false, function(on) FZ.esp.teamTag = on and true or false end)
     draw:dropdown("Box Color", ESP_COLOR_LIST, FZ.esp.colorBox, false, function(v)
         FZ.esp.colorBox = v
     end)
