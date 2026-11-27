@@ -1449,6 +1449,7 @@ local FZ = {
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
     freecam = { on = false, speed = 80, sens = 1, freeze = true, conn = nil, pos = nil, yaw = 0, pitch = 0,
                 camType = nil, mouse = nil, walk = nil, jump = nil, menuOpen = false },
+    camTp = { on = false, lastTp = nil },
     antiaim = { on = false, mode = "Static", yaw = 90, jitter = 35, spinSpeed = 180, randRange = 180,
                 pitch = "Нет", pitchAngle = 89, noAutoRotate = true, headTilt = false,
                 conn = nil, orig = {}, neck = nil, char = nil,
@@ -2858,6 +2859,7 @@ FEAT.setFreecam = function(on)
     local hum = ch and ch:FindFirstChildOfClass("Humanoid")
 
     if not FC.on then
+        local exitPos = FC.pos
         pcall(function()
             if cam then
                 cam.CameraType = FC.camType or Enum.CameraType.Custom
@@ -2869,6 +2871,14 @@ FEAT.setFreecam = function(on)
         if hum and FC.walk then pcall(function() hum.WalkSpeed = FC.walk end) end
         if hum and FC.jump then pcall(function() hum.JumpPower = FC.jump end) end
         FC.pos, FC.camType, FC.mouse, FC.walk, FC.jump = nil, nil, nil, nil, nil
+        -- Cam TP: вышли из фрикама — тело переезжает туда, где стояла камера
+        if FZ.camTp.on then
+            FZ.camTp.on = false
+            if exitPos then
+                FZ.camTp.lastTp = exitPos
+                pcall(FEAT.tpBody, exitPos)
+            end
+        end
         return
     end
 
@@ -2938,6 +2948,39 @@ FEAT.setFreecam = function(on)
             c.CFrame = CFrame.new(pos) * (CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0))
         end)
     end)
+end
+
+--===================  CAM TP (фрикам + телепорт тела)  ===================
+--  Тело стоит на месте, камера улетает. На выключении тело переносится в
+--  точку, где остановилась камера: для других игроков это выглядит так,
+--  будто ты стоял, а потом оказался там.
+FEAT.tpBody = function(pos)
+    local ch = LP.Character
+    if not ch or not pos then return false end
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    local ok = pcall(function()
+        local cf = CFrame.new(pos) * (root.CFrame - root.CFrame.Position)
+        if ch.PivotTo then ch:PivotTo(cf) else root.CFrame = cf end
+    end)
+    if ok then return true end
+    return (pcall(function() root.CFrame = CFrame.new(pos) end))
+end
+
+FEAT.setCamTp = function(on)
+    local CT = FZ.camTp
+    CT.on = on and true or false
+    if CT.on then
+        FZ.freecam.freeze = true   -- тело не должно ехать вместе с камерой
+        FEAT.setFreecam(true)
+    else
+        local exitPos = FZ.freecam.pos
+        FEAT.setFreecam(false)
+        if exitPos then
+            CT.lastTp = exitPos
+            FEAT.tpBody(exitPos)
+        end
+    end
 end
 
 --===================  ANTI AIM (не визуальный)  ===================
@@ -5599,6 +5642,8 @@ local function buildMain(p)
     move:slider("Cam Sens", 10, 300, math.floor((FZ.freecam.sens or 1) * 100), 5, function(v) FZ.freecam.sens = v / 100 end)
     move:toggle("Freeze Body", FZ.freecam.freeze, false, function(on) FZ.freecam.freeze = on and true or false end)
     move:text("Free Camera — камера летит на WASD/Space/Ctrl, мышь крутит обзор, Shift ускоряет. Тело стоит (Freeze Body). Через стены летает сама камера, тело — Noclip + Fly.")
+    move:toggle("Cam TP", false, false, function(on) FEAT.setCamTp(on) end)
+    move:text("Cam TP — камера летает, тело стоит на старом месте; выключил — тело телепается туда, где остановилась камера. Другие видят: стоял, потом оказался там.")
     move:toggle("Air Stuck", false, true, function(on) setAirstuck(on) end)
     move:dropdown("Air Stuck Mode", { "Packet", "Physics" }, FZ.airstuck.mode, false, function(v)
         FZ.airstuck.mode = v
@@ -5870,7 +5915,7 @@ local BUILDERS = {
         end)
         aa:slider("Yaw", -180, 180, FZ.antiaim.yaw, 1, function(v) FZ.antiaim.yaw = v end)
         aa:slider("Jitter", 0, 180, FZ.antiaim.jitter, 1, function(v) FZ.antiaim.jitter = v end)
-        aa:slider("Spin Speed", 10, 720, FZ.antiaim.spinSpeed, 10, function(v) FZ.antiaim.spinSpeed = v end)
+        aa:slider("Spin Speed", 10, 3600, FZ.antiaim.spinSpeed, 30, function(v) FZ.antiaim.spinSpeed = v end)
         aa:slider("Random Range", 0, 180, FZ.antiaim.randRange, 5, function(v) FZ.antiaim.randRange = v end)
         aa:text("Static — фиксированный доворот, Jitter — дёргает влево/вправо каждый кадр, Spin — крутится со скоростью Spin Speed, Random — новый угол каждые 0.1 с.")
 
@@ -6120,6 +6165,7 @@ local api = {
     SetFly = setFly,
     SetNoclip = setNoclip,
     SetFreecam = FEAT.setFreecam,
+    SetCamTp = FEAT.setCamTp,
     SetAntiAim = FEAT.setAntiAim,
     SetAirstuck = setAirstuck,
     SetGhostFreeze = setGhostFreeze,

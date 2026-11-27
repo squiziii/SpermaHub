@@ -233,7 +233,11 @@ end
 CF = {
     new = function(...)
         local t = cfBase()
-        if select('#', ...) >= 3 then t.Position = V3(...) end
+        if select('#', ...) >= 3 then
+            t.Position = V3(...)
+        elseif select('#', ...) == 1 and type((...)) == "table" and (...).X ~= nil then
+            t.Position = (...)
+        end
         return t
     end,
     Angles = function(...) return cfBase() end,

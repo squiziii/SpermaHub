@@ -674,6 +674,18 @@ print("FREECAM off: custom=" .. tostring(fcamt.CameraType == E.Enum.CameraType.C
     .. " pos=" .. tostring(api.Features.freecam.pos)
     .. " walk=" .. tostring(lhum and lhum.WalkSpeed))
 
+-- Cam TP: тело стоит, на выключении телепорт в точку камеры
+api.SetCamTp(true)
+local ctOn = api.Features.freecam.on and api.Features.freecam.freeze and api.Features.camTp.on
+api.Features.freecam.pos = E.Vector3.new(10, 20, 30)
+api.SetCamTp(false)
+local hrpNow = lp.Character:FindFirstChild("HumanoidRootPart")
+print("CAMTP: on=" .. tostring(ctOn)
+    .. " freecamOff=" .. tostring(not api.Features.freecam.on)
+    .. " body=" .. tostring(hrpNow and hrpNow.CFrame.Position.X == 10
+        and hrpNow.CFrame.Position.Y == 20 and hrpNow.CFrame.Position.Z == 30)
+    .. " walk=" .. tostring(lhum and lhum.WalkSpeed))
+
 -- Anti Aim: корпус реально доворачивается + режимы + head tilt
 local neckM = E.Instance.new("Motor6D")
 neckM.Name = "Neck"
