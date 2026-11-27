@@ -52,6 +52,25 @@ local uis = E.game:GetService("UserInputService")
 uis.IsKeyDown = function() return false end
 uis.GetMouseDelta = function() return E.Vector2.new(0, 0) end
 
+-- executor-API для Silent Aim: без них фича не включается
+E.hookfunction = function(f) return f end
+E.getrawmetatable = function(o) return getmetatable(o) end
+E.setreadonly = function() end
+E.newcclosure = function(f) return f end
+E.getnamecallmethod = function() return E.__namecallMethod or "Raycast" end
+E.Ray = { new = function(origin, dir) return { Origin = origin, Direction = dir } end }
+
+-- у game уже есть метатаблица: даём рабочие __index/__namecall, как в Luau,
+-- чтобы навешенные хуки не роняли чтение свойств
+local gmt = getmetatable(E.game)
+E.__gameNamecall = function(self, ...)
+    E.__lastCall = { ... }
+    return nil
+end
+gmt.__index = function(t, k) return rawget(t, k) end
+gmt.__namecall = E.__gameNamecall
+E.__gameIndex = gmt.__index
+
 -- файловая система в памяти: проверяем save/load конфига
 local fs = {}
 E.writefile = function(p, d) fs[p] = d end
@@ -458,6 +477,67 @@ camG.CameraType = E.Enum.CameraType.Scriptable
 api.SetScaffold(true)
 api.SetScaffold(false)
 print("SCAFFOLD heal: custom=" .. tostring(camG.CameraType == E.Enum.CameraType.Custom))
+
+-- SILENT AIM: хуки встают и снимаются, не ломая чтение свойств, скаффолд,
+-- камеру и Click TP
+local gmtS = getmetatable(E.game)
+local namecallBefore = gmtS.__namecall
+api.SetSilentAim(true)
+print("SILENT on: on=" .. tostring(api.Features.silent.on)
+    .. " hooked=" .. tostring(gmtS.__namecall ~= namecallBefore))
+print("SILENT read: place=" .. tostring(E.game.PlaceId)
+    .. " missing=" .. tostring(E.game.__nope))
+
+-- эмулируем Luau namecall: хук должен развернуть луч в цель
+E.__namecallMethod = "FindPartOnRay"
+E.__lastCall = nil
+pcall(function()
+    gmtS.__namecall(E.workspace, { Origin = E.Vector3.new(0, 0, 0), Direction = E.Vector3.new(0, 0, 1) })
+end)
+local rayD = E.__lastCall and E.__lastCall[1] and E.__lastCall[1].Direction
+print("SILENT ray retarget: len=" .. (rayD and string.format("%.1f", rayD.Magnitude) or "nil")
+    .. " dirZ=" .. (rayD and string.format("%.3f", rayD.Z) or "nil"))
+
+-- Click TP под silent aim: Hit/Target подменены на голову цели, а телепорт
+-- должен брать точку из UnitRay (под курсором)
+local mouseMock = {
+    X = 5, Y = 5,
+    Target = headEN,
+    Hit = E.CFrame.new(headEN.Position),
+    UnitRay = { Origin = E.Vector3.new(5, 10, 5), Direction = E.Vector3.new(0, -1, 0) },
+}
+lp.GetMouse = function() return mouseMock end
+api.Features.clickTp.height = 3
+api.SetClickTp(true)
+pcall(function() uis.InputBegan:Fire({ UserInputType = E.Enum.UserInputType.MouseButton1 }, false) end)
+M.resumeAll()
+local ctp = lroot.CFrame.Position
+print(("CLICKTP under silent: %.1f,%.1f,%.1f"):format(ctp.X, ctp.Y, ctp.Z))
+api.SetClickTp(false)
+
+-- scaffold + камера под silent aim
+lroot.CFrame = E.CFrame.new(0, 3, 0)
+lroot.Position = E.Vector3.new(0, 3, 0)
+lroot.AssemblyLinearVelocity = E.Vector3.new(0, 0, 0)
+api.SetScaffold(true)
+for _ = 1, 20 do frame() end
+local camS1 = camG.CFrame.Position
+lroot.CFrame = E.CFrame.new(40, 3, 40)
+lroot.Position = E.Vector3.new(40, 3, 40)
+for _ = 1, 20 do frame() end
+local camS2 = camG.CFrame.Position
+print(("SCAFFOLD under silent: scriptable=%s from=%.1f,%.1f,%.1f to=%.1f,%.1f,%.1f"):format(
+    tostring(camG.CameraType == E.Enum.CameraType.Scriptable),
+    camS1.X, camS1.Y, camS1.Z, camS2.X, camS2.Y, camS2.Z))
+api.SetScaffold(false)
+print("SCAFFOLD under silent off: custom=" .. tostring(camG.CameraType == E.Enum.CameraType.Custom))
+
+-- выключили silent aim — хуки вернулись на место
+api.SetSilentAim(false)
+E.__namecallMethod = nil
+print("SILENT off: on=" .. tostring(api.Features.silent.on)
+    .. " namecall=" .. tostring(gmtS.__namecall == namecallBefore)
+    .. " index=" .. tostring(gmtS.__index == E.__gameIndex))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")

@@ -3051,8 +3051,21 @@ local function setClickTp(on)
         if not root then return end
         local mouse
         pcall(function() mouse = LP:GetMouse() end)
-        if not mouse or not mouse.Target then return end
-        root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, FZ.clickTp.height, 0))
+        if not mouse then return end
+        -- точку берём лучом из UnitRay, а не mouse.Hit/Target: их подменяет
+        -- Silent Aim, и телепорт уводил бы в голову цели вместо курсора
+        local pos = nil
+        if mouse.UnitRay then
+            pcall(function()
+                local ray = mouse.UnitRay
+                -- SCF.ray исключает своего персонажа из рейкаста
+                local hit = SCF.ray(ray.Origin, ray.Origin + ray.Direction * 1000)
+                if hit and hit.Position then pos = hit.Position end
+            end)
+        end
+        if not pos and mouse.Target and mouse.Hit then pos = mouse.Hit.Position end
+        if not pos then return end
+        root.CFrame = CFrame.new(pos + Vector3.new(0, FZ.clickTp.height, 0))
         root.Velocity = Vector3.new(0, 0, 0)
     end)
 end
