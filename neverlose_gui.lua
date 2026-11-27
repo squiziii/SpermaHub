@@ -1448,7 +1448,7 @@ local FZ = {
     fly     = { on = false, speed = 50, conn = nil, bv = nil, bg = nil },
     noclip  = { on = false, conn = nil, burstUntil = 0, saved = {}, holdPart = nil, holdPos = nil, holdUntil = 0 },
     freecam = { on = false, speed = 80, sens = 1, freeze = true, conn = nil, pos = nil, yaw = 0, pitch = 0,
-                camType = nil, mouse = nil, walk = nil, jump = nil },
+                camType = nil, mouse = nil, walk = nil, jump = nil, menuOpen = false },
     antiaim = { on = false, mode = "Static", yaw = 90, jitter = 35, spinSpeed = 180, randRange = 180,
                 pitch = "Нет", pitchAngle = 89, noAutoRotate = true, headTilt = false,
                 conn = nil, orig = {}, neck = nil, char = nil,
@@ -2881,10 +2881,17 @@ FEAT.setFreecam = function(on)
         FC.camType = cam.CameraType
         cam.CameraType = Enum.CameraType.Scriptable
     end)
+    FC.menuOpen = FC.menuOpen and true or false
     pcall(function()
         FC.mouse = UIS.MouseBehavior
-        UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
-        UIS.MouseIconEnabled = false
+        -- если меню открыто, курсор сразу оставляем свободным
+        if FC.menuOpen then
+            UIS.MouseBehavior = Enum.MouseBehavior.Default
+            UIS.MouseIconEnabled = true
+        else
+            UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+            UIS.MouseIconEnabled = false
+        end
     end)
     if hum and FC.freeze then
         FC.walk = hum.WalkSpeed
@@ -2901,7 +2908,8 @@ FEAT.setFreecam = function(on)
         if not c then return end
 
         local delta
-        pcall(function() delta = UIS:GetMouseDelta() end)
+        -- в открытом меню мышь нужна для кликов, обзор не крутим
+        if not FC.menuOpen then pcall(function() delta = UIS:GetMouseDelta() end) end
         if delta then
             local sens = 0.003 * (FC.sens or 1)
             FC.yaw = FC.yaw - delta.X * sens
@@ -6028,6 +6036,20 @@ local function setOpen(state)
     gui.Enabled = state
     Tween:Create(blur, TweenInfo.new(0.2), {Size = state and 18 or 0}):Play()
     if HUD and HUD.SetMenuOpen then pcall(HUD.SetMenuOpen, state) end
+    -- фрикам держит мышь залоченной по центру; в меню отдаём обычный курсор,
+    -- а на закрытии снова залочиваем обзор
+    FZ.freecam.menuOpen = state and true or false
+    if FZ.freecam.on then
+        pcall(function()
+            if state then
+                UIS.MouseBehavior = Enum.MouseBehavior.Default
+                UIS.MouseIconEnabled = true
+            else
+                UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+                UIS.MouseIconEnabled = false
+            end
+        end)
+    end
 end
 
 local uiConn = UIS.InputBegan:Connect(function(input, gameProcessed)

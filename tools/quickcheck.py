@@ -662,6 +662,11 @@ local cp2 = api.Features.freecam.pos
 print(("FREECAM on: scriptable=%s from=%.1f,%.1f,%.1f to=%.1f,%.1f,%.1f walk=%s"):format(
     tostring(fcamt.CameraType == E.Enum.CameraType.Scriptable), cp1.X, cp1.Y, cp1.Z, cp2.X, cp2.Y, cp2.Z,
     tostring(api.Features.freecam.walk)))
+api.Toggle(true)
+local menuCursor = uis.MouseBehavior == E.Enum.MouseBehavior.Default
+api.Toggle(false)
+local menuLocked = uis.MouseBehavior == E.Enum.MouseBehavior.LockCenter
+print("FREECAM menu: openCursor=" .. tostring(menuCursor) .. " closedLock=" .. tostring(menuLocked))
 api.SetFreecam(false)
 uis.IsKeyDown = function() return false end
 uis.GetMouseDelta = function() return E.Vector2.new(0, 0) end
