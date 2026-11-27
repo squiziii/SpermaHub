@@ -2264,6 +2264,9 @@ local function drawSkeleton()
                     if on1 and on2 then
                         if not frames[i] then
                             frames[i] = new("Frame", {
+                                -- Rotation в Roblox крутит вокруг ЦЕНТРА фрейма,
+                                -- поэтому якорь в середину, а не в левый край
+                                AnchorPoint = Vector2.new(0.5, 0.5),
                                 BackgroundColor3 = ESP_SKEL,
                                 BackgroundTransparency = 0.3,
                                 BorderSizePixel = 0,
@@ -2273,11 +2276,14 @@ local function drawSkeleton()
                         local f = frames[i]
                         f.BackgroundColor3 = skelColor
                         local dx, dy = v2.X - v1.X, v2.Y - v1.Y
-                        f.Size = UDim2.new(0, math.sqrt(dx * dx + dy * dy), 0, 1)
-                        f.Position = UDim2.new(0, v1.X, 0, v1.Y)
+                        local len = math.sqrt(dx * dx + dy * dy)
+                        -- позиция — середина отрезка: иначе после поворота линия
+                        -- сьезжает на пол-длины и скелет собирается в крестики
+                        f.Size = UDim2.new(0, len, 0, 1)
+                        f.Position = UDim2.new(0, (v1.X + v2.X) * 0.5, 0, (v1.Y + v2.Y) * 0.5)
                         local angle = math.atan2 and math.atan2(dy, dx) or math.atan(dy, dx)
                         f.Rotation = math.deg(angle)
-                        f.Visible = true
+                        f.Visible = len > 1
                     elseif frames[i] then
                         frames[i].Visible = false
                     end

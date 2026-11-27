@@ -539,6 +539,63 @@ print("SILENT off: on=" .. tostring(api.Features.silent.on)
     .. " namecall=" .. tostring(gmtS.__namecall == namecallBefore)
     .. " index=" .. tostring(gmtS.__index == E.__gameIndex))
 
+-- SKELETON: линия должна идти от сустава к суставу (вращение вокруг центра)
+local skelChar = E.Instance.new("Model")
+local function bone(name, x, y)
+    local part = E.Instance.new("Part")
+    part.Name = name
+    part.Position = E.Vector3.new(x, y, 0)
+    part.Parent = skelChar
+    return part
+end
+bone("Head", 0, 2)
+bone("UpperTorso", 0, 1)
+bone("LowerTorso", 0, 0)
+bone("LeftUpperArm", -1, 1)
+bone("RightUpperArm", 1, 1)
+bone("LeftLowerArm", -2, 1)
+bone("LeftHand", -2.5, 1)
+bone("RightLowerArm", 2, 1)
+bone("RightHand", 2.5, 1)
+bone("LeftUpperLeg", -0.5, -1.5)
+bone("RightUpperLeg", 0.5, -1.5)
+bone("LeftLowerLeg", -0.5, -2.5)
+bone("LeftFoot", -0.5, -3.5)
+bone("RightLowerLeg", 0.5, -2.5)
+bone("RightFoot", 0.5, -3.5)
+local skelHum = E.Instance.new("Humanoid")
+skelHum.Health = 100
+skelHum.MaxHealth = 100
+skelHum.Parent = skelChar
+local skelRoot = E.Instance.new("Part")
+skelRoot.Name = "HumanoidRootPart"
+skelRoot.Position = E.Vector3.new(0, 1, 0)
+skelRoot.Parent = skelChar
+local skelPlr = E.Instance.new("Player")
+skelPlr.Name = "Skelly"
+skelPlr.Character = skelChar
+skelChar.Parent = wsG
+
+-- ортопроекция: 10 px на студ, центр экрана 960x540 в мировой (0,0)
+camG.WorldToViewportPoint = function(_, pos)
+    return E.Vector3.new(960 + pos.X * 10, 540 - pos.Y * 10, 10), 10, true
+end
+api.SetESP(false)
+local playersOld = PS.GetPlayers
+PS.GetPlayers = function() return { lp, enemy, mate, buddy, skelPlr } end
+api.Features.esp.skel = true
+api.SetESP(true)
+frame()
+local skelFrames = api.Features.esp.skelFrames[skelPlr] or {}
+local lineHT = skelFrames[1]   -- Head -> UpperTorso
+local lineLA = skelFrames[5]   -- LeftUpperArm -> LeftLowerArm
+print(("SKELETON head-top: pos=%.1f,%.1f size=%.1f rot=%.1f"):format(
+    lineHT.Position.X.Offset, lineHT.Position.Y.Offset, lineHT.Size.X.Offset, lineHT.Rotation))
+print(("SKELETON arm: pos=%.1f,%.1f size=%.1f rot=%.1f"):format(
+    lineLA.Position.X.Offset, lineLA.Position.Y.Offset, lineLA.Size.X.Offset, lineLA.Rotation))
+api.SetESP(false)
+PS.GetPlayers = playersOld
+
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")
 print("SAVE: " .. tostring(sok) .. " " .. tostring(serr or ""))

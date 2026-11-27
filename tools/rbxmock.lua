@@ -247,11 +247,12 @@ CF = {
     end,
 }
 local UDim = {new = function(s, o) return {Scale = s, Offset = o} end}
-local UDim2 = {
-    new = function(a, b, c, d) return {} end,
-    fromOffset = function(a, b) return {} end,
-    fromScale = function(a, b) return {} end,
-}
+local UDim2 = {}
+function UDim2.new(a, b, c, d)
+    return { X = { Scale = a or 0, Offset = b or 0 }, Y = { Scale = c or 0, Offset = d or 0 } }
+end
+function UDim2.fromOffset(x, y) return UDim2.new(0, x, 0, y) end
+function UDim2.fromScale(x, y) return UDim2.new(x, 0, y, 0) end
 local Color3 = {
     new = function(r, g, b) return {R = r or 1, G = g or 1, B = b or 1} end,
     fromRGB = function(r, g, b) return {R = (r or 255) / 255, G = (g or 255) / 255, B = (b or 255) / 255} end,
