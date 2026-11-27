@@ -1424,7 +1424,15 @@ end
 --  Hitbox Expander, ESP + скелет, Fly, Noclip, Click TP, WalkSpeed, Kill Player.
 --=================================================================
 local FZ = {
-    aim     = { on = false, fov = 120, smooth = 0.3, conn = nil },
+    aim     = { on = false, fov = 120, smooth = 0.3, part = "Head", maxDist = 500,
+                visibleOnly = false, ignoreTeam = true, ignoreFriends = true, humanize = 0,
+                target = nil, targetAt = 0, visCache = nil, conn = nil },
+    assist  = { on = false, fov = 70, strength = 0.35, smooth = 0.45, part = "Head", maxDist = 300,
+                visibleOnly = false, ignoreTeam = true, ignoreFriends = true, humanize = 0.2,
+                firingOnly = false, target = nil, targetAt = 0, visCache = nil, conn = nil },
+    scaffold = { on = false, grid = 4, extend = 1, delay = 0.12, mode = "Activate",
+                 tower = true, safewalk = true, downward = true, cursor = true,
+                 conn = nil, charConn = nil, lastPlace = 0, placed = 0 },
     silent  = { on = false, fov = 150, conn = nil },
     hitbox  = { on = false, size = 5, conn = nil, sizes = {} },
     esp     = {
@@ -1486,27 +1494,276 @@ local function findTarget(fov)
     return best
 end
 
---===================  AIMBOT  ===================
-local function setAimbot(on)
-    FZ.aim.on = on and true or false
-    if FZ.aim.conn then
-        pcall(function() FZ.aim.conn:Disconnect() end)
-        FZ.aim.conn = nil
+--===================  AIM ENGINE  (Aimbot + Aim Assist)  ===================
+--  Два модуля на одном ядре:
+--    Aimbot     — доводит камеру до цели полностью;
+--    Aim Assist — тянет прицел к цели частично, не забирая контроль.
+--  Считаем в yaw/pitch камеры, поэтому шаг не зависит от FPS и не дёргается
+--  на больших углах (обычный Lerp по CFrame там заметно «залипает»).
+--  Всё лежит в FEAT: у главного чанка лимит 200 локалов, а функций тут много.
+local FEAT = {}
+
+do
+    local A = {}
+    FEAT.aim = A
+    A.conn = nil
+    A.friendCache = {}
+
+    function A.wrapDeg(v)
+        return ((v + 180) % 360) - 180
     end
-    if not FZ.aim.on then return end
-    FZ.aim.conn = RunService.RenderStepped:Connect(function()
-        if not FZ.aim.on then return end
-        local target = findTarget(FZ.aim.fov)
-        FZ.aim.target = target
-        FZ.aim.targetAt = os.clock()
-        local head = target and target.Character and target.Character:FindFirstChild("Head")
+
+    function A.dir(from, to)
+        local d = to - from
+        local m = d.Magnitude
+        if m < 1e-4 then return nil end
+        return Vector3.new(d.X / m, d.Y / m, d.Z / m)
+    end
+
+    function A.camAngles(cf)
+        local look = cf and cf.LookVector
+        if not look then return 0, 0 end
+        return math.atan2(-look.X, -look.Z), math.asin(math.clamp(look.Y, -1, 1))
+    end
+
+    function A.anglesTo(from, to)
+        local dir = A.dir(from, to)
+        if not dir then return nil end
+        return math.atan2(-dir.X, -dir.Z), math.asin(math.clamp(dir.Y, -1, 1))
+    end
+
+    function A.anglesToDir(yaw, pitch)
+        local cp = math.cos(pitch)
+        return Vector3.new(-math.sin(yaw) * cp, math.sin(pitch), -math.cos(yaw) * cp)
+    end
+
+    function A.sameTeam(plr)
+        return LP.Team ~= nil and plr.Team ~= nil and plr.Team == LP.Team
+    end
+
+    function A.isFriend(plr)
+        local cached = A.friendCache[plr]
+        if cached ~= nil then return cached end
+        local ok, res = pcall(function() return plr:IsFriendsWith(LP.UserId) end)
+        local v = (ok and res) and true or false
+        A.friendCache[plr] = v
+        return v
+    end
+
+    function A.filtered(plr, cfg)
+        if plr == LP then return true end
+        if cfg.ignoreTeam and A.sameTeam(plr) then return true end
+        if cfg.ignoreFriends and A.isFriend(plr) then return true end
+        return false
+    end
+
+    -- луч камера -> точка: true, если ничего не мешает
+    function A.visible(char, pos)
         local cam = workspace.CurrentCamera
-        if head and cam then
-            local lookAt = CFrame.new(cam.CFrame.Position, head.Position)
-            cam.CFrame = cam.CFrame:Lerp(lookAt, FZ.aim.smooth)
+        if not cam then return true end
+        local ok, res = pcall(function()
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ignore = {}
+            if char then table.insert(ignore, char) end
+            if LP.Character then table.insert(ignore, LP.Character) end
+            params.FilterDescendantsInstances = ignore
+            local origin = cam.CFrame.Position
+            local hit = workspace:Raycast(origin, pos - origin, params)
+            return hit == nil
+        end)
+        if not ok then return true end
+        return res
+    end
+
+    -- точка прицеливания: Head / Torso / Nearest (ближайшая к прицелу часть)
+    function A.partOf(plr, mode, cam, cx, cy)
+        local ch = plr.Character
+        if not ch then return nil end
+        local head = ch:FindFirstChild("Head")
+        local torso = ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso")
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if mode == "Nearest" then
+            local list = {}
+            if head then table.insert(list, head) end
+            if torso then table.insert(list, torso) end
+            if root then table.insert(list, root) end
+            local best, bestD = nil, math.huge
+            for _, part in ipairs(list) do
+                local d = math.huge
+                local ok, sp, onScreen = pcall(function() return cam:WorldToViewportPoint(part.Position) end)
+                if ok and onScreen then
+                    d = math.sqrt((sp.X - cx) ^ 2 + (sp.Y - cy) ^ 2)
+                end
+                if d < bestD then best, bestD = part, d end
+            end
+            return best
         end
-    end)
+        if mode == "Torso" then return torso or root or head end
+        return head or torso or root
+    end
+
+    -- ближайший к прицелу игрок в радиусе FOV, с фильтрами и гистерезисом
+    function A.findTarget(cfg)
+        local cam = workspace.CurrentCamera
+        if not cam then return nil end
+        local vp = cam.ViewportSize
+        local cx = (vp and vp.X or 1920) / 2
+        local cy = (vp and vp.Y or 1080) / 2
+        local camPos = cam.CFrame.Position
+        local now = os.clock()
+        local best, bestScore, bestPos = nil, math.huge, nil
+
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP and alive(plr) and not A.filtered(plr, cfg) then
+                local part = A.partOf(plr, cfg.part, cam, cx, cy)
+                if part then
+                    local pos = part.Position
+                    local d, dist = math.huge, math.huge
+                    local ok, sp, onScreen = pcall(function() return cam:WorldToViewportPoint(pos) end)
+                    if ok and onScreen then
+                        d = math.sqrt((sp.X - cx) ^ 2 + (sp.Y - cy) ^ 2)
+                    end
+                    pcall(function() dist = (camPos - pos).Magnitude end)
+                    if d <= (cfg.fov or 120) and dist <= (cfg.maxDist or 1000) then
+                        local visOk = true
+                        if cfg.visibleOnly then
+                            cfg.visCache = cfg.visCache or {}
+                            local cached = cfg.visCache[plr]
+                            if cached and now - cached.at < 0.1 then
+                                visOk = cached.ok
+                            else
+                                visOk = A.visible(plr.Character, pos)
+                                cfg.visCache[plr] = { ok = visOk, at = now }
+                            end
+                        end
+                        if visOk then
+                            local score = d + dist * 0.02
+                            -- текущая цель не проигрывает случайно соседу
+                            if cfg.target == plr then score = score * 0.85 end
+                            if score < bestScore then
+                                best, bestScore, bestPos = plr, score, pos
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return best, bestPos
+    end
+
+    function A.apply(cfg, mode, dt)
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+
+        local target, pos = A.findTarget(cfg)
+        cfg.target = target
+        if not target then return end
+        cfg.targetAt = os.clock()
+
+        local camPos = cam.CFrame.Position
+        local curYaw, curPitch = A.camAngles(cam.CFrame)
+        local desYaw, desPitch = A.anglesTo(camPos, pos)
+        if not desYaw then return end
+
+        -- человеческий шум: два синуса, чтобы не было идеально ровной линии
+        local h = math.clamp(tonumber(cfg.humanize) or 0, 0, 1)
+        if h > 0 then
+            local t = os.clock()
+            desYaw = desYaw + math.rad((math.sin(t * 3.1) * 0.30 + math.sin(t * 7.3) * 0.16) * h)
+            desPitch = desPitch + math.rad((math.sin(t * 2.7) * 0.22 + math.cos(t * 5.1) * 0.10) * h)
+        end
+
+        local smooth = math.clamp(tonumber(cfg.smooth) or 0.3, 0.02, 1)
+        -- 1 - (1 - smooth)^(dt*60): та же скорость, что при 60 FPS, на любом FPS
+        local factor = 1 - (1 - smooth) ^ ((dt or 0.016) * 60)
+        if mode == "assist" then
+            factor = factor * math.clamp(tonumber(cfg.strength) or 0.4, 0.02, 1)
+        end
+
+        local dy = A.wrapDeg(math.deg(desYaw - curYaw))
+        local dp = math.deg(desPitch - curPitch)
+        local snap = (mode == "aim" and h <= 0) and 0.2 or 0.03
+        local stepY = math.abs(dy) <= snap and dy or dy * factor
+        local stepP = math.abs(dp) <= snap and dp or dp * factor
+
+        local newYaw = curYaw + math.rad(stepY)
+        local newPitch = math.clamp(curPitch + math.rad(stepP), -math.rad(89), math.rad(89))
+        local dir = A.anglesToDir(newYaw, newPitch)
+        pcall(function()
+            cam.CFrame = CFrame.lookAt(camPos, camPos + dir)
+        end)
+    end
+
+    function A.firing()
+        local ok, res = pcall(function()
+            return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+        end)
+        if ok then return res end
+        return true
+    end
+
+    function A.loop(dt)
+        if FZ.scaffold.on then return end  -- скаффолд забирает камеру себе
+        local cfg, mode = nil, nil
+        if FZ.aim.on then
+            cfg, mode = FZ.aim, "aim"
+        elseif FZ.assist.on then
+            cfg, mode = FZ.assist, "assist"
+            if cfg.firingOnly and not A.firing() then
+                cfg.target = nil
+                return
+            end
+        end
+        if not cfg then return end
+        A.apply(cfg, mode, dt)
+    end
+
+    function A.ensureLoop()
+        if A.conn then return end
+        A.conn = RunService.RenderStepped:Connect(function(dt)
+            if not FZ.aim.on and not FZ.assist.on then
+                if A.conn then
+                    pcall(function() A.conn:Disconnect() end)
+                    A.conn = nil
+                end
+                return
+            end
+            pcall(A.loop, dt)
+        end)
+    end
+
+    function FEAT.setAimbot(on)
+        FZ.aim.on = on and true or false
+        FZ.aim.visCache = nil
+        if not FZ.aim.on then
+            FZ.aim.target = nil
+        elseif FZ.assist.on then
+            -- два аима на одной камере дерутся, аимбот главнее
+            FZ.assist.on = false
+            FZ.assist.target = nil
+            local c = CONTROLS["Legitbot/Aim Assist/Enabled"]
+            if c and c.set then pcall(function() c:set(false, true) end) end
+        end
+        if FZ.aim.on or FZ.assist.on then A.ensureLoop() end
+    end
+
+    function FEAT.setAssist(on)
+        FZ.assist.on = on and true or false
+        FZ.assist.visCache = nil
+        if not FZ.assist.on then
+            FZ.assist.target = nil
+        elseif FZ.aim.on then
+            FZ.aim.on = false
+            FZ.aim.target = nil
+            local c = CONTROLS["Ragebot/Aimbot/Enabled"]
+            if c and c.set then pcall(function() c:set(false, true) end) end
+        end
+        if FZ.aim.on or FZ.assist.on then A.ensureLoop() end
+    end
 end
+
+FEAT.aimParts = { "Head", "Torso", "Nearest" }
 
 --===================  SILENT AIM  ===================
 local function silentSupported()
@@ -2377,6 +2634,262 @@ local function setGhostFreeze(on)
     end)
 end
 
+--===================  SCAFFOLD  ===================
+--  Порт rich Scaffold.java под Roblox. В Minecraft блок уходит пакетом, здесь
+--  его ставит инструмент самой игры, поэтому шаги такие:
+--    1) ищем клетку сетки без опоры (под ногами -> углы -> вперёд -> вниз)
+--    2) ищем рядом поверхность, по которой можно поставить блок
+--    3) ведём камеру в эту точку (и курсор, если executor умеет mousemoverel)
+--    4) когда камера уже смотрит в точку — Tool:Activate() или mouse1click()
+--  SafeWalk/Tower/Extend/Downward перенесены по смыслу из Java-версии.
+local SCF = {}
+
+do
+    function SCF.ray(from, to)
+        local ok, hit = pcall(function()
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ignore = {}
+            if LP.Character then table.insert(ignore, LP.Character) end
+            params.FilterDescendantsInstances = ignore
+            return workspace:Raycast(from, to - from, params)
+        end)
+        if not ok then return nil end
+        return hit
+    end
+
+    function SCF.support(pos)
+        return SCF.ray(pos + Vector3.new(0, 3, 0), pos - Vector3.new(0, 9, 0)) ~= nil
+    end
+
+    -- клетка, где нет пола: сначала под ногами, потом углы, вниз и вперёд
+    function SCF.cell(root, hum)
+        local S = FZ.scaffold
+        local g = S.grid or 4
+        local p = root.Position
+        local half = 1
+        pcall(function() if root.Size then half = root.Size.Y * 0.5 end end)
+        local belowY = p.Y - half - 0.5
+
+        local cells = { Vector3.new(p.X, belowY, p.Z) }
+        local r = g * 0.45
+        table.insert(cells, Vector3.new(p.X + r, belowY, p.Z + r))
+        table.insert(cells, Vector3.new(p.X - r, belowY, p.Z + r))
+        table.insert(cells, Vector3.new(p.X + r, belowY, p.Z - r))
+        table.insert(cells, Vector3.new(p.X - r, belowY, p.Z - r))
+
+        if S.downward and UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+            table.insert(cells, Vector3.new(p.X, belowY - g * 0.5, p.Z))
+        end
+
+        local mx, mz = 0, 0
+        local md = hum and hum.MoveDirection
+        if md then mx, mz = md.X, md.Z end
+        local flat = math.sqrt(mx * mx + mz * mz)
+        if flat < 0.05 then
+            local v = root.AssemblyLinearVelocity
+            if v then
+                mx, mz = v.X, v.Z
+                flat = math.sqrt(mx * mx + mz * mz)
+            end
+        end
+        if flat > 0.05 then
+            mx, mz = mx / flat, mz / flat
+            for i = 1, (S.extend or 0) do
+                table.insert(cells, Vector3.new(p.X + mx * g * i, belowY, p.Z + mz * g * i))
+            end
+        end
+
+        for _, c in ipairs(cells) do
+            if not SCF.support(c) then return c end
+        end
+        return nil
+    end
+
+    -- точка, по которой можно поставить блок рядом с пустой клеткой
+    function SCF.point(cell)
+        local g = FZ.scaffold.grid or 4
+        local from = cell + Vector3.new(0, g * 0.1, 0)
+        local dirs = {
+            Vector3.new(0, -g, 0), Vector3.new(0, g, 0),
+            Vector3.new(-g, 0, 0), Vector3.new(g, 0, 0),
+            Vector3.new(0, 0, -g), Vector3.new(0, 0, g),
+        }
+        local best, bestDist = nil, math.huge
+        for _, d in ipairs(dirs) do
+            local hit = SCF.ray(from, from + d)
+            if hit and hit.Position then
+                local dist = (hit.Position - from).Magnitude
+                if dist > 0.2 and dist < bestDist then
+                    best, bestDist = hit.Position, dist
+                end
+            end
+        end
+        if not best then
+            local top = cell + Vector3.new(0, g * 2, 0)
+            local hit = SCF.ray(top, cell - Vector3.new(0, g * 2, 0))
+            if hit and hit.Position then best = hit.Position end
+        end
+        return best
+    end
+
+    -- SafeWalk: нет пола впереди — гасим шаг, чтобы не улететь с края
+    function SCF.safeWalk(root)
+        local v = root.AssemblyLinearVelocity
+        if not v then return end
+        local flat = math.sqrt(v.X * v.X + v.Z * v.Z)
+        if flat < 1 then return end
+        local ahead = root.Position + Vector3.new(v.X / flat, 0, v.Z / flat) * ((FZ.scaffold.grid or 4) * 0.6)
+        if SCF.support(ahead) then return end
+        pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end)
+    end
+
+    -- камера сверху-сзади, смотрит в точку установки
+    function SCF.camera(root, point, dt)
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local fx, fz = 0, -1
+        local look = root.CFrame and root.CFrame.LookVector
+        if look then
+            local m = math.sqrt(look.X * look.X + look.Z * look.Z)
+            if m > 0.1 then fx, fz = look.X / m, look.Z / m end
+        end
+        local g = FZ.scaffold.grid or 4
+        local desired = root.Position - Vector3.new(fx, 0, fz) * (g * 2.2) + Vector3.new(0, g * 2.2 + 6, 0)
+        local from = cam.CFrame.Position
+        local a = 1 - (1 - 0.3) ^ ((dt or 0.016) * 60)
+        local camPos = from + (desired - from) * a
+        local yaw, pitch = FEAT.aim.anglesTo(camPos, point)
+        if not yaw then return end
+        local dir = FEAT.aim.anglesToDir(yaw, pitch)
+        pcall(function()
+            cam.CameraType = Enum.CameraType.Scriptable
+            cam.CFrame = CFrame.lookAt(camPos, camPos + dir)
+        end)
+    end
+
+    -- курсор в точку установки: нужен mousemoverel от executor'а
+    function SCF.cursorTo(cam, point)
+        local fn
+        pcall(function() fn = getgenv and getgenv().mousemoverel or nil end)
+        if type(fn) ~= "function" then
+            pcall(function() fn = mousemoverel end)
+        end
+        if type(fn) ~= "function" then return false end
+        local ok, sp, onScreen = pcall(function() return cam:WorldToScreenPoint(point) end)
+        if not ok or not onScreen then return false end
+        local mouse
+        pcall(function() mouse = LP:GetMouse() end)
+        if not mouse then return false end
+        local dx = sp.X - (mouse.X or 0)
+        local dy = sp.Y - (mouse.Y or 0)
+        if math.abs(dx) < 1 and math.abs(dy) < 1 then return true end
+        pcall(fn, dx, dy)
+        return true
+    end
+
+    function SCF.tool()
+        local ch = LP.Character
+        if not ch then return nil end
+        return ch:FindFirstChildOfClass("Tool")
+    end
+
+    function SCF.fire(tool, cam, point)
+        local S = FZ.scaffold
+        if S.cursor then pcall(SCF.cursorTo, cam, point) end
+        if S.mode == "Click" then
+            local click = nil
+            pcall(function() click = mouse1click end)
+            if type(click) == "function" then
+                pcall(click)
+                return true
+            end
+        end
+        return pcall(function() tool:Activate() end)
+    end
+
+    function SCF.step(dt)
+        local S = FZ.scaffold
+        if not S.on then return end
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not hum or not root or hum.Health <= 0 then return end
+
+        if S.safewalk then SCF.safeWalk(root) end
+        if S.tower and UIS:IsKeyDown(Enum.KeyCode.Space) then
+            pcall(function() hum.Jump = true end)
+        end
+
+        local cell = SCF.cell(root, hum)
+        S.cell = cell
+        if not cell then return end
+        local point = SCF.point(cell)
+        S.point = point
+        if not point then return end
+
+        SCF.camera(root, point, dt)
+
+        if os.clock() - S.lastPlace < (S.delay or 0.12) then return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+
+        -- ставим только когда камера уже смотрит в точку (как isLookingAtHitVec)
+        local yaw, pitch = FEAT.aim.anglesTo(cam.CFrame.Position, point)
+        if not yaw then return end
+        local cy, cp = FEAT.aim.camAngles(cam.CFrame)
+        if math.abs(FEAT.aim.wrapDeg(math.deg(yaw - cy))) > 4
+            or math.abs(math.deg(pitch - cp)) > 4 then return end
+
+        local tool = SCF.tool()
+        if not tool then return end
+        if SCF.fire(tool, cam, point) then
+            S.lastPlace = os.clock()
+            S.placed = (S.placed or 0) + 1
+        end
+    end
+
+    function FEAT.setScaffold(on)
+        local S = FZ.scaffold
+        S.on = on and true or false
+        if S.conn then pcall(function() S.conn:Disconnect() end) S.conn = nil end
+        if S.charConn then pcall(function() S.charConn:Disconnect() end) S.charConn = nil end
+
+        local cam = workspace.CurrentCamera
+        if not S.on then
+            if cam then
+                pcall(function()
+                    cam.CameraType = S.camType or Enum.CameraType.Custom
+                    if S.camSubject then cam.CameraSubject = S.camSubject end
+                end)
+            end
+            pcall(function() UIS.MouseBehavior = S.mouse or Enum.MouseBehavior.Default end)
+            S.cell, S.point, S.camType, S.camSubject, S.mouse = nil, nil, nil, nil, nil
+            return
+        end
+
+        if cam then
+            S.camType = cam.CameraType
+            S.camSubject = cam.CameraSubject
+        end
+        pcall(function() S.mouse = UIS.MouseBehavior end)
+        pcall(function() UIS.MouseBehavior = Enum.MouseBehavior.Default end)
+        S.lastPlace = 0
+
+        if not SCF.tool() then
+            notify("Scaffold: возьми инструмент, которым ставишь блоки")
+        end
+
+        S.conn = RunService.RenderStepped:Connect(function(dt)
+            pcall(SCF.step, dt)
+        end)
+        S.charConn = LP.CharacterAdded:Connect(function()
+            task.wait(0.15)
+            if FZ.scaffold.on then S.lastPlace = 0 end
+        end)
+    end
+end
+
 --===================  CLICK TP  ===================
 local function setClickTp(on)
     FZ.clickTp.on = on and true or false
@@ -2476,7 +2989,8 @@ end
 
 -- всё выключить (вызывается из Unload)
 local function teardownFeatures()
-    pcall(function() setAimbot(false) end)
+    pcall(function() FEAT.setAimbot(false) end)
+    pcall(function() FEAT.setAssist(false) end)
     pcall(function() setSilentAim(false) end)
     pcall(function() setHitbox(false) end)
     pcall(function() setESP(false) end)
@@ -2484,6 +2998,7 @@ local function teardownFeatures()
     pcall(function() setNoclip(false) end)
     pcall(function() setAirstuck(false) end)
     pcall(function() setGhostFreeze(false) end)
+    pcall(function() FEAT.setScaffold(false) end)
     pcall(function() setClickTp(false) end)
     pcall(function() setWalkSpeed(false) end)
     if FZ.esp.gui then pcall(function() FZ.esp.gui:Destroy() end) FZ.esp.gui = nil end
@@ -3030,6 +3545,7 @@ end
 -- --- arraylist -------------------------------------------------
 local AL_MODULES = {
     { "aim", "Aimbot" },
+    { "assist", "Aim Assist" },
     { "silent", "Silent Aim" },
     { "hitbox", "Hitbox" },
     { "esp", "ESP" },
@@ -3037,6 +3553,7 @@ local AL_MODULES = {
     { "noclip", "Noclip" },
     { "airstuck", "Air Stuck" },
     { "ghost", "Ghost Stand" },
+    { "scaffold", "Scaffold" },
     { "clickTp", "Click TP" },
     { "walk", "Speed" },
 }
@@ -4462,11 +4979,28 @@ end
 --=================================================================
 --  СТРАНИЦЫ НА РЕАЛЬНЫХ ФУНКЦИЯХ
 --=================================================================
+FEAT.aimParts = { "Head", "Torso", "Nearest" }
+
 local function buildRagebot(p)
     local aim = p:card("Aimbot")
-    aim:toggle("Enabled", false, true, function(on) setAimbot(on) end)
-    aim:slider("FOV", 20, 600, 120, 1, function(v) FZ.aim.fov = v end)
-    aim:slider("Smooth", 0.05, 1, 0.3, 0.05, function(v) FZ.aim.smooth = v end)
+    aim:toggle("Enabled", false, true, function(on) FEAT.setAimbot(on) end)
+    aim:dropdown("Target Part", FEAT.aimParts, FZ.aim.part, false, function(v) FZ.aim.part = v end)
+    aim:slider("FOV", 20, 600, FZ.aim.fov, 1, function(v) FZ.aim.fov = v end)
+    aim:slider("Smooth", 0.05, 1, FZ.aim.smooth, 0.05, function(v) FZ.aim.smooth = v end)
+    aim:slider("Humanize", 0, 1, FZ.aim.humanize, 0.05, function(v) FZ.aim.humanize = v end)
+    aim:slider("Max Dist", 50, 2000, FZ.aim.maxDist, 50, function(v) FZ.aim.maxDist = v end)
+    aim:toggle("Visible Only", FZ.aim.visibleOnly, false, function(on)
+        FZ.aim.visibleOnly = on and true or false
+        FZ.aim.visCache = nil
+    end)
+    aim:toggle("Ignore Team", FZ.aim.ignoreTeam, false, function(on)
+        FZ.aim.ignoreTeam = on and true or false
+    end)
+    aim:toggle("Ignore Friends", FZ.aim.ignoreFriends, false, function(on)
+        FZ.aim.ignoreFriends = on and true or false
+        FEAT.aim.friendCache = {}
+    end)
+    aim:text("Smooth — доля шага за кадр (0.05 = очень плавно, 1 = мгновенно), Humanize добавляет живой шум.")
 
     local silent = p:card("Silent Aim", "right")
     silent:toggle("Enabled", false, true, function(on) setSilentAim(on) end)
@@ -4476,6 +5010,35 @@ local function buildRagebot(p)
     local hit = p:card("Hitbox")
     hit:toggle("Enabled", false, true, function(on) setHitbox(on) end)
     hit:slider("Size", 1, 20, 5, 1, function(v) FZ.hitbox.size = v end)
+end
+
+local function buildLegitbot(p)
+    local aa = p:card("Aim Assist")
+    aa:toggle("Enabled", false, true, function(on) FEAT.setAssist(on) end)
+    aa:dropdown("Target Part", FEAT.aimParts, FZ.assist.part, false, function(v) FZ.assist.part = v end)
+    aa:slider("FOV", 20, 400, FZ.assist.fov, 5, function(v) FZ.assist.fov = v end)
+    aa:slider("Strength", 0.05, 1, FZ.assist.strength, 0.05, function(v) FZ.assist.strength = v end)
+    aa:slider("Smooth", 0.05, 1, FZ.assist.smooth, 0.05, function(v) FZ.assist.smooth = v end)
+    aa:slider("Humanize", 0, 1, FZ.assist.humanize, 0.05, function(v) FZ.assist.humanize = v end)
+    aa:toggle("Only When Firing", FZ.assist.firingOnly, false, function(on)
+        FZ.assist.firingOnly = on and true or false
+    end)
+    aa:text("Мягкая подтяжка прицела: Strength — сколько от нужного поворота за кадр. Aimbot и Assist вместе не работают, включение одного гасит другое.")
+
+    local filt = p:card("Target", "right")
+    filt:slider("Max Dist", 50, 2000, FZ.assist.maxDist, 50, function(v) FZ.assist.maxDist = v end)
+    filt:toggle("Visible Only", FZ.assist.visibleOnly, false, function(on)
+        FZ.assist.visibleOnly = on and true or false
+        FZ.assist.visCache = nil
+    end)
+    filt:toggle("Ignore Team", FZ.assist.ignoreTeam, false, function(on)
+        FZ.assist.ignoreTeam = on and true or false
+    end)
+    filt:toggle("Ignore Friends", FZ.assist.ignoreFriends, false, function(on)
+        FZ.assist.ignoreFriends = on and true or false
+        FEAT.aim.friendCache = {}
+    end)
+    filt:text("Only When Firing — тянуть только с зажатой ЛКМ (как в legit-читах).")
 end
 
 local function buildPlayers(p)
@@ -4559,6 +5122,18 @@ local function buildMain(p)
     move:text("Для других стоишь на месте, камера летит на WASD/Space/Ctrl. Выключишь — появишься там, куда прилетел.")
     move:toggle("Click TP", false, true, function(on) setClickTp(on) end)
     move:slider("TP Height", 0, 20, 3, 1, function(v) FZ.clickTp.height = v end)
+
+    local scf = p:card("Scaffold", "right")
+    scf:toggle("Enabled", false, true, function(on) FEAT.setScaffold(on) end)
+    scf:dropdown("Fire", { "Activate", "Click" }, FZ.scaffold.mode, false, function(v) FZ.scaffold.mode = v end)
+    scf:slider("Grid", 2, 8, FZ.scaffold.grid, 1, function(v) FZ.scaffold.grid = v end)
+    scf:slider("Extend", 0, 5, FZ.scaffold.extend, 1, function(v) FZ.scaffold.extend = v end)
+    scf:slider("Delay", 0.05, 0.5, FZ.scaffold.delay, 0.01, function(v) FZ.scaffold.delay = v end)
+    scf:toggle("Tower", FZ.scaffold.tower, false, function(on) FZ.scaffold.tower = on and true or false end)
+    scf:toggle("SafeWalk", FZ.scaffold.safewalk, false, function(on) FZ.scaffold.safewalk = on and true or false end)
+    scf:toggle("Downward", FZ.scaffold.downward, false, function(on) FZ.scaffold.downward = on and true or false end)
+    scf:toggle("Cursor", FZ.scaffold.cursor, false, function(on) FZ.scaffold.cursor = on and true or false end)
+    scf:text("Авто-бридж: ищет дырку под ногами и ставит блок. Нужен инструмент в руках. Камера смотрит в точку установки, курсор ведём через mousemoverel (если executor умеет). Fire=Click — для игр, которые слушают мышь, а не Tool.Activated.")
 
     local ws = p:card("Walk Speed", "right")
     ws:toggle("Enabled", false, true, function(on) setWalkSpeed(on) end)
@@ -4792,6 +5367,7 @@ local PAGES = {
 
 local BUILDERS = {
     Ragebot = buildRagebot,
+    Legitbot = buildLegitbot,
     Players = buildPlayers,
     Main = buildMain,
     Configs = buildConfigs,
@@ -5000,7 +5576,9 @@ local api = {
     Features = FZ,
     ESP = FZ.esp,
     HUD = HUD,
-    SetAimbot = setAimbot,
+    SetAimbot = FEAT.setAimbot,
+    SetAimAssist = FEAT.setAssist,
+    SetScaffold = FEAT.setScaffold,
     SetSilentAim = setSilentAim,
     SetHitbox = setHitbox,
     SetESP = setESP,

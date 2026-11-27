@@ -8,6 +8,7 @@ local M = MOCK
 local E = M.env
 
 -- патчи мока под реальный Roblox
+E.math.atan2 = E.math.atan2 or function(y, x) return math.atan(y, x) end
 E.math.clamp = function(v, a, b) if v < a then return a elseif v > b then return b else return v end end
 E.ColorSequence = function(...) return { ... } end
 E.ColorSequenceKeypoint = function(t, c) return { Time = t, Value = c } end
@@ -24,6 +25,26 @@ E.CFrame.new = function(...)
         if type(a) == "table" and a.X then cf.Position = E.Vector3.new(a.X, a.Y, a.Z) end
     end
     return cf
+end
+
+-- виртуальные часы: os.clock в Lua 5.5 считает CPU-время, поэтому кулдауны
+-- (scaffold delay, ESP-троттлинги) в тесте не тикали бы
+local simClock = 0
+os.clock = function() return simClock end
+
+-- фейковый мир для Scaffold: пол есть везде, кроме коридора |x| < 0.5
+-- (вертикальный луч — проверка опоры, горизонтальный — «рядом стоит блок»)
+E.workspace.Raycast = function(self, from, dir)
+    if not dir then return nil end
+    local ay = math.abs(dir.Y)
+    if ay > math.abs(dir.X) + math.abs(dir.Z) then
+        if dir.Y < 0 and from.Y > 0 then
+            if math.abs(from.X) < 0.5 then return nil end
+            return {Position = E.Vector3.new(from.X, 0, from.Z)}
+        end
+        return nil
+    end
+    return {Position = from + dir * 0.5}
 end
 
 -- UIS в моке не умеет клавиши/мышь — заглушки, чтобы фрикам не падало
@@ -197,12 +218,25 @@ if main and main.page then
     print("MAIN descendants: " .. #desc)
     for _, o in ipairs(desc) do
         if o.ClassName == "TextLabel" and (o.Text == "Kill Player" or o.Text == "Movement"
-            or o.Text == "Position" or o.Text == "Walk Speed") then
+            or o.Text == "Position" or o.Text == "Walk Speed" or o.Text == "Scaffold") then
             table.insert(found, o.Text)
         end
     end
     table.sort(found)
     print("MAIN cards: " .. table.concat(found, ", "))
+end
+
+local legit = api.Pages.Legitbot
+if legit and legit.page then
+    local found = {}
+    for _, o in ipairs(legit.page.holder:GetDescendants()) do
+        if o.ClassName == "TextLabel" and (o.Text == "Aim Assist" or o.Text == "Strength"
+            or o.Text == "Only When Firing" or o.Text == "Target Part") then
+            table.insert(found, o.Text)
+        end
+    end
+    table.sort(found)
+    print("LEGITBOT cards: " .. table.concat(found, ", "))
 end
 
 -- ESP: фильтры по команде/друзьям/дистанции + тоглы отрисовки + цвета
@@ -235,6 +269,7 @@ PS.GetPlayers = function() return { lp, enemy, mate, buddy } end
 
 local RSf = E.game:GetService("RunService")
 local function frame()
+    simClock = simClock + 0.016
     pcall(function() RSf.RenderStepped:Fire(0.016) end)
     M.resumeAll()
 end
@@ -304,6 +339,64 @@ M.resumeAll()
 api.SetGhostFreeze(false)
 local gp = lroot.CFrame.Position
 print(("GHOST off: anchored=%s pos=%.1f,%.1f,%.1f"):format(tostring(lroot.Anchored), gp.X, gp.Y, gp.Z))
+
+-- AIMBOT / AIM ASSIST: плавный довод камеры (шаг в углах, а не Lerp по CFrame)
+local camG = wsG.CurrentCamera
+local headEN = enemy.Character:FindFirstChild("Head")
+local function resetCam()
+    camG.CFrame = E.CFrame.lookAt(E.Vector3.new(0, 0, 0), E.Vector3.new(0, 0, 1))
+end
+local function camDot()
+    local l = camG.CFrame.LookVector
+    local h = headEN.Position
+    local m = math.sqrt(h.X ^ 2 + h.Y ^ 2 + h.Z ^ 2)
+    return (l.X * h.X + l.Y * h.Y + l.Z * h.Z) / m
+end
+
+resetCam()
+local baseDot = camDot()
+api.SetAimbot(true)
+frame()
+local dotAim1 = camDot()
+api.SetAimbot(false)
+
+resetCam()
+api.SetAimAssist(true)
+frame()
+local dotAssist1 = camDot()
+api.SetAimAssist(false)
+print(("AIMSTEP base=%.5f aim=%.5f assist=%.5f"):format(baseDot, dotAim1, dotAssist1))
+print("AIM mutually exclusive: aimOff=" .. tostring(api.Features.aim.on) .. " assistOff=" .. tostring(api.Features.assist.on))
+
+api.SetAimbot(true)
+for _ = 1, 90 do frame() end
+local aimTarget = api.Features.aim.target
+local dotAimEnd = camDot()
+api.SetAimbot(false)
+print(("AIMLOCK target=%s dot=%.5f"):format(tostring(aimTarget and aimTarget.Name), dotAimEnd))
+
+-- SCAFFOLD: дырка под ногами -> камера в точку -> Tool:Activate()
+lroot.Position = E.Vector3.new(0, 3, 0)
+lroot.CFrame = E.CFrame.lookAt(E.Vector3.new(0, 3, 0), E.Vector3.new(0, 3, 1))
+lroot.AssemblyLinearVelocity = E.Vector3.new(0, 0, 0)
+local tool = E.Instance.new("Tool")
+tool.Name = "Blocks"
+local placed = 0
+tool.Activate = function() placed = placed + 1 end
+table.insert(lpc._children, tool)
+api.SetScaffold(true)
+for _ = 1, 60 do frame() end
+local scf = api.Features.scaffold
+print(("SCAFFOLD placed=%d cell=%s point=%s"):format(placed, tostring(scf.cell ~= nil), tostring(scf.point ~= nil)))
+
+-- SafeWalk: скорость в сторону дырки должна погаснуть
+lroot.AssemblyLinearVelocity = E.Vector3.new(0, 0, -8)
+frame()
+local sv = lroot.AssemblyLinearVelocity
+print(("SAFEWALK vel=%.1f,%.1f,%.1f"):format(sv.X, sv.Y, sv.Z))
+
+api.SetScaffold(false)
+print("SCAFFOLD off: scriptable=" .. tostring(camG.CameraType == E.Enum.CameraType.Scriptable) .. " placed=" .. tostring(scf.placed))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")

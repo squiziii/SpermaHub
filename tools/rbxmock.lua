@@ -192,21 +192,44 @@ V3 = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0},
     __add = function(a, b) return V3(a.X + b.X, a.Y + b.Y, a.Z + b.Z) end,
     __sub = function(a, b) return V3(a.X - b.X, a.Y - b.Y, a.Z - b.Z) end,
     __mul = function(a, b) return type(a) == "number" and V3(a * b.X, a * b.Y, a * b.Z) or V3(a.X * b, a.Y * b, a.Z * b) end,
-    __index = function(self, k) if k == "Magnitude" then return math.sqrt(self.X ^ 2 + self.Y ^ 2 + self.Z ^ 2) end end,
+    __index = function(self, k)
+        if k == "Magnitude" then return math.sqrt(self.X ^ 2 + self.Y ^ 2 + self.Z ^ 2) end
+        if k == "Unit" then
+            local m = math.sqrt(self.X ^ 2 + self.Y ^ 2 + self.Z ^ 2)
+            if m > 0 then return V3(self.X / m, self.Y / m, self.Z / m) end
+            return V3(1, 0, 0)
+        end
+    end,
 }) end
 local CFMT = {
     __mul = function(a, b) return a._ctr() end,
     __add = function(a, b) return a._ctr() end,
 }
+-- CFrame-заглушка: Position + LookVector (направление взгляда), Lerp и lookAt
+local function cfBase()
+    local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0), LookVector = V3(0, 0, -1)}, CFMT)
+    t._ctr = function() return cfBase() end
+    t.Lerp = function(self, other, a)
+        local r = cfBase()
+        r.Position = self.Position + (other.Position - self.Position) * a
+        r.LookVector = other.LookVector or self.LookVector
+        return r
+    end
+    return t
+end
 CF = {
     new = function(...)
-        local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT)
-        t._ctr = function() return setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT) end
+        local t = cfBase()
+        if select('#', ...) >= 3 then t.Position = V3(...) end
         return t
     end,
-    Angles = function(...)
-        local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT)
-        t._ctr = function() return setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0)}, CFMT) end
+    Angles = function(...) return cfBase() end,
+    lookAt = function(from, to)
+        local t = cfBase()
+        t.Position = from
+        local d = to - from
+        local m = d.Magnitude
+        if m > 0 then t.LookVector = V3(d.X / m, d.Y / m, d.Z / m) end
         return t
     end,
 }
@@ -311,7 +334,7 @@ local UIS = {
 }
 local WS = newInst("Workspace") WS.Name = "Workspace"
 WS.Raycast = function() return nil end
-WS.CurrentCamera = {ViewportSize = Vector2.new(1920, 1080), CFrame = CF.new(), WorldToViewportPoint = function() return V3(960, 540, 10), 10, true end, FieldOfView = 70}
+WS.CurrentCamera = {ViewportSize = Vector2.new(1920, 1080), CFrame = CF.new(), WorldToViewportPoint = function() return V3(960, 540, 10), 10, true end, WorldToScreenPoint = function() return V3(960, 576, 10), 10, true end, FieldOfView = 70}
 WS.Terrain = newInst("Terrain")
 
 local Lighting = newInst("Lighting") Lighting.GlobalShadows = true Lighting.FogStart = 0 Lighting.FogEnd = 1000
