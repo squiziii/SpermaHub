@@ -755,7 +755,7 @@ local function keyPress(k)
 end
 api.SetAntiAim(false)
 api.SetBind("antiaim", E.Enum.KeyCode.X)
-print("BINDS set: key=" .. tostring(BK.map.antiaim == E.Enum.KeyCode.X)
+print("BINDS set: key=" .. tostring(BK.map.antiaim == "X")
     .. " cfg=" .. tostring(api.CFG["Keybinds/antiaim"]))
 keyPress(E.Enum.KeyCode.X)
 M.resumeAll()
@@ -768,22 +768,22 @@ print("BINDS toggle: on=" .. tostring(keyOn) .. " off=" .. tostring(not api.Feat
 BK.capturing = "noclip"
 keyPress(E.Enum.KeyCode.R)
 M.resumeAll()
-local captured = BK.map.noclip == E.Enum.KeyCode.R and BK.capturing == nil
+local captured = BK.map.noclip == "R" and BK.capturing == nil
 BK.capturing = "noclip"
 keyPress(E.Enum.KeyCode.Escape)
 M.resumeAll()
-local escapeKeeps = BK.map.noclip == E.Enum.KeyCode.R
+local escapeKeeps = BK.map.noclip == "R"
 BK.capturing = "noclip"
 keyPress(E.Enum.KeyCode.Backspace)
 M.resumeAll()
 print("BINDS capture: set=" .. tostring(captured) .. " escapeKeeps=" .. tostring(escapeKeeps)
     .. " backspaceClears=" .. tostring(BK.map.noclip == nil))
 
--- мышь во время захвата не должна снимать бинд
+-- клик по UI (gameProcessed) не должен захватывать кнопку мыши
 BK.capturing = "noclip"
-uis.InputBegan:Fire({ UserInputType = E.Enum.UserInputType.MouseButton1 }, false)
+uis.InputBegan:Fire({ UserInputType = E.Enum.UserInputType.MouseButton1 }, true)
 M.resumeAll()
-print("BINDS mouse: untouched=" .. tostring(BK.map.noclip == nil)
+print("BINDS mouse gui: untouched=" .. tostring(BK.map.noclip == nil)
     .. " waiting=" .. tostring(BK.capturing == "noclip"))
 BK.capturing = nil
 
@@ -795,8 +795,45 @@ print("BINDS menuclose: cancelled=" .. tostring(BK.capturing == nil))
 -- одна клавиша — один владелец
 api.SetBind("fly", E.Enum.KeyCode.X)
 print("BINDS unique: oldCleared=" .. tostring(BK.map.antiaim == nil)
-    .. " newSet=" .. tostring(BK.map.fly == E.Enum.KeyCode.X))
+    .. " newSet=" .. tostring(BK.map.fly == "X"))
 api.SetBind("antiaim", E.Enum.KeyCode.X)
+
+-- мышь: бинд, срабатывание, тишина в открытом меню, захват
+api.SetESP(false)
+api.SetBind("esp", E.Enum.UserInputType.MouseButton1)
+local MB1 = E.Enum.UserInputType.MouseButton1
+local function mousePress(ut, gp) uis.InputBegan:Fire({ UserInputType = ut, KeyCode = E.Enum.KeyCode.Unknown }, gp) end
+mousePress(MB1, false)
+M.resumeAll()
+local mouseOn = api.Features.esp.on
+api.SetBind("noclip", nil)
+mousePress(MB1, false)
+M.resumeAll()
+print("BINDS mouse bind: token=" .. tostring(BK.map.esp == "MouseButton1")
+    .. " cfg=" .. tostring(api.CFG["Keybinds/esp"]) .. " fires=" .. tostring(mouseOn))
+
+api.Toggle(true)
+local before = api.Features.esp.on
+mousePress(MB1, false)
+M.resumeAll()
+print("BINDS mouse in menu: ignored=" .. tostring(api.Features.esp.on == before))
+api.Toggle(false)
+
+BK.capturing = "noclip"
+mousePress(E.Enum.UserInputType.MouseButton2, false)
+M.resumeAll()
+print("BINDS mouse capture: bind=" .. tostring(BK.map.noclip == "MouseButton2"))
+BK.capturing = nil
+api.SetBind("noclip", nil)
+
+-- мышь в конфиге переживает save/load
+api.SetBind("hitbox", E.Enum.UserInputType.MouseButton3)
+api.SaveConfig("mousecfg")
+api.SetBind("hitbox", nil)
+api.LoadConfig("mousecfg")
+print("BINDS mouse config: restored=" .. tostring(BK.map.hitbox == "MouseButton3"))
+api.SetBind("hitbox", nil)
+api.DeleteConfig("mousecfg")
 
 -- страница показывает строки с клавишами
 local kbp = api.Pages["Keybinds"]
@@ -817,7 +854,7 @@ local lok, lres = api.LoadConfig("test")
 print("LOAD: " .. tostring(lok) .. " applied=" .. tostring(lres))
 api.SetBind("antiaim", nil)
 local restored = api.LoadConfig("test")
-print("BINDS config: restored=" .. tostring(restored) .. " key=" .. tostring(api.Binds.map.antiaim == E.Enum.KeyCode.X))
+print("BINDS config: restored=" .. tostring(restored) .. " key=" .. tostring(api.Binds.map.antiaim == "X"))
 print("LIST: " .. table.concat(api.ListConfigs(), ","))
 print("DELETE: " .. tostring(api.DeleteConfig("test")) .. " left=" .. #api.ListConfigs())
 """

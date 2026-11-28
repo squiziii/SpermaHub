@@ -5979,6 +5979,27 @@ FZ.binds.refresh = function()
     if FZ.binds.paint then FZ.binds.paint() end
 end
 
+-- бинд хранится строкой: имя клавиши ("X") или кнопки мыши ("MouseButton1"),
+-- поэтому и в CFG, и в карте лежит одно и то же, без Enum при загрузке
+FZ.binds.mouseNames = { MouseButton1 = "Mouse 1", MouseButton2 = "Mouse 2", MouseButton3 = "Mouse 3" }
+
+FZ.binds.token = function(input)
+    local ut = input.UserInputType
+    if ut == Enum.UserInputType.Keyboard then
+        local k = input.KeyCode
+        if k ~= Enum.KeyCode.Unknown then return k.Name end
+    elseif ut and FZ.binds.mouseNames[ut.Name] then
+        return ut.Name
+    end
+end
+
+FZ.binds.norm = function(key)
+    if key == nil then return nil end
+    local n = type(key) == "string" and key or key.Name
+    if n == nil or n == "" or n == "Unknown" then return nil end
+    return n
+end
+
 FEAT.bindGet = function(id)
     local e = FEAT.bindEntry(id)
     if not e then return false end
@@ -6008,7 +6029,7 @@ end
 FEAT.setBind = function(id, key)
     local e = FEAT.bindEntry(id)
     if not e then return false end
-    if key == Enum.KeyCode.Unknown then key = nil end
+    key = FZ.binds.norm(key)
     if key then
         for _, other in ipairs(FEAT.bindList) do
             if other.id ~= id and FZ.binds.map[other.id] == key then
@@ -6018,7 +6039,7 @@ FEAT.setBind = function(id, key)
         end
     end
     FZ.binds.map[id] = key
-    CFG["Keybinds/" .. id] = key and key.Name or ""
+    CFG["Keybinds/" .. id] = key or ""
     FZ.binds.refresh()
     return true
 end
@@ -6028,10 +6049,7 @@ FZ.binds.sync = function()
     local map = {}
     for _, e in ipairs(FEAT.bindList) do
         local raw = CFG["Keybinds/" .. e.id]
-        if type(raw) == "string" and raw ~= "" then
-            local ok, key = pcall(function() return Enum.KeyCode[raw] end)
-            if ok then map[e.id] = key end
-        end
+        if type(raw) == "string" and raw ~= "" then map[e.id] = raw end
     end
     FZ.binds.map = map
     FZ.binds.refresh()
@@ -6039,22 +6057,24 @@ end
 
 FZ.binds.conn = UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    local key = input.KeyCode
+    local token = FZ.binds.token(input)
+    if not token then return end
     local cap = FZ.binds.capturing
     if cap then
         FZ.binds.capturing = nil
-        if key == Enum.KeyCode.Backspace or key == Enum.KeyCode.Delete then
+        if token == "Backspace" or token == "Delete" then
             FEAT.setBind(cap, nil)
-        elseif key ~= Enum.KeyCode.Escape and key ~= Enum.KeyCode.Unknown then
-            FEAT.setBind(cap, key)
+        elseif token ~= "Escape" then
+            FEAT.setBind(cap, token)
         else
-            FZ.binds.refresh()   -- Escape/Unknown только отменяют захват, бинд остаётся
+            FZ.binds.refresh()   -- Escape только отменяет захват
         end
         return
     end
+    -- мышью в открытом меню не переключаем: клик по UI не должен дёргать фичи
+    if input.UserInputType ~= Enum.UserInputType.Keyboard and FZ.freecam.menuOpen then return end
     for id, bound in pairs(FZ.binds.map) do
-        if bound == key then
+        if bound == token then
             FEAT.toggleBind(id)
             return
         end
@@ -6096,7 +6116,7 @@ local BUILDERS = {
     end,
     ["Keybinds"] = function(p)
         local card = p:card("Keybinds")
-        card:text("Клик по строке — потом нажми клавишу. Backspace/Delete — снять бинд, Escape — отменить захват. В меню клавиши не срабатывают, вне меню работают всегда.")
+        card:text("Клик по строке — потом нажми клавишу или кнопку мыши (клик по пустому месту, не по меню). Backspace/Delete — снять бинд, Escape — отменить захват. В меню бинды не срабатывают, вне меню — всегда.")
         local rows = {}
         for _, e in ipairs(FEAT.bindList) do
             local btn = card:button("", function()
@@ -6112,7 +6132,7 @@ local BUILDERS = {
                 if FZ.binds.capturing == r.e.id then
                     right = "нажми клавишу…"
                 elseif key then
-                    right = "[ " .. key.Name .. " ]"
+                    right = "[ " .. (FZ.binds.mouseNames[key] or key) .. " ]"
                 end
                 if r.lbl then r.lbl.Text = r.e.label .. "   " .. right end
             end
