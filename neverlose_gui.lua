@@ -896,6 +896,7 @@ local function buildToggle(parent, label, default, hasEye, key, onChange)
     }, row)
 
     local state = default and true or false
+    if key and CFG[key] ~= nil then state = CFG[key] and true or false end
 
     local function paint()
         fill.Visible = state
@@ -1456,7 +1457,7 @@ local FZ = {
                 conn = nil, orig = {}, neck = nil, char = nil, bodyYaw = nil,
                 appliedYaw = nil, appliedPitch = nil, writes = 0, lastPitch = 0, spin = 0,
                 jitterSign = 1, randOff = 0, randAt = 0, pitchAt = 0, pitchRnd = 0, autoRotate = nil },
-    binds = { map = {}, ui = {}, capturing = nil, conn = nil },
+    binds = { map = {}, capturing = nil, paint = nil, conn = nil },
     airstuck = { on = false, mode = "Packet", throttle = 10, maxHold = 20, lock = false,
                  conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false,
                  net = false, froze = false, since = 0, stop = nil },
@@ -5954,18 +5955,18 @@ local PAGES = {
 --  KEYBINDS
 --=================================================================
 FEAT.bindList = {
-    { id = "aimbot",   label = "Aimbot",      path = "Ragebot/Aimbot/Enabled",     set = function(v) FEAT.setAimbot(v) end },
-    { id = "silent",   label = "Silent Aim",  path = "Ragebot/Silent Aim/Enabled", set = function(v) setSilentAim(v) end },
-    { id = "hitbox",   label = "Hitbox",      path = "Ragebot/Hitbox/Enabled",     set = function(v) setHitbox(v) end },
+    { id = "aimbot",   label = "Aimbot",      path = "Ragebot/Aimbot/Enabled",      set = function(v) FEAT.setAimbot(v) end },
+    { id = "silent",   label = "Silent Aim",  path = "Ragebot/Silent Aim/Enabled",  set = function(v) setSilentAim(v) end },
+    { id = "hitbox",   label = "Hitbox",      path = "Ragebot/Hitbox/Enabled",      set = function(v) setHitbox(v) end },
     { id = "assist",   label = "Aim Assist",  path = "Legitbot/Aim Assist/Enabled", set = function(v) FEAT.setAssist(v) end },
-    { id = "antiaim",  label = "Anti Aim",    path = "Anti Aim/Anti Aim/Enabled",  set = function(v) FEAT.setAntiAim(v) end },
-    { id = "esp",      label = "ESP",         path = "Players/ESP/Enabled",        set = function(v) setESP(v) end },
-    { id = "freecam",  label = "Free Camera", path = "Main/Movement/Free Camera",  set = function(v) FEAT.setFreecam(v) end },
-    { id = "camTp",    label = "Cam TP",      path = "Main/Movement/Cam TP",       set = function(v) FEAT.setCamTp(v) end },
-    { id = "noclip",   label = "Noclip",      path = "Main/Movement/Noclip",       set = function(v) setNoclip(v) end },
-    { id = "fly",      label = "Fly",         path = "Main/Movement/Fly",          set = function(v) setFly(v) end },
-    { id = "scaffold", label = "Scaffold",    path = "Main/Scaffold/Enabled",      set = function(v) FEAT.setScaffold(v) end },
-    { id = "airstuck", label = "Air Stuck",   path = "Main/Movement/Air Stuck",    set = function(v) setAirstuck(v) end },
+    { id = "antiaim",  label = "Anti Aim",    path = "Anti Aim/Anti Aim/Enabled",   set = function(v) FEAT.setAntiAim(v) end },
+    { id = "esp",      label = "ESP",         path = "Players/ESP/Enabled",         set = function(v) setESP(v) end },
+    { id = "freecam",  label = "Free Camera", path = "Main/Movement/Free Camera",   set = function(v) FEAT.setFreecam(v) end },
+    { id = "camTp",    label = "Cam TP",      path = "Main/Movement/Cam TP",        set = function(v) FEAT.setCamTp(v) end },
+    { id = "noclip",   label = "Noclip",      path = "Main/Movement/Noclip",        set = function(v) setNoclip(v) end },
+    { id = "fly",      label = "Fly",         path = "Main/Movement/Fly",           set = function(v) setFly(v) end },
+    { id = "scaffold", label = "Scaffold",    path = "Main/Scaffold/Enabled",       set = function(v) FEAT.setScaffold(v) end },
+    { id = "airstuck", label = "Air Stuck",   path = "Main/Movement/Air Stuck",     set = function(v) setAirstuck(v) end },
 }
 
 FEAT.bindEntry = function(id)
@@ -5974,84 +5975,81 @@ FEAT.bindEntry = function(id)
     end
 end
 
-FEAT.bindName = function(key)
-    if not key then return "—" end
-    local ok, n = pcall(function() return key.Name end)
-    if ok and n then return n end
-    return tostring(key)
-end
-
 FZ.binds.refresh = function()
-    for _, fn in pairs(FZ.binds.ui or {}) do pcall(fn) end
+    if FZ.binds.paint then FZ.binds.paint() end
 end
 
 FEAT.bindGet = function(id)
     local e = FEAT.bindEntry(id)
     if not e then return false end
-    local c = e.path and CONTROLS[e.path]
-    if c and c.get then
-        local ok, v = pcall(c.get)
-        if ok then return v and true or false end
-    end
+    local c = CONTROLS[e.path]
+    if c then return c:get() and true or false end
     return CFG[e.path] and true or false
 end
 
+-- через UI-контрол, если страница фичи уже построена: тогда обновится и галочка, и CFG
 FEAT.bindApply = function(id, on)
     local e = FEAT.bindEntry(id)
     if not e then return end
-    local c = e.path and CONTROLS[e.path]
-    if c and c.set then
-        pcall(function() c:set(on and true or false) end)   -- CFG + галочка + сама фича
+    local c = CONTROLS[e.path]
+    if c then
+        c:set(on)
     else
-        if e.path then CFG[e.path] = on and true or false end
-        pcall(e.set, on and true or false)
+        CFG[e.path] = on
+        e.set(on)
     end
-    pcall(FZ.binds.refresh)
 end
 
 FEAT.toggleBind = function(id)
     FEAT.bindApply(id, not FEAT.bindGet(id))
 end
 
+-- одна клавиша — одно действие: занятую клавишу снимаем у прошлого владельца
 FEAT.setBind = function(id, key)
     local e = FEAT.bindEntry(id)
     if not e then return false end
-    if not key or key == Enum.KeyCode.Unknown then
-        FZ.binds.map[id] = nil
-        CFG["Keybinds/" .. id] = ""
-    else
-        FZ.binds.map[id] = key
-        CFG["Keybinds/" .. id] = tostring(key.Name or key)
+    if key == Enum.KeyCode.Unknown then key = nil end
+    if key then
+        for _, other in ipairs(FEAT.bindList) do
+            if other.id ~= id and FZ.binds.map[other.id] == key then
+                FZ.binds.map[other.id] = nil
+                CFG["Keybinds/" .. other.id] = ""
+            end
+        end
     end
-    pcall(FZ.binds.refresh)
+    FZ.binds.map[id] = key
+    CFG["Keybinds/" .. id] = key and key.Name or ""
+    FZ.binds.refresh()
     return true
 end
 
--- восстановление биндов из CFG (после загрузки конфига)
+-- восстановление биндов из CFG после загрузки конфига
 FZ.binds.sync = function()
     local map = {}
     for _, e in ipairs(FEAT.bindList) do
         local raw = CFG["Keybinds/" .. e.id]
         if type(raw) == "string" and raw ~= "" then
             local ok, key = pcall(function() return Enum.KeyCode[raw] end)
-            if ok and key then map[e.id] = key end
+            if ok then map[e.id] = key end
         end
     end
     FZ.binds.map = map
-    pcall(FZ.binds.refresh)
+    FZ.binds.refresh()
 end
 
 FZ.binds.conn = UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
-    local key = input and input.KeyCode
-    if not key then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    local key = input.KeyCode
     local cap = FZ.binds.capturing
     if cap then
         FZ.binds.capturing = nil
-        if key == Enum.KeyCode.Escape or key == Enum.KeyCode.Backspace or key == Enum.KeyCode.Delete then
+        if key == Enum.KeyCode.Backspace or key == Enum.KeyCode.Delete then
             FEAT.setBind(cap, nil)
-        else
+        elseif key ~= Enum.KeyCode.Escape and key ~= Enum.KeyCode.Unknown then
             FEAT.setBind(cap, key)
+        else
+            FZ.binds.refresh()   -- Escape/Unknown только отменяют захват, бинд остаётся
         end
         return
     end
@@ -6098,29 +6096,28 @@ local BUILDERS = {
     end,
     ["Keybinds"] = function(p)
         local card = p:card("Keybinds")
-        card:text("Клик по строке — потом нажми клавишу. Escape/Backspace/Delete — снять бинд. В меню клавиши не срабатывают, вне меню работают всегда.")
+        card:text("Клик по строке — потом нажми клавишу. Backspace/Delete — снять бинд, Escape — отменить захват. В меню клавиши не срабатывают, вне меню работают всегда.")
+        local rows = {}
         for _, e in ipairs(FEAT.bindList) do
             local btn = card:button("", function()
                 FZ.binds.capturing = e.id
                 FZ.binds.refresh()
             end)
-            local lbl = btn:FindFirstChildOfClass("TextLabel")
-            FZ.binds.ui[e.id] = function()
-                local key = FZ.binds.map[e.id]
-                local right
-                if FZ.binds.capturing == e.id then
+            table.insert(rows, { e = e, lbl = btn:FindFirstChildOfClass("TextLabel") })
+        end
+        FZ.binds.paint = function()
+            for _, r in ipairs(rows) do
+                local key = FZ.binds.map[r.e.id]
+                local right = "[ — ]"
+                if FZ.binds.capturing == r.e.id then
                     right = "нажми клавишу…"
                 elseif key then
-                    right = "[ " .. FEAT.bindName(key) .. " ]"
-                else
-                    right = "[ — ]"
+                    right = "[ " .. key.Name .. " ]"
                 end
-                if lbl then
-                    lbl.Text = e.label .. " (" .. (FEAT.bindGet(e.id) and "on" or "off") .. ")   " .. right
-                end
+                if r.lbl then r.lbl.Text = r.e.label .. "   " .. right end
             end
-            pcall(FZ.binds.ui[e.id])
         end
+        FZ.binds.refresh()
 
         local side = p:card("Reset", "right")
         side:button("Очистить все", function()
@@ -6128,8 +6125,7 @@ local BUILDERS = {
             FZ.binds.capturing = nil
             FZ.binds.refresh()
         end)
-        side:text("Бинды лежат в конфиге как Keybinds/<id> = имя клавиши и грузятся вместе с ним.")
-        side:text("Одна клавиша — одно действие. Если страница ещё не открывалась, фича всё равно включится, а галочка подтянется при открытии.")
+        side:text("Бинды сохраняются в конфиге как Keybinds/<id> = имя клавиши и грузятся вместе с ним.")
     end,
     Legitbot = buildLegitbot,
     Players = buildPlayers,
@@ -6282,6 +6278,7 @@ local function setOpen(state)
     -- фрикам держит мышь залоченной по центру; в меню отдаём обычный курсор,
     -- а на закрытии снова залочиваем обзор
     FZ.freecam.menuOpen = state and true or false
+    if not state then FZ.binds.capturing = nil end
     if FZ.freecam.on then
         pcall(function()
             if state then

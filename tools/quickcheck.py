@@ -747,29 +747,58 @@ print("ANTIAIM off: neckRestored=" .. tostring(aaOrig ~= nil and aaNeck.C0 == aa
     .. " conn=" .. tostring(AA.conn == nil)
     .. " softYaw=" .. tostring(AA.bodyYaw == nil))
 
--- Keybinds: бинд, срабатывание вне меню, захват клавиши и сброс
+-- Keybinds: бинд, срабатывание вне меню, захват и снятие клавиши
 local BK = api.Binds
+local KB = E.Enum.UserInputType.Keyboard
+local function keyPress(k)
+    uis.InputBegan:Fire({ KeyCode = k, UserInputType = KB }, false)
+end
 api.SetAntiAim(false)
 api.SetBind("antiaim", E.Enum.KeyCode.X)
 print("BINDS set: key=" .. tostring(BK.map.antiaim == E.Enum.KeyCode.X)
     .. " cfg=" .. tostring(api.CFG["Keybinds/antiaim"]))
-uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.X }, false)
+keyPress(E.Enum.KeyCode.X)
 M.resumeAll()
 local keyOn = api.Features.antiaim.on
-uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.X }, false)
+keyPress(E.Enum.KeyCode.X)
 M.resumeAll()
 print("BINDS toggle: on=" .. tostring(keyOn) .. " off=" .. tostring(not api.Features.antiaim.on))
-BK.capturing = "noclip"
-uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.R }, false)
-M.resumeAll()
-print("BINDS capture: " .. tostring(BK.map.noclip == E.Enum.KeyCode.R)
-    .. " capturing=" .. tostring(BK.capturing))
-BK.capturing = "noclip"
-uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.Escape }, false)
-M.resumeAll()
-print("BINDS clear: " .. tostring(BK.map.noclip == nil))
 
--- кнопка на странице: клик включает захват, повторный рендер обновляет текст
+-- захват: R назначает, Escape отменяет, Backspace снимает
+BK.capturing = "noclip"
+keyPress(E.Enum.KeyCode.R)
+M.resumeAll()
+local captured = BK.map.noclip == E.Enum.KeyCode.R and BK.capturing == nil
+BK.capturing = "noclip"
+keyPress(E.Enum.KeyCode.Escape)
+M.resumeAll()
+local escapeKeeps = BK.map.noclip == E.Enum.KeyCode.R
+BK.capturing = "noclip"
+keyPress(E.Enum.KeyCode.Backspace)
+M.resumeAll()
+print("BINDS capture: set=" .. tostring(captured) .. " escapeKeeps=" .. tostring(escapeKeeps)
+    .. " backspaceClears=" .. tostring(BK.map.noclip == nil))
+
+-- мышь во время захвата не должна снимать бинд
+BK.capturing = "noclip"
+uis.InputBegan:Fire({ UserInputType = E.Enum.UserInputType.MouseButton1 }, false)
+M.resumeAll()
+print("BINDS mouse: untouched=" .. tostring(BK.map.noclip == nil)
+    .. " waiting=" .. tostring(BK.capturing == "noclip"))
+BK.capturing = nil
+
+-- закрытие меню отменяет захват
+BK.capturing = "esp"
+api.Toggle(false)
+print("BINDS menuclose: cancelled=" .. tostring(BK.capturing == nil))
+
+-- одна клавиша — один владелец
+api.SetBind("fly", E.Enum.KeyCode.X)
+print("BINDS unique: oldCleared=" .. tostring(BK.map.antiaim == nil)
+    .. " newSet=" .. tostring(BK.map.fly == E.Enum.KeyCode.X))
+api.SetBind("antiaim", E.Enum.KeyCode.X)
+
+-- страница показывает строки с клавишами
 local kbp = api.Pages["Keybinds"]
 local rows = 0
 if kbp and kbp.page then
