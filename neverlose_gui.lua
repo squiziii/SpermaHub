@@ -1452,9 +1452,10 @@ local FZ = {
     camTp = { on = false, lastTp = nil },
     antiaim = { on = false, mode = "Static", yaw = 90, jitter = 35, spinSpeed = 180, randRange = 180,
                 pitch = "Нет", pitchAngle = 89, noAutoRotate = true, headTilt = false,
-                conn = nil, orig = {}, neck = nil, char = nil,
-                lastYaw = 0, lastPitch = 0, baseYaw = nil, spin = 0, jitterSign = 1,
-                randOff = 0, randAt = 0, pitchAt = 0, pitchRnd = 0, autoRotate = nil },
+                followMove = false, turnSpeed = 720,
+                conn = nil, orig = {}, neck = nil, char = nil, bodyYaw = nil,
+                appliedYaw = nil, appliedPitch = nil, writes = 0, lastPitch = 0, spin = 0,
+                jitterSign = 1, randOff = 0, randAt = 0, pitchAt = 0, pitchRnd = 0, autoRotate = nil },
     airstuck = { on = false, mode = "Packet", throttle = 10, maxHold = 20, lock = false,
                  conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false,
                  net = false, froze = false, since = 0, stop = nil },
@@ -3000,33 +3001,48 @@ FEAT.setAntiAim = function(on)
         return ch, ch:FindFirstChildOfClass("Humanoid"), ch:FindFirstChild("HumanoidRootPart")
     end
 
+    -- yaw берём с RightVector: он не вырождается при наклоне корпуса,
+    -- в отличие от LookVector, который при pitch 90 смотрит вверх
+    local function yawOf(root)
+        local cf = root.CFrame
+        local rv = cf.RightVector
+        if rv then return math.atan2(-rv.Z, rv.X) end
+        local lv = cf.LookVector
+        return math.atan2(-lv.X, -lv.Z)
+    end
+
     if not AA.on then
-        for motor, c0 in pairs(AA.orig) do
-            pcall(function() motor.C0 = c0 end)
-        end
+        for motor, c0 in pairs(AA.orig) do pcall(function() motor.C0 = c0 end) end
         AA.orig = {}
         AA.neck, AA.char = nil, nil
-        local _, hum = humAndRoot()
+        local _, hum, root = humAndRoot()
+        -- мягкий возврат: тело встаёт в реальный yaw, а не висит в последнем довороте
+        if root and AA.bodyYaw then
+            pcall(function()
+                root.CFrame = CFrame.new(root.CFrame.Position) * CFrame.Angles(0, AA.bodyYaw, 0)
+            end)
+        end
         if hum and AA.autoRotate ~= nil then
             pcall(function() hum.AutoRotate = AA.autoRotate end)
         end
         AA.autoRotate = nil
-        AA.lastYaw, AA.lastPitch, AA.baseYaw = 0, 0, nil
+        AA.bodyYaw, AA.appliedYaw, AA.appliedPitch = nil, nil, nil
         AA.spin, AA.randOff, AA.pitchRnd = 0, 0, 0
         return
     end
+    AA.writes = 0
 
     local function tiltHead(ch)
         if not AA.headTilt then return end
-        if AA.char ~= ch then
-            AA.char = ch
-            AA.neck = nil
-            for _, d in ipairs(ch:GetDescendants()) do
-                if d:IsA("Motor6D") and d.Name == "Neck" then AA.neck = d break end
-            end
-        end
         local neck = AA.neck
-        if not neck or not neck.Parent then return end
+        if not neck or not neck.Parent then
+            neck = nil
+            for _, d in ipairs(ch:GetDescendants()) do
+                if d:IsA("Motor6D") and d.Name == "Neck" then neck = d break end
+            end
+            AA.neck = neck
+        end
+        if not neck then return end
         if AA.orig[neck] == nil then AA.orig[neck] = neck.C0 end
         local angle = math.rad(AA.pitchAngle or 0)
         if AA.pitch == "Вниз" then angle = -angle end
@@ -3038,16 +3054,42 @@ FEAT.setAntiAim = function(on)
         end
     end
 
-    AA.conn = RunService.Heartbeat:Connect(function(dt)
+    AA.conn = RunService.RenderStepped:Connect(function(dt)
         if not FZ.antiaim.on then return end
         local ch, hum, root = humAndRoot()
-        if not ch or not hum or not root or hum.Health <= 0 then return end
+        if not ch or not hum or not root then return end
         dt = dt or 0.016
+
+        -- новый персонаж (респавн): базу и кэш угла считаем заново
+        if AA.char ~= ch then
+            AA.char = ch
+            AA.neck = nil
+            AA.bodyYaw, AA.appliedYaw, AA.appliedPitch = nil, nil, nil
+        end
 
         -- контроллер движения перезаписывает yaw, пока AutoRotate включён
         if AA.noAutoRotate then
             if AA.autoRotate == nil then AA.autoRotate = hum.AutoRotate end
             if hum.AutoRotate then pcall(function() hum.AutoRotate = false end) end
+        end
+
+        if hum.Health <= 0 then
+            -- мёртвым угол не держим: иначе труп висит повёрнутым
+            AA.appliedYaw, AA.appliedPitch = nil, nil
+            return
+        end
+
+        -- база ставится один раз; движение её больше не сбивает
+        if AA.bodyYaw == nil then AA.bodyYaw = yawOf(root) end
+
+        if AA.followMove then
+            local md = hum.MoveDirection
+            if md and md.Magnitude > 0.1 then
+                local target = math.atan2(-md.X, -md.Z)
+                local diff = (target - AA.bodyYaw + math.pi) % (math.pi * 2) - math.pi
+                local step = math.rad(AA.turnSpeed or 720) * dt
+                AA.bodyYaw = AA.bodyYaw + math.clamp(diff, -step, step)
+            end
         end
 
         -- сдвиг по yaw
@@ -3083,30 +3125,31 @@ FEAT.setAntiAim = function(on)
             end
             pitch = AA.pitchRnd or 0
         end
-
-        -- настоящий yaw: текущий минус наш прошлый сдвиг; при наклоне
-        -- LookVector почти вертикальный, тогда держим прошлую базу
-        local pos = root.CFrame.Position
-        local lv = root.CFrame.LookVector
-        local baseYaw = AA.baseYaw or 0
-        if math.abs(pitch) < 0.5 then
-            baseYaw = math.atan2(-lv.X, -lv.Z) - (AA.lastYaw or 0)
-        end
-        local move = hum.MoveDirection
-        if move and move.Magnitude > 0.1 then
-            baseYaw = math.atan2(-move.X, -move.Z)
-        end
-        AA.baseYaw = baseYaw
-        AA.lastYaw = off
         AA.lastPitch = pitch
 
-        pcall(function()
-            root.CFrame = CFrame.new(pos) * CFrame.Angles(pitch, baseYaw + off, 0)
-        end)
+        -- пишем CFrame только если угол реально изменился: статичный угол
+        -- не должен дёргать физику 60 раз в секунду
+        local want = AA.bodyYaw + off
+        if math.abs(want - (AA.appliedYaw or 1e9)) > 0.001
+            or math.abs(pitch - (AA.appliedPitch or 1e9)) > 0.001 then
+            AA.appliedYaw, AA.appliedPitch = want, pitch
+            local ok = pcall(function()
+                local vel = root.AssemblyLinearVelocity
+                root.CFrame = CFrame.new(root.CFrame.Position) * CFrame.Angles(pitch, want, 0)
+                pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
+                if vel then pcall(function() root.AssemblyLinearVelocity = vel end) end
+            end)
+            if ok then
+                AA.writes = (AA.writes or 0) + 1
+            else
+                AA.appliedYaw, AA.appliedPitch = nil, nil
+            end
+        end
 
         tiltHead(ch)
     end)
 end
+
 
 --===================  SCAFFOLD  ===================
 --  Порт rich Scaffold.java под Roblox. В Minecraft блок уходит пакетом, здесь
@@ -5927,11 +5970,15 @@ local BUILDERS = {
         body:toggle("No AutoRotate", FZ.antiaim.noAutoRotate, false, function(on)
             FZ.antiaim.noAutoRotate = on and true or false
         end)
-        body:toggle("Head Tilt", FZ.antiaim.headTilt, false, function(on)
+        body:toggle("Follow Move", FZ.antiaim.followMove, false, function(on)
+            FZ.antiaim.followMove = on and true or false
+        end)
+        body:slider("Turn Speed", 60, 1440, FZ.antiaim.turnSpeed, 60, function(v) FZ.antiaim.turnSpeed = v end)
+        body:toggle("Head Tilt (локально)", FZ.antiaim.headTilt, false, function(on)
             FZ.antiaim.headTilt = on and true or false
         end)
-        body:text("Крутится сам HumanoidRootPart: хитбоксы реально стоят под другим углом, это не картинка. No AutoRotate обязателен, иначе движение возвращает тело. Head Tilt — отдельно задирает шею.")
-        body:text("Pitch 90° кладёт корпус горизонтально: по голове почти не попасть, но и ходить будет странно.")
+        body:text("Крутится сам HumanoidRootPart: поворот уходит на сервер, поэтому тело и хитбоксы стоят под другим углом. No AutoRotate обязателен, иначе движение возвращает тело. Follow Move плавно доворачивает корпус за направлением ходьбы со скоростью Turn Speed, без рывков.")
+        body:text("Pitch 90° кладёт корпус горизонтально и реально уводит голову — по ней почти не попасть, но и ходить будет странно. Head Tilt локальный: Motor6D.C0 на сервер не уходит, другие его не видят.")
     end,
     Legitbot = buildLegitbot,
     Players = buildPlayers,

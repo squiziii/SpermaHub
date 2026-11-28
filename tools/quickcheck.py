@@ -694,28 +694,58 @@ neckM.Parent = lp.Character
 table.insert(lp.Character._children, neckM)  -- в моке Parent сам в детей не добавляет
 local AA = api.Features.antiaim
 AA.mode = "Static"; AA.yaw = 90; AA.pitch = "Нет"; AA.headTilt = true; AA.pitchAngle = 50
+AA.followMove = false
 api.SetAntiAim(true)
-pcall(function() RSf.Heartbeat:Fire(0.016) end)
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
 M.resumeAll()
 local aaNeck = AA.neck
 local aaOrig = aaNeck and AA.orig[aaNeck]
+local appliedYaw = (AA.appliedYaw or 0) - (AA.bodyYaw or 0)
 print(("ANTIAIM static: yaw=%.1f autoRotate=%s headTilt=%s"):format(
-    math.deg(AA.lastYaw), tostring(AA.autoRotate ~= nil),
+    math.deg(appliedYaw), tostring(AA.autoRotate ~= nil),
     tostring(aaOrig ~= nil and aaNeck.C0 ~= aaOrig)))
+
+-- ходьба не сбивает базу yaw: MoveDirection меняем в разные стороны
+local yawBase = AA.bodyYaw
+local writesBase = AA.writes
+lhum.MoveDirection = E.Vector3.new(0, 0, 1)
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
+M.resumeAll()
+lhum.MoveDirection = E.Vector3.new(1, 0, 0)
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
+M.resumeAll()
+print(("ANTIAIM walk: drift=%.4f idleWrites=%d"):format(
+    math.abs((AA.bodyYaw or 0) - (yawBase or 0)), AA.writes - writesBase))
+lhum.MoveDirection = E.Vector3.new(0, 0, 0)
+AA.yaw = 120
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
+M.resumeAll()
+print("ANTIAIM write-on-change: " .. tostring(AA.writes > writesBase))
+
+-- Follow Move плавно доворачивает корпус, а не флипает на 180
+AA.followMove = true; AA.turnSpeed = 360; AA.yaw = 0; AA.mode = "Static"
+AA.bodyYaw = 0
+lhum.MoveDirection = E.Vector3.new(0, 0, 1)
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
+M.resumeAll()
+print(("ANTIAIM follow: step=%.1f"):format(math.deg(AA.bodyYaw)))
+AA.followMove = false
+
 for _, m in ipairs({ "Jitter", "Spin", "Random" }) do
     AA.mode = m
-    pcall(function() RSf.Heartbeat:Fire(0.05) end)
+    pcall(function() RSf.RenderStepped:Fire(0.05) end)
     M.resumeAll()
 end
 print("ANTIAIM modes: spin=" .. tostring((AA.spin or 0) ~= 0) .. " rand=" .. tostring(AA.randOff ~= nil))
 AA.mode = "Static"; AA.yaw = 0; AA.pitch = "Вверх"; AA.pitchAngle = 89
-pcall(function() RSf.Heartbeat:Fire(0.016) end)
+pcall(function() RSf.RenderStepped:Fire(0.016) end)
 M.resumeAll()
 print(("ANTIAIM pitch: last=%.1f"):format(math.deg(AA.lastPitch or 0)))
 api.SetAntiAim(false)
 print("ANTIAIM off: neckRestored=" .. tostring(aaOrig ~= nil and aaNeck.C0 == aaOrig)
     .. " autoRotate=" .. tostring(AA.autoRotate == nil and lhum.AutoRotate == true)
-    .. " conn=" .. tostring(AA.conn == nil))
+    .. " conn=" .. tostring(AA.conn == nil)
+    .. " softYaw=" .. tostring(AA.bodyYaw == nil))
 
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")

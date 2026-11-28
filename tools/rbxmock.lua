@@ -215,12 +215,22 @@ V3 = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0},
     end,
 }) end
 local CFMT = {
-    __mul = function(a, b) return a._ctr() end,
+    __mul = function(a, b)
+        local t = a._ctr()
+        if type(b) == "table" and b.LookVector then
+            t.Position = a.Position
+            t.LookVector = b.LookVector
+            t.RightVector = b.RightVector or t.RightVector
+            t.UpVector = b.UpVector or t.UpVector
+        end
+        return t
+    end,
     __add = function(a, b) return a._ctr() end,
 }
 -- CFrame-заглушка: Position + LookVector (направление взгляда), Lerp и lookAt
 local function cfBase()
-    local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0), LookVector = V3(0, 0, -1)}, CFMT)
+    local t = setmetatable({Position = V3(0, 0, 0), p = V3(0, 0, 0),
+        LookVector = V3(0, 0, -1), RightVector = V3(1, 0, 0), UpVector = V3(0, 1, 0)}, CFMT)
     t._ctr = function() return cfBase() end
     t.Lerp = function(self, other, a)
         local r = cfBase()
@@ -240,7 +250,14 @@ CF = {
         end
         return t
     end,
-    Angles = function(...) return cfBase() end,
+    Angles = function(x, y, z)
+        local t = cfBase()
+        x, y = x or 0, y or 0
+        t.LookVector = V3(-math.sin(y) * math.cos(x), math.sin(x), -math.cos(y) * math.cos(x))
+        t.RightVector = V3(math.cos(y), 0, -math.sin(y))
+        t.UpVector = V3(math.sin(y) * math.sin(x), math.cos(x), math.cos(y) * math.sin(x))
+        return t
+    end,
     fromAxisAngle = function(...) return cfBase() end,
     lookAt = function(from, to)
         local t = cfBase()
