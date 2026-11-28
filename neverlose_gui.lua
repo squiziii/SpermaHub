@@ -1456,6 +1456,7 @@ local FZ = {
                 conn = nil, orig = {}, neck = nil, char = nil, bodyYaw = nil,
                 appliedYaw = nil, appliedPitch = nil, writes = 0, lastPitch = 0, spin = 0,
                 jitterSign = 1, randOff = 0, randAt = 0, pitchAt = 0, pitchRnd = 0, autoRotate = nil },
+    binds = { map = {}, ui = {}, capturing = nil, conn = nil },
     airstuck = { on = false, mode = "Packet", throttle = 10, maxHold = 20, lock = false,
                  conn = nil, charConn = nil, root = nil, hum = nil, cf = nil, platform = false,
                  net = false, froze = false, since = 0, stop = nil },
@@ -5860,6 +5861,7 @@ local function loadConfigFrom(name)
         CFG[key] = value
     end
     configName = name
+    if FZ.binds and FZ.binds.sync then pcall(FZ.binds.sync) end
     return true, applied
 end
 
@@ -5945,7 +5947,121 @@ local PAGES = {
     {group = "Visuals",       name = "Interface", icon = "eye"},
     {group = "Miscellaneous", name = "Main",      icon = "main"},
     {group = "Miscellaneous", name = "Configs",   icon = "configs"},
+    {group = "Miscellaneous", name = "Keybinds",  icon = "main"},
 }
+
+--=================================================================
+--  KEYBINDS
+--=================================================================
+FEAT.bindList = {
+    { id = "aimbot",   label = "Aimbot",      path = "Ragebot/Aimbot/Enabled",     set = function(v) FEAT.setAimbot(v) end },
+    { id = "silent",   label = "Silent Aim",  path = "Ragebot/Silent Aim/Enabled", set = function(v) setSilentAim(v) end },
+    { id = "hitbox",   label = "Hitbox",      path = "Ragebot/Hitbox/Enabled",     set = function(v) setHitbox(v) end },
+    { id = "assist",   label = "Aim Assist",  path = "Legitbot/Aim Assist/Enabled", set = function(v) FEAT.setAssist(v) end },
+    { id = "antiaim",  label = "Anti Aim",    path = "Anti Aim/Anti Aim/Enabled",  set = function(v) FEAT.setAntiAim(v) end },
+    { id = "esp",      label = "ESP",         path = "Players/ESP/Enabled",        set = function(v) setESP(v) end },
+    { id = "freecam",  label = "Free Camera", path = "Main/Movement/Free Camera",  set = function(v) FEAT.setFreecam(v) end },
+    { id = "camTp",    label = "Cam TP",      path = "Main/Movement/Cam TP",       set = function(v) FEAT.setCamTp(v) end },
+    { id = "noclip",   label = "Noclip",      path = "Main/Movement/Noclip",       set = function(v) setNoclip(v) end },
+    { id = "fly",      label = "Fly",         path = "Main/Movement/Fly",          set = function(v) setFly(v) end },
+    { id = "scaffold", label = "Scaffold",    path = "Main/Scaffold/Enabled",      set = function(v) FEAT.setScaffold(v) end },
+    { id = "airstuck", label = "Air Stuck",   path = "Main/Movement/Air Stuck",    set = function(v) setAirstuck(v) end },
+}
+
+FEAT.bindEntry = function(id)
+    for _, e in ipairs(FEAT.bindList) do
+        if e.id == id then return e end
+    end
+end
+
+FEAT.bindName = function(key)
+    if not key then return "—" end
+    local ok, n = pcall(function() return key.Name end)
+    if ok and n then return n end
+    return tostring(key)
+end
+
+FZ.binds.refresh = function()
+    for _, fn in pairs(FZ.binds.ui or {}) do pcall(fn) end
+end
+
+FEAT.bindGet = function(id)
+    local e = FEAT.bindEntry(id)
+    if not e then return false end
+    local c = e.path and CONTROLS[e.path]
+    if c and c.get then
+        local ok, v = pcall(c.get)
+        if ok then return v and true or false end
+    end
+    return CFG[e.path] and true or false
+end
+
+FEAT.bindApply = function(id, on)
+    local e = FEAT.bindEntry(id)
+    if not e then return end
+    local c = e.path and CONTROLS[e.path]
+    if c and c.set then
+        pcall(function() c:set(on and true or false) end)   -- CFG + галочка + сама фича
+    else
+        if e.path then CFG[e.path] = on and true or false end
+        pcall(e.set, on and true or false)
+    end
+    pcall(FZ.binds.refresh)
+end
+
+FEAT.toggleBind = function(id)
+    FEAT.bindApply(id, not FEAT.bindGet(id))
+end
+
+FEAT.setBind = function(id, key)
+    local e = FEAT.bindEntry(id)
+    if not e then return false end
+    if not key or key == Enum.KeyCode.Unknown then
+        FZ.binds.map[id] = nil
+        CFG["Keybinds/" .. id] = ""
+    else
+        FZ.binds.map[id] = key
+        CFG["Keybinds/" .. id] = tostring(key.Name or key)
+    end
+    pcall(FZ.binds.refresh)
+    return true
+end
+
+-- восстановление биндов из CFG (после загрузки конфига)
+FZ.binds.sync = function()
+    local map = {}
+    for _, e in ipairs(FEAT.bindList) do
+        local raw = CFG["Keybinds/" .. e.id]
+        if type(raw) == "string" and raw ~= "" then
+            local ok, key = pcall(function() return Enum.KeyCode[raw] end)
+            if ok and key then map[e.id] = key end
+        end
+    end
+    FZ.binds.map = map
+    pcall(FZ.binds.refresh)
+end
+
+FZ.binds.conn = UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    local key = input and input.KeyCode
+    if not key then return end
+    local cap = FZ.binds.capturing
+    if cap then
+        FZ.binds.capturing = nil
+        if key == Enum.KeyCode.Escape or key == Enum.KeyCode.Backspace or key == Enum.KeyCode.Delete then
+            FEAT.setBind(cap, nil)
+        else
+            FEAT.setBind(cap, key)
+        end
+        return
+    end
+    for id, bound in pairs(FZ.binds.map) do
+        if bound == key then
+            FEAT.toggleBind(id)
+            return
+        end
+    end
+end)
 
 local BUILDERS = {
     Ragebot = buildRagebot,
@@ -5979,6 +6095,41 @@ local BUILDERS = {
         end)
         body:text("Крутится сам HumanoidRootPart: поворот уходит на сервер, поэтому тело и хитбоксы стоят под другим углом. No AutoRotate обязателен, иначе движение возвращает тело. Follow Move плавно доворачивает корпус за направлением ходьбы со скоростью Turn Speed, без рывков.")
         body:text("Pitch 90° кладёт корпус горизонтально и реально уводит голову — по ней почти не попасть, но и ходить будет странно. Head Tilt локальный: Motor6D.C0 на сервер не уходит, другие его не видят.")
+    end,
+    ["Keybinds"] = function(p)
+        local card = p:card("Keybinds")
+        card:text("Клик по строке — потом нажми клавишу. Escape/Backspace/Delete — снять бинд. В меню клавиши не срабатывают, вне меню работают всегда.")
+        for _, e in ipairs(FEAT.bindList) do
+            local btn = card:button("", function()
+                FZ.binds.capturing = e.id
+                FZ.binds.refresh()
+            end)
+            local lbl = btn:FindFirstChildOfClass("TextLabel")
+            FZ.binds.ui[e.id] = function()
+                local key = FZ.binds.map[e.id]
+                local right
+                if FZ.binds.capturing == e.id then
+                    right = "нажми клавишу…"
+                elseif key then
+                    right = "[ " .. FEAT.bindName(key) .. " ]"
+                else
+                    right = "[ — ]"
+                end
+                if lbl then
+                    lbl.Text = e.label .. " (" .. (FEAT.bindGet(e.id) and "on" or "off") .. ")   " .. right
+                end
+            end
+            pcall(FZ.binds.ui[e.id])
+        end
+
+        local side = p:card("Reset", "right")
+        side:button("Очистить все", function()
+            for _, e in ipairs(FEAT.bindList) do FEAT.setBind(e.id, nil) end
+            FZ.binds.capturing = nil
+            FZ.binds.refresh()
+        end)
+        side:text("Бинды лежат в конфиге как Keybinds/<id> = имя клавиши и грузятся вместе с ним.")
+        side:text("Одна клавиша — одно действие. Если страница ещё не открывалась, фича всё равно включится, а галочка подтянется при открытии.")
     end,
     Legitbot = buildLegitbot,
     Players = buildPlayers,
@@ -6165,6 +6316,7 @@ setOpen(true)
 unload = function()
     -- сначала отключаем всё, что живёт на сервисах: после Destroy они бы падали
     pcall(function() if uiConn then uiConn:Disconnect() end end)
+    pcall(function() if FZ.binds and FZ.binds.conn then FZ.binds.conn:Disconnect() end end)
     pcall(function() if camWatch then camWatch:Disconnect() end end)
     pcall(function() if camConn then camConn:Disconnect() end end)
     pcall(teardownFeatures)
@@ -6201,6 +6353,7 @@ local api = {
     Atlas = ATLAS_RECTS,
     SetAtlas = setAtlas,
     Features = FZ,
+    CFG = CFG,
     ESP = FZ.esp,
     HUD = HUD,
     SetAimbot = FEAT.setAimbot,
@@ -6214,6 +6367,9 @@ local api = {
     SetFreecam = FEAT.setFreecam,
     SetCamTp = FEAT.setCamTp,
     SetAntiAim = FEAT.setAntiAim,
+    SetBind = FEAT.setBind,
+    ToggleBind = FEAT.toggleBind,
+    Binds = FZ.binds,
     SetAirstuck = setAirstuck,
     SetGhostFreeze = setGhostFreeze,
     NoclipTeleport = noclipTeleport,

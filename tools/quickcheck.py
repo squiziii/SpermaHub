@@ -747,11 +747,48 @@ print("ANTIAIM off: neckRestored=" .. tostring(aaOrig ~= nil and aaNeck.C0 == aa
     .. " conn=" .. tostring(AA.conn == nil)
     .. " softYaw=" .. tostring(AA.bodyYaw == nil))
 
+-- Keybinds: бинд, срабатывание вне меню, захват клавиши и сброс
+local BK = api.Binds
+api.SetAntiAim(false)
+api.SetBind("antiaim", E.Enum.KeyCode.X)
+print("BINDS set: key=" .. tostring(BK.map.antiaim == E.Enum.KeyCode.X)
+    .. " cfg=" .. tostring(api.CFG["Keybinds/antiaim"]))
+uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.X }, false)
+M.resumeAll()
+local keyOn = api.Features.antiaim.on
+uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.X }, false)
+M.resumeAll()
+print("BINDS toggle: on=" .. tostring(keyOn) .. " off=" .. tostring(not api.Features.antiaim.on))
+BK.capturing = "noclip"
+uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.R }, false)
+M.resumeAll()
+print("BINDS capture: " .. tostring(BK.map.noclip == E.Enum.KeyCode.R)
+    .. " capturing=" .. tostring(BK.capturing))
+BK.capturing = "noclip"
+uis.InputBegan:Fire({ KeyCode = E.Enum.KeyCode.Escape }, false)
+M.resumeAll()
+print("BINDS clear: " .. tostring(BK.map.noclip == nil))
+
+-- кнопка на странице: клик включает захват, повторный рендер обновляет текст
+local kbp = api.Pages["Keybinds"]
+local rows = 0
+if kbp and kbp.page then
+    for _, o in ipairs(kbp.page.holder:GetDescendants()) do
+        if o.ClassName == "TextLabel" and tostring(o.Text):find("Anti Aim", 1, true) then
+            rows = rows + 1
+        end
+    end
+end
+print("BINDS page: built=" .. tostring(kbp ~= nil and kbp.page ~= nil) .. " rows=" .. tostring(rows))
+
 -- конфиги: save -> load -> list -> delete
 local sok, serr = api.SaveConfig("test")
 print("SAVE: " .. tostring(sok) .. " " .. tostring(serr or ""))
 local lok, lres = api.LoadConfig("test")
 print("LOAD: " .. tostring(lok) .. " applied=" .. tostring(lres))
+api.SetBind("antiaim", nil)
+local restored = api.LoadConfig("test")
+print("BINDS config: restored=" .. tostring(restored) .. " key=" .. tostring(api.Binds.map.antiaim == E.Enum.KeyCode.X))
 print("LIST: " .. table.concat(api.ListConfigs(), ","))
 print("DELETE: " .. tostring(api.DeleteConfig("test")) .. " left=" .. #api.ListConfigs())
 """
